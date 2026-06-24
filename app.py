@@ -12,11 +12,18 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'daily-report-secret-2026-yc'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///daily_report.db'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'daily-report-secret-2026-yc-local')
+
+_db_url = os.environ.get('DATABASE_URL', 'sqlite:///daily_report.db')
+# Supabase / Railway may return "postgres://" which SQLAlchemy 1.4+ rejects
+if _db_url.startswith('postgres://'):
+    _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+with app.app_context():
+    db.create_all()
 
 @app.template_filter('money')
 def money_filter(value):
@@ -1049,8 +1056,20 @@ def _export_salary_pdf(results):
     from reportlab.pdfbase.ttfonts import TTFont
 
     font_name = 'Helvetica'
-    for fp in ['C:/Windows/Fonts/msjh.ttc', 'C:/Windows/Fonts/msyh.ttc',
-               'C:/Windows/Fonts/simsun.ttc']:
+    _cjk_candidates = [
+        # Windows
+        'C:/Windows/Fonts/msjh.ttc',
+        'C:/Windows/Fonts/msyh.ttc',
+        'C:/Windows/Fonts/simsun.ttc',
+        # Linux (Ubuntu / Railway — install via nixpacks.toml)
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/arphic/uming.ttc',
+        # macOS
+        '/System/Library/Fonts/PingFang.ttc',
+        '/Library/Fonts/Arial Unicode.ttf',
+    ]
+    for fp in _cjk_candidates:
         if os.path.exists(fp):
             try:
                 pdfmetrics.registerFont(TTFont('CJK', fp))
@@ -1292,6 +1311,4 @@ def not_found(e):
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
     app.run(debug=True, host='127.0.0.1', port=5000)
