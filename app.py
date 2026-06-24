@@ -930,13 +930,19 @@ def _export_salary_excel(results):
             ws.cell(row=row, column=4, value=round(data['subtotals'][k], 2))
             row += 1
 
-        total_cell = ws.cell(row=row, column=1, value='薪資總額')
-        total_cell.font = Font(bold=True)
-        salary_cell = ws.cell(row=row, column=4, value=round(data['total_salary'], 2))
-        salary_cell.font = Font(bold=True)
+        ws.cell(row=row, column=1, value='計薪小計（稅前）').font = Font(bold=True)
+        ws.cell(row=row, column=4, value=round(data['gross_salary'], 2)).font = Font(bold=True)
+        row += 1
+        ws.cell(row=row, column=1, value='本期保留金（扣除）')
+        ws.cell(row=row, column=4, value=-round(data['period_retention'], 2))
+        row += 1
+        net_cell = ws.cell(row=row, column=1, value='本期實領金額')
+        net_cell.font = Font(bold=True)
+        nv_cell = ws.cell(row=row, column=4, value=round(data['net_salary'], 2))
+        nv_cell.font = Font(bold=True)
         row += 2
 
-    ws.cell(row=row, column=1, value='所有帳戶薪資總合計').font = Font(bold=True, size=12)
+    ws.cell(row=row, column=1, value='所有帳戶實領薪資總合計').font = Font(bold=True, size=12)
     ws.cell(row=row, column=4, value=round(results['grand_salary'], 2)).font = Font(bold=True, size=12)
 
     for col in ws.columns:
@@ -994,7 +1000,9 @@ def _export_salary_pdf(results):
             tdata.append([label, str(data['totals'][k]),
                           f'{results["prices"].get(k, 0):.2f}',
                           f'{data["subtotals"][k]:.2f}'])
-        tdata.append(['薪資總額', '', '', f'{data["total_salary"]:.2f}'])
+        tdata.append(['計薪小計（稅前）', '', '', f'{data["gross_salary"]:.2f}'])
+        tdata.append(['本期保留金（扣除）', '', '', f'-{data["period_retention"]:.2f}'])
+        tdata.append(['本期實領金額', '', '', f'{data["net_salary"]:.2f}'])
 
         t = Table(tdata, colWidths=[230, 55, 90, 90])
         t.setStyle(TableStyle([
@@ -1011,7 +1019,7 @@ def _export_salary_pdf(results):
         story.append(Spacer(1, 10))
 
     story.append(Paragraph(
-        f'所有帳戶薪資總合計：{results["grand_salary"]:.2f} NTD',
+        f'所有帳戶實領薪資總合計：{results["grand_salary"]:.2f} NTD',
         style('grand', fontSize=13, spaceBefore=10, fontName=font_name)))
 
     doc.build(story)
