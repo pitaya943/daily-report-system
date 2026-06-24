@@ -858,22 +858,26 @@ def salary():
             for uid, data in user_data.items():
                 subtotals = {k: data['totals'][k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
                 data['subtotals'] = subtotals
-                data['total_salary'] = sum(subtotals.values())
+                data['gross_salary'] = sum(subtotals.values())
                 data['period_retention'] = calc_retention_from_totals(data['totals'])
+                data['net_salary'] = data['gross_salary'] - data['period_retention']
                 data['ytd_retention'] = get_ytd_retention(uid)
                 u = users_dict.get(uid)
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
 
-            grand = sum(d['total_salary'] for d in user_data.values())
+            grand = sum(d['net_salary'] for d in user_data.values())
+            grand_gross = sum(d['gross_salary'] for d in user_data.values())
             grand_period_retention = sum(d['period_retention'] for d in user_data.values())
             grand_ytd_retention = sum(d['ytd_retention'] for d in user_data.values())
-            transfer_total = sum(d['total_salary'] for d in user_data.values()
+            transfer_total = sum(d['net_salary'] for d in user_data.values()
                                  if d['payment_method'] == 'TRANSFER')
-            cash_total = sum(d['total_salary'] for d in user_data.values()
+            cash_total = sum(d['net_salary'] for d in user_data.values()
                              if d['payment_method'] == 'CASH')
             cash_bills = calculate_cash_bills(cash_total) if cash_total > 0 else {}
             salary_results = {'start_date': start_str, 'end_date': end_str,
-                              'user_data': user_data, 'grand_salary': grand,
+                              'user_data': user_data,
+                              'grand_salary': grand,
+                              'grand_gross': grand_gross,
                               'grand_period_retention': grand_period_retention,
                               'grand_ytd_retention': grand_ytd_retention,
                               'transfer_total': transfer_total,

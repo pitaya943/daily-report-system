@@ -109,32 +109,23 @@ function openConfirmModal() {
   const vals = {};
   FIELDS.forEach(([k]) => { vals[k] = parseInt(document.getElementById(k).value) || 0; });
 
-  const A = vals.direct_13 + vals.direct_20 + vals.direct_25 + vals.direct_40;
-  const B = vals.indirect_13 + vals.indirect_20 + vals.indirect_25 + vals.indirect_40;
-  const C = vals.direct_special_group;
-  const D = vals.indirect_special_group;
-
   let rows = '';
+  let total = 0;
   FIELDS.forEach(([k, label]) => {
-    if (vals[k] > 0)
+    if (vals[k] > 0) {
       rows += `<tr><td>${label}</td><td class="text-end fw-semibold">${vals[k]}</td></tr>`;
+      total += vals[k];
+    }
   });
 
   document.getElementById('modalBody').innerHTML = `
     <p class="mb-2"><strong>日期：</strong>${rdate}</p>
-    <table class="table table-sm table-bordered mb-3">
+    <table class="table table-sm table-bordered mb-0">
       <thead class="table-light"><tr><th>工項</th><th class="text-end">只數</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="2" class="text-center text-muted">（所有欄位均為 0）</td></tr>'}</tbody>
-    </table>
-    <table class="table table-sm table-bordered table-warning mb-0">
-      <tbody>
-        <tr><td>A（直總 13~40）</td><td class="text-end">${A}</td></tr>
-        <tr><td>B（間接 13~40）</td><td class="text-end">${B}</td></tr>
-        <tr><td>C（直總特殊組）</td><td class="text-end">${C}</td></tr>
-        <tr><td>D（間接特殊組）</td><td class="text-end">${D}</td></tr>
-        <tr class="table-danger"><td><strong>合計（A+B+C+D）</strong></td>
-            <td class="text-end"><strong>${A+B+C+D}</strong></td></tr>
-      </tbody>
+      <tfoot class="table-secondary fw-bold">
+        <tr><td>合計</td><td class="text-end">${total}</td></tr>
+      </tfoot>
     </table>`;
 
   new bootstrap.Modal(document.getElementById('confirmModal')).show();

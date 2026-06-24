@@ -98,15 +98,21 @@
               {% endfor %}
             </tbody>
             <tfoot>
-              <tr class="table-success fw-bold">
-                <td colspan="3">薪資總額</td>
-                <td class="text-end">{{ data.total_salary | money }} NTD</td>
+              <tr class="table-secondary fw-semibold">
+                <td colspan="3">計薪小計（稅前）</td>
+                <td class="text-end">{{ data.gross_salary | money }} NTD</td>
               </tr>
               <tr class="fw-semibold" style="background:#fff3cd">
                 <td colspan="3">
-                  <i class="bi bi-piggy-bank me-1 text-warning"></i>本期保留金
+                  <i class="bi bi-piggy-bank me-1 text-warning"></i>本期保留金（扣除）
                 </td>
-                <td class="text-end text-warning">{{ data.period_retention | money }} NTD</td>
+                <td class="text-end text-warning">－ {{ data.period_retention | money }} NTD</td>
+              </tr>
+              <tr class="table-success fw-bold">
+                <td colspan="3">
+                  <i class="bi bi-cash-coin me-1"></i>本期實領金額
+                </td>
+                <td class="text-end text-success fs-6">{{ data.net_salary | money }} NTD</td>
               </tr>
               <tr class="fw-semibold" style="background:#fff8e1">
                 <td colspan="3">
@@ -187,13 +193,17 @@
           </div>
         </div>
 
-        <div class="alert alert-success fw-bold mb-2">
-          <i class="bi bi-cash-stack me-2"></i>
-          所有帳戶薪資總合計：{{ salary_results.grand_salary | money }} NTD
+        <div class="alert alert-secondary mb-1 py-2">
+          <i class="bi bi-list-check me-1"></i>
+          計薪小計（稅前）：{{ salary_results.grand_gross | money }} NTD
         </div>
-        <div class="alert mb-2 fw-semibold" style="background:#fff3cd;border-color:#ffc107">
-          <i class="bi bi-piggy-bank me-2 text-warning"></i>
-          所有帳戶本期保留金合計：{{ salary_results.grand_period_retention | money }} NTD
+        <div class="alert mb-1 py-2 fw-semibold" style="background:#fff3cd;border-color:#ffc107">
+          <i class="bi bi-piggy-bank me-1 text-warning"></i>
+          本期保留金合計（扣除）：－ {{ salary_results.grand_period_retention | money }} NTD
+        </div>
+        <div class="alert alert-success fw-bold mb-1">
+          <i class="bi bi-cash-stack me-2"></i>
+          所有帳戶實領薪資總合計：{{ salary_results.grand_salary | money }} NTD
         </div>
         <div class="alert mb-0 fw-semibold" style="background:#fff8e1;border-color:#ffe082">
           <i class="bi bi-piggy-bank-fill me-2 text-warning"></i>
