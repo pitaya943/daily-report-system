@@ -22,8 +22,15 @@ app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+
+def _init_db():
+    try:
+        db.create_all()
+    except Exception as e:
+        app.logger.error(f'db.create_all() failed: {e}')
+
 with app.app_context():
-    db.create_all()
+    _init_db()
 
 @app.template_filter('money')
 def money_filter(value):
