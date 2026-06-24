@@ -909,17 +909,25 @@ def _export_salary_excel(results):
     ws['A1'].font = Font(bold=True, size=14)
     ws['A1'].alignment = Alignment(horizontal='center')
 
+    blue  = PatternFill('solid', fgColor='4472C4')
+    green = PatternFill('solid', fgColor='70AD47')
+    amber = PatternFill('solid', fgColor='FFC000')
+    lgreen = PatternFill('solid', fgColor='E2EFDA')
+    lamber = PatternFill('solid', fgColor='FFF2CC')
+
     row = 3
     for uid, data in results['user_data'].items():
-        ws.cell(row=row, column=1, value=f'帳戶：{data["username"]}').font = Font(bold=True, size=12)
+        method_label = '領現 (CASH)' if data['payment_method'] == 'CASH' else '轉帳 (TRANSFER)'
+        name_cell = ws.cell(row=row, column=1,
+                            value=f'帳戶：{data["username"]}　　發薪方式：{method_label}')
+        name_cell.font = Font(bold=True, size=12)
         row += 1
 
         headers = ['工項', '只數', '單價 (NTD)', '小計 (NTD)']
-        grey = PatternFill('solid', fgColor='4472C4')
         for c, h in enumerate(headers, 1):
             cell = ws.cell(row=row, column=c, value=h)
             cell.font = Font(bold=True, color='FFFFFF')
-            cell.fill = grey
+            cell.fill = blue
             cell.alignment = Alignment(horizontal='center')
         row += 1
 
@@ -930,20 +938,87 @@ def _export_salary_excel(results):
             ws.cell(row=row, column=4, value=round(data['subtotals'][k], 2))
             row += 1
 
+        # 薪資小結
+        for col in range(1, 5):
+            ws.cell(row=row, column=col).fill = PatternFill('solid', fgColor='D9E1F2')
         ws.cell(row=row, column=1, value='計薪小計（稅前）').font = Font(bold=True)
         ws.cell(row=row, column=4, value=round(data['gross_salary'], 2)).font = Font(bold=True)
         row += 1
-        ws.cell(row=row, column=1, value='本期保留金（扣除）')
-        ws.cell(row=row, column=4, value=-round(data['period_retention'], 2))
-        row += 1
-        net_cell = ws.cell(row=row, column=1, value='本期實領金額')
-        net_cell.font = Font(bold=True)
-        nv_cell = ws.cell(row=row, column=4, value=round(data['net_salary'], 2))
-        nv_cell.font = Font(bold=True)
-        row += 2
 
-    ws.cell(row=row, column=1, value='所有帳戶實領薪資總合計').font = Font(bold=True, size=12)
-    ws.cell(row=row, column=4, value=round(results['grand_salary'], 2)).font = Font(bold=True, size=12)
+        for col in range(1, 5):
+            ws.cell(row=row, column=col).fill = lamber
+        ws.cell(row=row, column=1, value='本期保留金（扣除）').font = Font(color='C00000')
+        ws.cell(row=row, column=4, value=-round(data['period_retention'], 2)).font = Font(color='C00000')
+        row += 1
+
+        for col in range(1, 5):
+            ws.cell(row=row, column=col).fill = lgreen
+        net_cell = ws.cell(row=row, column=1, value='本期實領金額')
+        net_cell.font = Font(bold=True, color='375623')
+        nv_cell = ws.cell(row=row, column=4, value=round(data['net_salary'], 2))
+        nv_cell.font = Font(bold=True, color='375623')
+        row += 1
+
+        # 提現面額配置
+        if data['payment_method'] == 'CASH' and data['net_salary'] > 0:
+            bills = calculate_cash_bills(data['net_salary'])
+            if bills:
+                ws.cell(row=row, column=1, value='── 提現面額配置 ──').font = Font(italic=True, color='7F7F7F')
+                row += 1
+                for denom in CASH_DENOMINATIONS:
+                    cnt = bills.get(denom, 0)
+                    if cnt:
+                        ws.cell(row=row, column=1, value=f'  {denom} 元')
+                        ws.cell(row=row, column=2, value=f'× {cnt} {"張" if denom >= 100 else "枚"}')
+                        ws.cell(row=row, column=4, value=denom * cnt)
+                        row += 1
+        row += 1  # 帳戶之間空一行
+
+    # 發放總覽
+    row += 1
+    summary_title = ws.cell(row=row, column=1, value='── 薪資發放總覽 ──')
+    summary_title.font = Font(bold=True, size=12)
+    row += 1
+
+    for col in range(1, 5):
+        ws.cell(row=row, column=col).fill = blue
+    ws.cell(row=row, column=1, value='項目').font = Font(bold=True, color='FFFFFF')
+    ws.cell(row=row, column=4, value='金額 (NTD)').font = Font(bold=True, color='FFFFFF')
+    row += 1
+
+    ws.cell(row=row, column=1, value='計薪小計（稅前）合計')
+    ws.cell(row=row, column=4, value=round(results['grand_gross'], 2))
+    row += 1
+    ws.cell(row=row, column=1, value='保留金合計（扣除）').font = Font(color='C00000')
+    ws.cell(row=row, column=4, value=-round(results['grand_period_retention'], 2)).font = Font(color='C00000')
+    row += 1
+
+    for col in range(1, 5):
+        ws.cell(row=row, column=col).fill = lgreen
+    ws.cell(row=row, column=1, value='實領薪資總合計').font = Font(bold=True, color='375623')
+    ws.cell(row=row, column=4, value=round(results['grand_salary'], 2)).font = Font(bold=True, color='375623')
+    row += 1
+
+    ws.cell(row=row, column=1, value='轉帳薪資總額').font = Font(color='0070C0')
+    ws.cell(row=row, column=4, value=round(results['transfer_total'], 2)).font = Font(color='0070C0')
+    row += 1
+
+    for col in range(1, 5):
+        ws.cell(row=row, column=col).fill = lamber
+    ws.cell(row=row, column=1, value='提現薪資總額').font = Font(bold=True, color='7F4C00')
+    ws.cell(row=row, column=4, value=round(results['cash_total'], 2)).font = Font(bold=True, color='7F4C00')
+    row += 1
+
+    if results['cash_bills']:
+        ws.cell(row=row, column=1, value='提現面額配置（所有領現帳戶合計）').font = Font(italic=True)
+        row += 1
+        for denom in CASH_DENOMINATIONS:
+            cnt = results['cash_bills'].get(denom, 0)
+            if cnt:
+                ws.cell(row=row, column=1, value=f'  {denom} 元')
+                ws.cell(row=row, column=2, value=f'× {cnt} {"張" if denom >= 100 else "枚"}')
+                ws.cell(row=row, column=4, value=denom * cnt)
+                row += 1
 
     for col in ws.columns:
         max_len = max((len(str(cell.value)) for cell in col if cell.value), default=10)
@@ -987,40 +1062,119 @@ def _export_salary_pdf(results):
         kw.setdefault('leading', 16)
         return ParagraphStyle(name, **kw)
 
+    C_BLUE   = colors.HexColor('#4472C4')
+    C_GREEN  = colors.HexColor('#E2EFDA')
+    C_AMBER  = colors.HexColor('#FFF2CC')
+    C_DGREY  = colors.HexColor('#D9E1F2')
+    C_RED    = colors.HexColor('#C00000')
+    C_DGREEN = colors.HexColor('#375623')
+
     story = []
     story.append(Paragraph(
         f'薪資明細  {results["start_date"]} ～ {results["end_date"]}',
-        style('title', fontSize=16, alignment=1, spaceAfter=16, fontName=font_name)))
+        style('title', fontSize=16, alignment=1, spaceAfter=16)))
+
+    n_fields = len(REPORT_FIELDS)
 
     for uid, data in results['user_data'].items():
-        story.append(Paragraph(f'帳戶：{data["username"]}',
-                               style('h2', fontSize=12, spaceBefore=10, spaceAfter=6)))
+        method_label = '領現 (CASH)' if data['payment_method'] == 'CASH' else '轉帳 (TRANSFER)'
+        story.append(Paragraph(
+            f'帳戶：{data["username"]}　　發薪方式：{method_label}',
+            style('h2', fontSize=12, spaceBefore=10, spaceAfter=4)))
+
         tdata = [['工項', '只數', '單價(NTD)', '小計(NTD)']]
         for k, label in REPORT_FIELDS:
-            tdata.append([label, str(data['totals'][k]),
-                          f'{results["prices"].get(k, 0):.2f}',
-                          f'{data["subtotals"][k]:.2f}'])
-        tdata.append(['計薪小計（稅前）', '', '', f'{data["gross_salary"]:.2f}'])
-        tdata.append(['本期保留金（扣除）', '', '', f'-{data["period_retention"]:.2f}'])
-        tdata.append(['本期實領金額', '', '', f'{data["net_salary"]:.2f}'])
+            tdata.append([label,
+                          str(data['totals'][k]),
+                          f'{results["prices"].get(k, 0):,.0f}',
+                          f'{data["subtotals"][k]:,.0f}'])
+        # 小結行
+        tdata.append(['計薪小計（稅前）', '', '', f'{data["gross_salary"]:,.0f}'])
+        tdata.append(['本期保留金（扣除）', '', '', f'-{data["period_retention"]:,.0f}'])
+        tdata.append(['本期實領金額', '', '', f'{data["net_salary"]:,.0f}'])
 
-        t = Table(tdata, colWidths=[230, 55, 90, 90])
-        t.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), font_name),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4472C4')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#D9E1F2')),
-            ('FONTNAME', (0, -1), (-1, -1), font_name),
-        ]))
+        subtotal_row = 1 + n_fields       # 計薪小計
+        retention_row = subtotal_row + 1  # 保留金
+        net_row = retention_row + 1       # 實領
+
+        ts = TableStyle([
+            ('FONTNAME',   (0, 0), (-1, -1), font_name),
+            ('FONTSIZE',   (0, 0), (-1, -1), 8),
+            ('BACKGROUND', (0, 0), (-1, 0),  C_BLUE),
+            ('TEXTCOLOR',  (0, 0), (-1, 0),  colors.white),
+            ('ALIGN',      (1, 0), (-1, -1), 'RIGHT'),
+            ('GRID',       (0, 0), (-1, -1), 0.4, colors.grey),
+            ('BACKGROUND', (0, subtotal_row), (-1, subtotal_row), C_DGREY),
+            ('FONTNAME',   (0, subtotal_row), (-1, subtotal_row), font_name),
+            ('BACKGROUND', (0, retention_row), (-1, retention_row), C_AMBER),
+            ('TEXTCOLOR',  (0, retention_row), (-1, retention_row), C_RED),
+            ('BACKGROUND', (0, net_row), (-1, net_row), C_GREEN),
+            ('TEXTCOLOR',  (0, net_row), (-1, net_row), C_DGREEN),
+            ('FONTNAME',   (0, net_row), (-1, net_row), font_name),
+        ])
+        t = Table(tdata, colWidths=[210, 55, 90, 90])
+        t.setStyle(ts)
         story.append(t)
-        story.append(Spacer(1, 10))
 
-    story.append(Paragraph(
-        f'所有帳戶實領薪資總合計：{results["grand_salary"]:.2f} NTD',
-        style('grand', fontSize=13, spaceBefore=10, fontName=font_name)))
+        # 提現面額配置（僅限領現帳戶）
+        if data['payment_method'] == 'CASH' and data['net_salary'] > 0:
+            bills = calculate_cash_bills(data['net_salary'])
+            if bills:
+                story.append(Spacer(1, 4))
+                bdata = [['面額', '張 / 枚', '小計(NTD)']]
+                for denom in CASH_DENOMINATIONS:
+                    cnt = bills.get(denom, 0)
+                    if cnt:
+                        unit = '張' if denom >= 100 else '枚'
+                        bdata.append([f'{denom} 元', f'× {cnt} {unit}', f'{denom*cnt:,}'])
+                bt = Table(bdata, colWidths=[100, 100, 100])
+                bt.setStyle(TableStyle([
+                    ('FONTNAME',   (0, 0), (-1, -1), font_name),
+                    ('FONTSIZE',   (0, 0), (-1, -1), 8),
+                    ('BACKGROUND', (0, 0), (-1, 0),  colors.HexColor('#7F7F7F')),
+                    ('TEXTCOLOR',  (0, 0), (-1, 0),  colors.white),
+                    ('ALIGN',      (1, 0), (-1, -1), 'RIGHT'),
+                    ('GRID',       (0, 0), (-1, -1), 0.4, colors.grey),
+                    ('BACKGROUND', (0, 1), (-1, -1), C_AMBER),
+                ]))
+                story.append(bt)
+
+        story.append(Spacer(1, 14))
+
+    # 發放總覽
+    story.append(Paragraph('薪資發放總覽', style('h2', fontSize=12, spaceBefore=6, spaceAfter=4)))
+    sdata = [
+        ['項目', '金額 (NTD)'],
+        ['計薪小計（稅前）合計', f'{results["grand_gross"]:,.0f}'],
+        ['保留金合計（扣除）',   f'-{results["grand_period_retention"]:,.0f}'],
+        ['實領薪資總合計',       f'{results["grand_salary"]:,.0f}'],
+        ['轉帳薪資總額',         f'{results["transfer_total"]:,.0f}'],
+        ['提現薪資總額',         f'{results["cash_total"]:,.0f}'],
+    ]
+    if results['cash_bills']:
+        sdata.append(['── 提現面額配置（合計）──', ''])
+        for denom in CASH_DENOMINATIONS:
+            cnt = results['cash_bills'].get(denom, 0)
+            if cnt:
+                unit = '張' if denom >= 100 else '枚'
+                sdata.append([f'  {denom} 元 × {cnt} {unit}', f'{denom*cnt:,}'])
+
+    st = Table(sdata, colWidths=[250, 150])
+    n_s = len(sdata)
+    st.setStyle(TableStyle([
+        ('FONTNAME',   (0, 0), (-1, -1), font_name),
+        ('FONTSIZE',   (0, 0), (-1, -1), 9),
+        ('BACKGROUND', (0, 0), (-1, 0),  C_BLUE),
+        ('TEXTCOLOR',  (0, 0), (-1, 0),  colors.white),
+        ('ALIGN',      (1, 0), (-1, -1), 'RIGHT'),
+        ('GRID',       (0, 0), (-1, -1), 0.4, colors.grey),
+        ('BACKGROUND', (0, 3), (-1, 3),  C_GREEN),   # 實領合計
+        ('TEXTCOLOR',  (0, 3), (-1, 3),  C_DGREEN),
+        ('BACKGROUND', (0, 2), (-1, 2),  C_AMBER),   # 保留金
+        ('TEXTCOLOR',  (0, 2), (-1, 2),  C_RED),
+        ('BACKGROUND', (0, 5), (-1, 5),  C_AMBER),   # 提現
+    ]))
+    story.append(st)
 
     doc.build(story)
     buf.seek(0)
