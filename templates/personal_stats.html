@@ -1,0 +1,151 @@
+{% extends 'base.html' %}
+{% block title %}個人統計{% endblock %}
+{% block page_title %}<i class="bi bi-bar-chart-line me-2"></i>個人統計{% endblock %}
+
+{% block content %}
+<div class="alert alert-info alert-sm mb-3 py-2" style="font-size:.85rem">
+  <i class="bi bi-info-circle me-1"></i>
+  此頁面的薪資試算僅供參考，不具正式效力。<strong>正式薪資以管理員於 Salary 頁面計算的結果為準。</strong>
+</div>
+
+<div class="row g-4">
+
+  <!-- ── 工項總和查詢 ── -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-primary text-white">
+        <i class="bi bi-list-ol me-1"></i>工項總和查詢
+      </div>
+      <div class="card-body">
+        <form method="POST">
+          <input type="hidden" name="action" value="stats">
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label small mb-1">開始日期</label>
+              <input type="date" name="stats_start" class="form-control form-control-sm"
+                     value="{{ stats_start }}" required>
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">結束日期</label>
+              <input type="date" name="stats_end" class="form-control form-control-sm"
+                     value="{{ stats_end }}" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label small mb-1">確認狀態</label>
+              <select name="stats_confirm" class="form-select form-select-sm">
+                <option value="all"       {% if stats_confirm == 'all'         %}selected{% endif %}>全部</option>
+                <option value="confirmed" {% if stats_confirm == 'confirmed'   %}selected{% endif %}>僅已確認</option>
+                <option value="unconfirmed" {% if stats_confirm == 'unconfirmed' %}selected{% endif %}>僅未確認</option>
+              </select>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm">
+            <i class="bi bi-search me-1"></i>查詢
+          </button>
+        </form>
+
+        {% if totals_result %}
+        <hr>
+        <p class="small text-muted mb-2">
+          {{ totals_result.start }} ～ {{ totals_result.end }}
+          ｜{{ totals_result.count }} 筆回報
+        </p>
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-secondary">
+            <tr><th>工項</th><th class="text-end">只數加總</th></tr>
+          </thead>
+          <tbody>
+            {% for key, label in report_fields %}
+            <tr>
+              <td>{{ label }}</td>
+              <td class="text-end fw-semibold
+                {% if totals_result.totals[key] > 0 %}text-primary{% endif %}">
+                {{ totals_result.totals[key] }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-primary fw-bold">
+            <tr>
+              <td>合計</td>
+              <td class="text-end">{{ totals_result.totals.values()|sum }}</td>
+            </tr>
+          </tfoot>
+        </table>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 薪資試算 ── -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-warning bg-opacity-75">
+        <i class="bi bi-calculator me-1"></i>薪資試算（僅計算已確認回報）
+      </div>
+      <div class="card-body">
+        <form method="POST">
+          <input type="hidden" name="action" value="salary">
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="form-label small mb-1">開始日期</label>
+              <input type="date" name="salary_start" class="form-control form-control-sm"
+                     value="{{ salary_start }}" required>
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">結束日期</label>
+              <input type="date" name="salary_end" class="form-control form-control-sm"
+                     value="{{ salary_end }}" required>
+            </div>
+          </div>
+          <p class="small text-muted mb-1">各工項單位計薪（NTD）：</p>
+          {% for key, label in report_fields %}
+          <div class="mb-1 d-flex align-items-center gap-2">
+            <label class="mb-0 text-muted" style="min-width:180px;font-size:.77rem">{{ label }}</label>
+            <input type="number" name="price_{{ key }}" class="form-control form-control-sm"
+                   value="{{ salary_result.prices.get(key,0) if salary_result else 0 }}"
+                   min="0" step="0.01" style="max-width:90px">
+          </div>
+          {% endfor %}
+          <button type="submit" class="btn btn-warning btn-sm mt-3">
+            <i class="bi bi-calculator me-1"></i>試算薪資
+          </button>
+        </form>
+
+        {% if salary_result %}
+        <hr>
+        <p class="small text-muted mb-2">
+          {{ salary_result.start }} ～ {{ salary_result.end }}
+          ｜{{ salary_result.count }} 筆已確認回報
+        </p>
+        <table class="table table-sm table-bordered" style="font-size:.82rem">
+          <thead class="table-secondary">
+            <tr><th>工項</th><th class="text-end">只數</th><th class="text-end">單價</th><th class="text-end">小計(NTD)</th></tr>
+          </thead>
+          <tbody>
+            {% for key, label in report_fields %}
+            <tr>
+              <td>{{ label }}</td>
+              <td class="text-end">{{ salary_result.totals[key] }}</td>
+              <td class="text-end">{{ '%.2f' % salary_result.prices.get(key,0) }}</td>
+              <td class="text-end">{{ '%.2f' % salary_result.subtotals[key] }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-warning fw-bold">
+            <tr>
+              <td colspan="3">試算薪資總額</td>
+              <td class="text-end">{{ '%.2f' % salary_result.grand_total }} NTD</td>
+            </tr>
+          </tfoot>
+        </table>
+        <p class="text-danger small mb-0">
+          ⚠ 以上為試算結果，僅供個人參考，不具正式效力。
+        </p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

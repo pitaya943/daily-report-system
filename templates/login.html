@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登入 — 員工日報系統</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Microsoft JhengHei', '微軟正黑體', sans-serif;
+      background: linear-gradient(135deg, #1e2a3a 0%, #2563eb 100%);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    }
+    .login-card {
+      width: 400px; border: none; border-radius: 1rem;
+      box-shadow: 0 20px 60px rgba(0,0,0,.35);
+    }
+    .login-header {
+      background: linear-gradient(135deg, #1e2a3a, #2563eb);
+      border-radius: 1rem 1rem 0 0; padding: 2rem; text-align: center; color: #fff;
+    }
+    .login-header i { font-size: 2.5rem; color: #4fc3f7; }
+    .login-header h4 { margin: .5rem 0 .2rem; font-weight: 700; }
+    .login-header p { margin: 0; opacity: .7; font-size: .85rem; }
+    .login-body { padding: 1.75rem 2rem; }
+    .form-select, .form-control { border-radius: .5rem; padding: .6rem .9rem; font-size: .95rem; }
+    .form-select:focus, .form-control:focus {
+      border-color: #2563eb; box-shadow: 0 0 0 .2rem rgba(37,99,235,.2);
+    }
+    .user-avatar {
+      width: 42px; height: 42px; border-radius: 50%;
+      background: #2563eb; color: #fff;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; font-weight: 700; margin-bottom: .75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card card">
+    <div class="login-header">
+      <i class="bi bi-clipboard-data-fill"></i>
+      <h4>員工日報回報系統</h4>
+      <p>Daily Report Management</p>
+    </div>
+    <div class="login-body">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat }} py-2 mb-3" style="font-size:.875rem">
+          <i class="bi bi-exclamation-circle me-1"></i>{{ msg }}
+        </div>
+        {% endfor %}
+      {% endwith %}
+
+      <form method="POST" action="{{ url_for('login') }}">
+        <!-- Name dropdown -->
+        <div class="mb-3">
+          <label class="form-label fw-semibold">請選擇姓名</label>
+          <select name="user_id" id="userSelect" class="form-select" required
+                  onchange="updateAvatar()">
+            <option value="" disabled selected>── 選擇姓名 ──</option>
+            {% for u in active_users %}
+            <option value="{{ u.id }}" data-name="{{ u.display_name }}">
+              {{ u.display_name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Avatar preview -->
+        <div class="text-center mb-3" id="avatarArea" style="display:none!important">
+          <div class="user-avatar mx-auto" id="avatarCircle">?</div>
+        </div>
+
+        <!-- Password -->
+        <div class="mb-4">
+          <label class="form-label fw-semibold">密碼</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+            <input type="password" name="password" id="passwordInput"
+                   class="form-control" placeholder="請輸入密碼" required autocomplete="current-password">
+            <button class="btn btn-outline-secondary" type="button" id="togglePw"
+                    onclick="togglePassword()" tabindex="-1">
+              <i class="bi bi-eye" id="eyeIcon"></i>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 py-2" style="font-size:1rem">
+          <i class="bi bi-box-arrow-in-right me-2"></i>登入
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    function updateAvatar() {
+      const sel = document.getElementById('userSelect');
+      const opt = sel.selectedOptions[0];
+      if (!opt || !opt.value) return;
+      const name = opt.dataset.name || opt.textContent.trim();
+      const circle = document.getElementById('avatarCircle');
+      circle.textContent = name.charAt(0);
+      document.getElementById('avatarArea').style.setProperty('display', 'block', 'important');
+      // Auto-focus password
+      document.getElementById('passwordInput').focus();
+    }
+
+    function togglePassword() {
+      const inp = document.getElementById('passwordInput');
+      const icon = document.getElementById('eyeIcon');
+      if (inp.type === 'password') {
+        inp.type = 'text';
+        icon.className = 'bi bi-eye-slash';
+      } else {
+        inp.type = 'password';
+        icon.className = 'bi bi-eye';
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,255 @@
+{% extends 'base.html' %}
+{% block title %}設定{% endblock %}
+{% block page_title %}<i class="bi bi-gear me-2"></i>設定{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- Change own password -->
+  <div class="col-md-5">
+    <div class="card h-100">
+      <div class="card-header bg-secondary text-white">
+        <i class="bi bi-lock me-1"></i>修改密碼
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('settings_password') }}"
+              onsubmit="return confirm('確定更新密碼？')">
+          <div class="mb-3">
+            <label class="form-label">目前密碼</label>
+            <input type="password" name="old_password" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">新密碼</label>
+            <input type="password" name="new_password" class="form-control" required minlength="4">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">確認新密碼</label>
+            <input type="password" name="confirm_password" class="form-control" required>
+          </div>
+          <button type="submit" class="btn btn-secondary">
+            <i class="bi bi-check-lg me-1"></i>更新密碼
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {% if current_user.role == 'ADMIN' %}
+  <!-- User management -->
+  <div class="col-md-7">
+    <div class="card mb-4">
+      <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-people me-1"></i>帳戶管理</span>
+        <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#createUserModal">
+          <i class="bi bi-person-plus me-1"></i>新增帳戶
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
+          <thead>
+            <tr>
+              <th>#</th><th>名稱</th><th>角色</th><th>狀態</th><th>建立時間</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in all_users %}
+            <tr>
+              <td class="text-muted">{{ u.id }}</td>
+              <td>
+                <strong>{{ u.display_name }}</strong>
+                {% if u.id == current_user.id %}
+                  <span class="badge bg-primary ms-1" style="font-size:.65rem">我</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if u.role == 'ADMIN' %}
+                  <span class="badge bg-danger">ADMIN</span>
+                {% else %}
+                  <span class="badge bg-primary">USER</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if u.is_active %}
+                  <span class="badge bg-success">啟用</span>
+                {% else %}
+                  <span class="badge bg-secondary">停用</span>
+                {% endif %}
+              </td>
+              <td style="font-size:.75rem">{{ u.created_at.strftime('%Y-%m-%d') }}</td>
+              <td>
+                <button class="btn btn-outline-secondary btn-sm py-0 px-2"
+                        onclick="openEditName({{ u.id }}, '{{ u.display_name|e }}')"
+                        title="修改名稱">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                {% if u.id != current_user.id %}
+                <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
+                        onclick="openResetPwd({{ u.id }}, '{{ u.display_name|e }}')"
+                        title="重設密碼">
+                  <i class="bi bi-key"></i>
+                </button>
+                <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
+                        onclick="openDelete({{ u.id }}, '{{ u.display_name|e }}')"
+                        title="刪除帳戶">
+                  <i class="bi bi-trash"></i>
+                </button>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+{% if current_user.role == 'ADMIN' %}
+<!-- Create User Modal -->
+<div class="modal fade" id="createUserModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>新增帳戶</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('settings_create_user') }}"
+            onsubmit="return confirm('確定建立此帳戶？')">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">帳戶名稱（可使用中文）</label>
+            <input type="text" name="display_name" class="form-control"
+                   placeholder="例：陳小明" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">密碼</label>
+            <input type="password" name="password" class="form-control" required minlength="4">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">帳戶類型</label>
+            <select name="role" class="form-select">
+              <option value="USER">USER（一般使用者）</option>
+              <option value="ADMIN">ADMIN（管理者）</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-success">建立</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Display Name Modal -->
+<div class="modal fade" id="editNameModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-person-badge me-2"></i>修改顯示名稱</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="editNameForm" method="POST"
+            onsubmit="return confirm('確定修改顯示名稱？')">
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label">顯示名稱（可使用中文）</label>
+            <input type="text" name="display_name" class="form-control"
+                   id="editNameInput" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary btn-sm">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Reset Password Modal -->
+<div class="modal fade" id="resetPwdModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title"><i class="bi bi-key me-2"></i>重設密碼</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="resetPwdForm" method="POST"
+            onsubmit="return confirm('確定重設此帳戶密碼？')">
+        <div class="modal-body">
+          <p class="small mb-3">帳戶：<strong id="resetPwdUsername"></strong></p>
+          <div class="mb-2">
+            <label class="form-label">新密碼</label>
+            <input type="password" name="new_password" class="form-control" required minlength="4">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-warning btn-sm">重設</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Delete User Modal -->
+<div class="modal fade" id="deleteUserModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title"><i class="bi bi-trash me-2"></i>刪除帳戶</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="deleteUserForm" method="POST"
+            onsubmit="return confirm('最後確認：確定執行此刪除操作？')">
+        <div class="modal-body">
+          <p class="small">帳戶：<strong id="deleteUsername"></strong></p>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">資料處理方式</label>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="delete_mode" value="keep" id="modeKeep" checked>
+              <label class="form-check-label small" for="modeKeep">
+                <strong>保留歷史資料</strong>（停用帳戶，資料保留）
+              </label>
+            </div>
+            <div class="form-check mt-2">
+              <input class="form-check-input" type="radio" name="delete_mode" value="cascade" id="modeCascade">
+              <label class="form-check-label small text-danger" for="modeCascade">
+                <strong>連帶刪除</strong>（刪除帳戶及所有回報、申請紀錄）
+              </label>
+            </div>
+          </div>
+          <p class="text-muted small">⚠ 變動紀錄永久保留，不受刪除影響。</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-danger btn-sm">確認</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function openEditName(id, name) {
+  document.getElementById('editNameForm').action = `/settings/users/${id}/display-name`;
+  document.getElementById('editNameInput').value = name;
+  new bootstrap.Modal(document.getElementById('editNameModal')).show();
+}
+function openResetPwd(id, name) {
+  document.getElementById('resetPwdForm').action = `/settings/users/${id}/password`;
+  document.getElementById('resetPwdUsername').textContent = name;
+  new bootstrap.Modal(document.getElementById('resetPwdModal')).show();
+}
+function openDelete(id, name) {
+  document.getElementById('deleteUserForm').action = `/settings/users/${id}/delete`;
+  document.getElementById('deleteUsername').textContent = name;
+  new bootstrap.Modal(document.getElementById('deleteUserModal')).show();
+}
+</script>
+{% endif %}
+{% endblock %}

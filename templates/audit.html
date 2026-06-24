@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% block title %}變動紀錄{% endblock %}
+{% block page_title %}<i class="bi bi-journal-text me-2"></i>變動紀錄{% endblock %}
+
+{% block content %}
+<!-- Filter -->
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <form method="GET" class="row g-2 align-items-end">
+      <div class="col-md-2">
+        <label class="form-label small mb-1">開始日期</label>
+        <input type="date" name="start_date" class="form-control form-control-sm"
+               value="{{ start_date }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">結束日期</label>
+        <input type="date" name="end_date" class="form-control form-control-sm"
+               value="{{ end_date }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-1">操作類型</label>
+        <select name="action_type" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for at in all_action_types %}
+          <option value="{{ at }}" {% if selected_action == at %}selected{% endif %}>{{ at }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-auto">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-search me-1"></i>查詢
+        </button>
+        <a href="{{ url_for('audit') }}" class="btn btn-outline-secondary btn-sm ms-1">清除</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between">
+    <span>共 {{ logs|length }} 筆（最多顯示 500 筆）</span>
+    <small class="text-muted">變動紀錄不可修改或刪除</small>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" style="font-size:.83rem">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>時間</th>
+            <th>操作者</th>
+            <th>操作類型</th>
+            <th>操作描述</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for log in logs %}
+          {% set u = users_dict.get(log.user_id) %}
+          <tr>
+            <td class="text-muted">{{ log.id }}</td>
+            <td style="white-space:nowrap">{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ u.display_name if u else '(已刪除)' }}</td>
+            <td>
+              <span class="badge
+                {% if 'DELETE' in log.action_type or 'REJECT' in log.action_type %}bg-danger
+                {% elif 'CREATE' in log.action_type or 'APPROVE' in log.action_type %}bg-success
+                {% elif 'CONFIRM' in log.action_type %}bg-primary
+                {% elif 'UPDATE' in log.action_type or 'CHANGE' in log.action_type %}bg-warning text-dark
+                {% else %}bg-secondary{% endif %}">
+                {{ log.action_type }}
+              </span>
+            </td>
+            <td>{{ log.description }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">無紀錄</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

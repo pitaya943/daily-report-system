@@ -1,0 +1,155 @@
+{% extends 'base.html' %}
+{% block title %}回報頁面{% endblock %}
+{% block page_title %}<i class="bi bi-pencil-square me-2"></i>填寫日報{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-xl-7 col-lg-9">
+    <div class="card">
+      <div class="card-header bg-primary text-white">
+        填寫工作回報（所有數量單位：只）
+      </div>
+      <div class="card-body p-4">
+        <form id="reportForm">
+          <!-- Date -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold">回報日期</label>
+            <input type="date" class="form-control" id="rdate" name="date"
+                   value="{{ today }}" required style="max-width:200px">
+          </div>
+
+          <!-- Direct totals -->
+          <h6 class="text-primary border-bottom pb-1 mb-3">
+            <i class="bi bi-arrow-right-circle me-1"></i>直總類
+          </h6>
+          <div class="row g-3 mb-4">
+            {% for key, label in report_fields[:4] %}
+            <div class="col-6 col-md-3">
+              <label class="form-label small text-muted">{{ label }}</label>
+              <input type="number" class="form-control field-input"
+                     id="{{ key }}" name="{{ key }}" value="0" min="0">
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- Indirect totals -->
+          <h6 class="text-info border-bottom pb-1 mb-3">
+            <i class="bi bi-arrow-return-right me-1"></i>間接類
+          </h6>
+          <div class="row g-3 mb-4">
+            {% for key, label in report_fields[4:8] %}
+            <div class="col-6 col-md-3">
+              <label class="form-label small text-muted">{{ label }}</label>
+              <input type="number" class="form-control field-input"
+                     id="{{ key }}" name="{{ key }}" value="0" min="0">
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- Special / Other -->
+          <h6 class="text-warning border-bottom pb-1 mb-3">
+            <i class="bi bi-star me-1"></i>其他工項
+          </h6>
+          <div class="row g-3 mb-4">
+            {% for key, label in report_fields[8:] %}
+            <div class="col-6 col-md-4">
+              <label class="form-label small text-muted">{{ label }}</label>
+              <input type="number" class="form-control field-input"
+                     id="{{ key }}" name="{{ key }}" value="0" min="0">
+            </div>
+            {% endfor %}
+          </div>
+
+          <button type="button" class="btn btn-primary px-4"
+                  onclick="openConfirmModal()">
+            <i class="bi bi-send me-1"></i>送出回報
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Confirmation Modal ─────────────────────────────── -->
+<div class="modal fade" id="confirmModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-warning bg-opacity-25 border-warning">
+        <h5 class="modal-title">
+          <i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>確認送出回報
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">請確認以下回報內容無誤後再送出</p>
+        <div id="modalBody"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">
+          <i class="bi bi-arrow-left me-1"></i>返回修改
+        </button>
+        <button class="btn btn-primary" onclick="doSubmit()">
+          <i class="bi bi-check-lg me-1"></i>確認送出
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden submit form -->
+<form id="realForm" method="POST" action="{{ url_for('report') }}" style="display:none"></form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const FIELDS = {{ report_fields | tojson }};
+
+function openConfirmModal() {
+  const rdate = document.getElementById('rdate').value;
+  const vals = {};
+  FIELDS.forEach(([k]) => { vals[k] = parseInt(document.getElementById(k).value) || 0; });
+
+  const A = vals.direct_13 + vals.direct_20 + vals.direct_25 + vals.direct_40;
+  const B = vals.indirect_13 + vals.indirect_20 + vals.indirect_25 + vals.indirect_40;
+  const C = vals.direct_special_group;
+  const D = vals.indirect_special_group;
+
+  let rows = '';
+  FIELDS.forEach(([k, label]) => {
+    if (vals[k] > 0)
+      rows += `<tr><td>${label}</td><td class="text-end fw-semibold">${vals[k]}</td></tr>`;
+  });
+
+  document.getElementById('modalBody').innerHTML = `
+    <p class="mb-2"><strong>日期：</strong>${rdate}</p>
+    <table class="table table-sm table-bordered mb-3">
+      <thead class="table-light"><tr><th>工項</th><th class="text-end">只數</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="2" class="text-center text-muted">（所有欄位均為 0）</td></tr>'}</tbody>
+    </table>
+    <table class="table table-sm table-bordered table-warning mb-0">
+      <tbody>
+        <tr><td>A（直總 13~40）</td><td class="text-end">${A}</td></tr>
+        <tr><td>B（間接 13~40）</td><td class="text-end">${B}</td></tr>
+        <tr><td>C（直總特殊組）</td><td class="text-end">${C}</td></tr>
+        <tr><td>D（間接特殊組）</td><td class="text-end">${D}</td></tr>
+        <tr class="table-danger"><td><strong>合計（A+B+C+D）</strong></td>
+            <td class="text-end"><strong>${A+B+C+D}</strong></td></tr>
+      </tbody>
+    </table>`;
+
+  new bootstrap.Modal(document.getElementById('confirmModal')).show();
+}
+
+function doSubmit() {
+  const src = document.getElementById('reportForm');
+  const dest = document.getElementById('realForm');
+  dest.innerHTML = '';
+  src.querySelectorAll('input').forEach(inp => {
+    const h = document.createElement('input');
+    h.type = 'hidden'; h.name = inp.name; h.value = inp.value;
+    dest.appendChild(h);
+  });
+  dest.submit();
+}
+</script>
+{% endblock %}

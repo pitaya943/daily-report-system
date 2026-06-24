@@ -1,0 +1,213 @@
+{% extends 'base.html' %}
+{% block title %}剩餘材料{% endblock %}
+{% block page_title %}<i class="bi bi-box-seam me-2"></i>剩餘材料{% endblock %}
+
+{% block content %}
+
+<!-- Materials list -->
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center
+              {% if current_user.role == 'ADMIN' %}bg-success text-white{% endif %}">
+    <span><i class="bi bi-boxes me-1"></i>材料庫存</span>
+    {% if current_user.role == 'ADMIN' %}
+    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#addMaterialModal">
+      <i class="bi bi-plus-lg me-1"></i>新增材料
+    </button>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-sm mb-0">
+      <thead>
+        <tr>
+          <th>#</th><th>材料名稱</th><th>單位</th>
+          <th class="text-center">剩餘數量</th>
+          <th class="text-center">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in all_materials %}
+        <tr>
+          <td class="text-muted">{{ m.id }}</td>
+          <td>{{ m.name }}</td>
+          <td>{{ m.unit }}</td>
+          <td class="text-center fw-semibold
+            {% if m.remaining_quantity <= 5 %}text-danger{% elif m.remaining_quantity <= 20 %}text-warning{% else %}text-success{% endif %}">
+            {{ m.remaining_quantity }}
+          </td>
+          <td class="text-center">
+            {% if current_user.role == 'USER' %}
+            <button class="btn btn-outline-primary btn-sm py-0 px-2"
+                    onclick="openRequest({{ m.id }}, '{{ m.name }}', '{{ m.unit }}', {{ m.remaining_quantity }})">
+              <i class="bi bi-cart-plus me-1"></i>申請
+            </button>
+            {% else %}
+            <button class="btn btn-outline-warning btn-sm py-0 px-2"
+                    onclick="openUpdate({{ m.id }}, '{{ m.name }}', '{{ m.unit }}', {{ m.remaining_quantity }})">
+              <i class="bi bi-pencil me-1"></i>調整
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-3">尚無材料</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- USER: My requests -->
+{% if current_user.role == 'USER' and my_requests is not none %}
+<div class="card">
+  <div class="card-header">
+    <i class="bi bi-list-check me-1"></i>我的申請紀錄
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead>
+        <tr><th>材料</th><th class="text-center">數量</th><th>申請時間</th><th class="text-center">狀態</th></tr>
+      </thead>
+      <tbody>
+        {% for req in my_requests %}
+        {% set mat_id = req.material_id %}
+        <tr>
+          <td>
+            {% for m in all_materials if m.id == mat_id %}{{ m.name }} ({{ m.unit }}){% endfor %}
+          </td>
+          <td class="text-center">{{ req.requested_quantity }}</td>
+          <td style="font-size:.8rem">{{ req.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="text-center">
+            {% if req.status == 'PENDING' %}
+              <span class="badge bg-warning text-dark">待審核</span>
+            {% elif req.status == 'APPROVED' %}
+              <span class="badge bg-success">已核准</span>
+            {% else %}
+              <span class="badge bg-danger">已駁回</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="text-center text-muted py-3">尚無申請紀錄</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── USER: Request Modal ──────────────────────────────── -->
+{% if current_user.role == 'USER' %}
+<div class="modal fade" id="requestModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title"><i class="bi bi-cart-plus me-2"></i>申請材料</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('materials_request') }}"
+            onsubmit="return confirm('確定送出此材料申請？')">
+        <input type="hidden" name="material_id" id="reqMaterialId">
+        <div class="modal-body">
+          <p class="mb-1">材料：<strong id="reqMaterialName"></strong></p>
+          <p class="mb-3">目前庫存：<strong id="reqStock"></strong> <span id="reqUnit"></span></p>
+          <div class="mb-2">
+            <label class="form-label">申請數量</label>
+            <input type="number" name="quantity" class="form-control"
+                   min="1" required id="reqQty">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary btn-sm">送出申請</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── ADMIN: Add Material Modal ───────────────────────── -->
+{% if current_user.role == 'ADMIN' %}
+<div class="modal fade" id="addMaterialModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title"><i class="bi bi-plus-lg me-2"></i>新增材料</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('materials_add') }}"
+            onsubmit="return confirm('確定新增此材料？')">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">材料名稱</label>
+            <input type="text" name="name" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">單位（如：個、箱、公尺）</label>
+            <input type="text" name="unit" class="form-control" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">初始數量</label>
+            <input type="number" name="quantity" class="form-control" value="0" min="0">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-success btn-sm">新增</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN: Update Quantity Modal -->
+<div class="modal fade" id="updateModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>調整數量</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="updateForm" method="POST"
+            onsubmit="return confirm('確定更新庫存數量？')">
+        <div class="modal-body">
+          <p class="mb-1">材料：<strong id="updName"></strong></p>
+          <p class="mb-3">單位：<strong id="updUnit"></strong></p>
+          <div class="mb-2">
+            <label class="form-label">新數量</label>
+            <input type="number" name="quantity" class="form-control" id="updQty" min="0" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-warning btn-sm">更新</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% if current_user.role == 'USER' %}
+function openRequest(id, name, unit, stock) {
+  document.getElementById('reqMaterialId').value = id;
+  document.getElementById('reqMaterialName').textContent = name;
+  document.getElementById('reqUnit').textContent = unit;
+  document.getElementById('reqStock').textContent = stock;
+  document.getElementById('reqQty').max = stock;
+  new bootstrap.Modal(document.getElementById('requestModal')).show();
+}
+{% else %}
+function openUpdate(id, name, unit, qty) {
+  document.getElementById('updateForm').action = `/materials/${id}/update`;
+  document.getElementById('updName').textContent = name;
+  document.getElementById('updUnit').textContent = unit;
+  document.getElementById('updQty').value = qty;
+  new bootstrap.Modal(document.getElementById('updateModal')).show();
+}
+{% endif %}
+</script>
+{% endblock %}

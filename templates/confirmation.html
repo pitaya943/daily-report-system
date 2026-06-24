@@ -1,0 +1,113 @@
+{% extends 'base.html' %}
+{% block title %}確認{% endblock %}
+{% block page_title %}<i class="bi bi-check-circle me-2"></i>確認頁面{% endblock %}
+
+{% block content %}
+
+<!-- Report confirmation -->
+<div class="card mb-4">
+  <div class="card-header bg-warning bg-opacity-25 border-warning">
+    <i class="bi bi-clipboard-check me-1"></i>
+    待確認回報
+    <span class="badge bg-warning text-dark ms-1">{{ pending_reports|length }}</span>
+  </div>
+  <div class="card-body p-0">
+    {% if pending_reports %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" style="font-size:.82rem; min-width:1200px">
+        <thead>
+          <tr>
+            <th>#</th><th>帳戶</th><th>日期</th>
+            {% for key, label in report_fields %}
+            <th class="text-center" title="{{ label }}">{{ label[:4] }}</th>
+            {% endfor %}
+            <th class="text-center">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in pending_reports %}
+          <tr>
+            <td class="text-muted">{{ r.id }}</td>
+            <td>{{ users_dict.get(r.user_id).display_name if users_dict.get(r.user_id) else '?' }}</td>
+            <td>{{ r.report_date }}</td>
+            {% for key, _ in report_fields %}
+            <td class="text-center">{{ r[key] if r[key] else '' }}</td>
+            {% endfor %}
+            <td class="text-center">
+              <form method="POST"
+                    action="{{ url_for('confirm_report', report_id=r.id) }}"
+                    style="display:inline"
+                    onsubmit="return confirm('確定確認 {{ r.report_date }} 的回報 #{{ r.id }}？此操作無法撤銷。')">
+                <button type="submit" class="btn btn-success btn-sm py-0 px-3">
+                  <i class="bi bi-check-lg me-1"></i>確認
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-center text-muted py-3 mb-0">
+      <i class="bi bi-check-all me-1"></i>所有回報皆已確認
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Material request review -->
+<div class="card">
+  <div class="card-header bg-info bg-opacity-25 border-info">
+    <i class="bi bi-cart me-1"></i>
+    待審核材料申請
+    <span class="badge bg-info text-dark ms-1">{{ pending_materials|length }}</span>
+  </div>
+  <div class="card-body p-0">
+    {% if pending_materials %}
+    <table class="table table-sm table-hover mb-0">
+      <thead>
+        <tr><th>#</th><th>申請者</th><th>材料</th><th class="text-center">申請數量</th><th>申請時間</th><th class="text-center">操作</th></tr>
+      </thead>
+      <tbody>
+        {% for req in pending_materials %}
+        {% set m = materials_dict.get(req.material_id) %}
+        {% set u = users_dict.get(req.user_id) %}
+        <tr>
+          <td class="text-muted">{{ req.id }}</td>
+          <td>{{ u.display_name if u else '?' }}</td>
+          <td>{{ m.name if m else '?' }}</td>
+          <td class="text-center fw-semibold">
+            {{ req.requested_quantity }}{{ m.unit if m else '' }}
+          </td>
+          <td style="font-size:.8rem">{{ req.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="text-center">
+            <form method="POST"
+                  action="{{ url_for('approve_material', req_id=req.id) }}"
+                  style="display:inline"
+                  onsubmit="return confirm('確定核准 #{{ req.id }} 申請？庫存將扣除 {{ req.requested_quantity }}{{ m.unit if m else '' }}。')">
+              <button type="submit" class="btn btn-success btn-sm py-0 px-2">
+                <i class="bi bi-check-lg me-1"></i>核准
+              </button>
+            </form>
+            <form method="POST"
+                  action="{{ url_for('reject_material', req_id=req.id) }}"
+                  style="display:inline"
+                  onsubmit="return confirm('確定駁回 #{{ req.id }} 申請？')">
+              <button type="submit" class="btn btn-danger btn-sm py-0 px-2 ms-1">
+                <i class="bi bi-x-lg me-1"></i>駁回
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-center text-muted py-3 mb-0">
+      <i class="bi bi-inbox me-1"></i>無待審核的材料申請
+    </p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,173 @@
+{% extends 'base.html' %}
+{% block title %}歷史紀錄{% endblock %}
+{% block page_title %}<i class="bi bi-clock-history me-2"></i>歷史紀錄{% endblock %}
+
+{% block content %}
+<!-- Filter -->
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <form method="GET" class="row g-2 align-items-end">
+      {% if current_user.role == 'ADMIN' %}
+      <div class="col-md-3">
+        <label class="form-label small mb-1">帳戶</label>
+        <select name="user_id" class="form-select form-select-sm">
+          <option value="">全部帳戶</option>
+          {% for u in all_users %}
+          <option value="{{ u.id }}" {% if selected_user_id|string == u.id|string %}selected{% endif %}>
+            {{ u.display_name }}{% if not u.is_active %} (停用){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <div class="col-md-3">
+        <label class="form-label small mb-1">開始日期</label>
+        <input type="date" name="start_date" class="form-control form-control-sm"
+               value="{{ start_date }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-1">結束日期</label>
+        <input type="date" name="end_date" class="form-control form-control-sm"
+               value="{{ end_date }}">
+      </div>
+      <div class="col-md-auto">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-search me-1"></i>查詢
+        </button>
+        <a href="{{ url_for('history') }}" class="btn btn-outline-secondary btn-sm ms-1">清除</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>共 {{ reports|length }} 筆紀錄</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0" style="font-size:.84rem">
+        <thead>
+          <tr>
+            <th>#</th>
+            {% if current_user.role == 'ADMIN' %}<th>帳戶</th>{% endif %}
+            <th>日期</th>
+            {% for key, label in report_fields %}
+            <th class="text-center" title="{{ label }}">{{ label[:3] }}..</th>
+            {% endfor %}
+            <th class="text-center">狀態</th>
+            <th class="text-center">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in reports %}
+          <tr>
+            <td class="text-muted">{{ r.id }}</td>
+            {% if current_user.role == 'ADMIN' %}
+            <td>
+              {% set u = users_dict.get(r.user_id) %}
+              {{ u.display_name if u else '(已刪除)' }}
+            </td>
+            {% endif %}
+            <td>{{ r.report_date }}</td>
+            {% for key, _ in report_fields %}
+            <td class="text-center">{{ r[key] if r[key] else '' }}</td>
+            {% endfor %}
+            <td class="text-center">
+              {% if r.is_confirmed %}
+              <span class="badge bg-success">已確認</span>
+              {% else %}
+              <span class="badge bg-secondary">未確認</span>
+              {% endif %}
+            </td>
+            <td class="text-center">
+              <button class="btn btn-outline-primary btn-sm py-0 px-2"
+                      onclick="openEdit({{ r.id }}, {{ r | report_json }})">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
+                      onclick="confirmDelete({{ r.id }}, '{{ r.report_date }}')">
+                <i class="bi bi-trash"></i>
+              </button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="20" class="text-center text-muted py-4">無資料</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>修改回報</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="editForm" method="POST"
+            onsubmit="return confirm('確定儲存修改？')">
+        <div class="modal-body">
+          <div id="editFields" class="row g-3"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Delete form -->
+<form id="deleteForm" method="POST" style="display:none">
+  <input type="hidden" name="confirm" value="1">
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const FIELDS = {{ report_fields | tojson }};
+
+function getVal(r, k) {
+  const map = {
+    direct_13: r.direct_13, direct_20: r.direct_20,
+    direct_25: r.direct_25, direct_40: r.direct_40,
+    indirect_13: r.indirect_13, indirect_20: r.indirect_20,
+    indirect_25: r.indirect_25, indirect_40: r.indirect_40,
+    direct_special_group: r.direct_special_group,
+    indirect_special_group: r.indirect_special_group,
+    downsize: r.downsize, original_downsize: r.original_downsize,
+    special: r.special, mobilization: r.mobilization,
+    recheck: r.recheck, soil_clearing: r.soil_clearing,
+  };
+  return map[k] ?? 0;
+}
+
+function openEdit(id, r) {
+  document.getElementById('editForm').action = `/history/${id}/edit`;
+  const container = document.getElementById('editFields');
+  container.innerHTML = '';
+  FIELDS.forEach(([k, label]) => {
+    container.innerHTML += `
+      <div class="col-6 col-md-3">
+        <label class="form-label small text-muted">${label}</label>
+        <input type="number" class="form-control form-control-sm"
+               name="${k}" value="${getVal(r, k)}" min="0">
+      </div>`;
+  });
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+
+function confirmDelete(id, dt) {
+  if (!confirm(`確定刪除 ${dt} 的回報 #${id}？`)) return;
+  const f = document.getElementById('deleteForm');
+  f.action = `/history/${id}/delete`;
+  f.submit();
+}
+</script>
+{% endblock %}
