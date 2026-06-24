@@ -1020,9 +1020,16 @@ def _export_salary_excel(results):
                 ws.cell(row=row, column=4, value=denom * cnt)
                 row += 1
 
-    for col in ws.columns:
-        max_len = max((len(str(cell.value)) for cell in col if cell.value), default=10)
-        ws.column_dimensions[col[0].column_letter].width = min(max_len * 2.2 + 4, 60)
+    from openpyxl.utils import get_column_letter
+    from openpyxl.cell.cell import MergedCell
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
+        max_len = max(
+            (len(str(c.value)) for c in ws[col_letter]
+             if c.value and not isinstance(c, MergedCell)),
+            default=10
+        )
+        ws.column_dimensions[col_letter].width = min(max_len * 2.2 + 4, 60)
 
     buf = io.BytesIO()
     wb.save(buf)
