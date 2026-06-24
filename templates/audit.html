@@ -17,6 +17,20 @@
         <input type="date" name="end_date" class="form-control form-control-sm"
                value="{{ end_date }}">
       </div>
+      {% if current_user.role == 'ADMIN' %}
+      <div class="col-md-2">
+        <label class="form-label small mb-1">操作者</label>
+        <select name="user_id" class="form-select form-select-sm">
+          <option value="">全部帳戶</option>
+          {% for u in all_users %}
+          <option value="{{ u.id }}"
+            {% if selected_user_id|string == u.id|string %}selected{% endif %}>
+            {{ u.display_name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
       <div class="col-md-3">
         <label class="form-label small mb-1">操作類型</label>
         <select name="action_type" class="form-select form-select-sm">

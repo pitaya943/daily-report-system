@@ -794,10 +794,13 @@ def audit():
     start_date = request.args.get('start_date', '')
     end_date = request.args.get('end_date', '')
     action_type_filter = request.args.get('action_type', '')
+    user_id_filter = request.args.get('user_id', '')
 
     q = AuditLog.query
     if current_user.role == 'USER':
         q = q.filter_by(user_id=current_user.id)
+    elif user_id_filter:
+        q = q.filter_by(user_id=int(user_id_filter))
 
     if start_date:
         q = q.filter(AuditLog.created_at >= datetime.fromisoformat(start_date))
@@ -808,15 +811,18 @@ def audit():
 
     logs = q.order_by(AuditLog.created_at.desc()).limit(500).all()
     users_dict = {u.id: u for u in User.query.all()}
+    all_users = User.query.order_by(User.display_name).all() if current_user.role == 'ADMIN' else []
     all_action_types = [r[0] for r in db.session.query(AuditLog.action_type).distinct().all()]
 
     return render_template('audit.html',
                            logs=logs,
                            users_dict=users_dict,
+                           all_users=all_users,
                            all_action_types=all_action_types,
                            start_date=start_date,
                            end_date=end_date,
-                           selected_action=action_type_filter)
+                           selected_action=action_type_filter,
+                           selected_user_id=user_id_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -1062,19 +1068,19 @@ def _export_salary_pdf(results):
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
-    font_name = 'Helvetica'
+    # Use reportlab built-in CID font — no system font installation required
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+        font_name = 'STSong-Light'
+    except Exception:
+        font_name = 'Helvetica'
+
+    # Override with a better TTF if available locally (Windows / macOS dev)
     _cjk_candidates = [
-        # Windows
         'C:/Windows/Fonts/msjh.ttc',
         'C:/Windows/Fonts/msyh.ttc',
-        'C:/Windows/Fonts/simsun.ttc',
-        # Linux (Ubuntu / Railway — install via nixpacks.toml)
-        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/truetype/arphic/uming.ttc',
-        # macOS
         '/System/Library/Fonts/PingFang.ttc',
-        '/Library/Fonts/Arial Unicode.ttf',
     ]
     for fp in _cjk_candidates:
         if os.path.exists(fp):
