@@ -34,6 +34,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Generated PDFs
+*.pdf
+
 # Environment
 .env
 .env.*
