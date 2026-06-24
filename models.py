@@ -15,6 +15,8 @@ class User(UserMixin, db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    payment_method = db.Column(db.String(10), nullable=False, default='TRANSFER')  # CASH or TRANSFER
+
     @property
     def username(self):
         return f"uid_{self.id}"
@@ -33,11 +35,16 @@ class Report(db.Model):
     indirect_20 = db.Column(db.Integer, default=0)
     indirect_25 = db.Column(db.Integer, default=0)
     indirect_40 = db.Column(db.Integer, default=0)
-    direct_special_group = db.Column(db.Integer, default=0)
-    indirect_special_group = db.Column(db.Integer, default=0)
-    downsize = db.Column(db.Integer, default=0)
-    original_downsize = db.Column(db.Integer, default=0)
-    special = db.Column(db.Integer, default=0)
+    original_change = db.Column(db.Integer, default=0)
+    direct_switch_valve = db.Column(db.Integer, default=0)
+    indirect_switch_valve = db.Column(db.Integer, default=0)
+    switch_valve_13_25 = db.Column(db.Integer, default=0)
+    switch_valve_40 = db.Column(db.Integer, default=0)
+    direct_fixed_13_25 = db.Column(db.Integer, default=0)
+    direct_fixed_40 = db.Column(db.Integer, default=0)
+    indirect_fixed_13_25 = db.Column(db.Integer, default=0)
+    indirect_fixed_40 = db.Column(db.Integer, default=0)
+    pipe_repair = db.Column(db.Integer, default=0)
     mobilization = db.Column(db.Integer, default=0)
     recheck = db.Column(db.Integer, default=0)
     soil_clearing = db.Column(db.Integer, default=0)
@@ -68,6 +75,12 @@ class MaterialRequest(db.Model):
     reviewed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     reviewed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class SystemConfig(db.Model):
+    __tablename__ = 'system_config'
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.String(200), nullable=False)
 
 
 class AuditLog(db.Model):

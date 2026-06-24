@@ -9,7 +9,7 @@ from flask_login import (LoginManager, login_user, logout_user,
                          login_required, current_user)
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from models import db, User, Report, Material, MaterialRequest, AuditLog
+from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'daily-report-secret-2026-yc'
@@ -17,6 +17,18 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///daily_report.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+
+@app.template_filter('money')
+def money_filter(value):
+    """Format number with comma thousands separator; auto-detects decimal need."""
+    try:
+        v = float(value)
+        if abs(v - round(v)) < 0.005:
+            return f'{int(round(v)):,}'
+        return f'{v:,.2f}'
+    except (ValueError, TypeError):
+        return str(value)
+
 
 @app.template_filter('report_json')
 def report_json_filter(r):
@@ -56,23 +68,99 @@ def admin_required(f):
 # ---------------------------------------------------------------------------
 
 REPORT_FIELDS = [
-    ('direct_13',           '直總-13'),
-    ('direct_20',           '直總-20'),
-    ('direct_25',           '直總-25'),
-    ('direct_40',           '直總-40'),
-    ('indirect_13',         '間接-13'),
-    ('indirect_20',         '間接-20'),
-    ('indirect_25',         '間接-25'),
-    ('indirect_40',         '間接-40'),
-    ('direct_special_group',   '直總—整組、拆泥、換由令(含表)'),
-    ('indirect_special_group', '間接—拆泥、換由令(含表)'),
-    ('downsize',            '大改小(不含表)'),
-    ('original_downsize',   '原大改小(不含表)'),
-    ('special',             '特殊'),
-    ('mobilization',        '動員'),
-    ('recheck',             '複查案'),
-    ('soil_clearing',       '清土'),
+    ('direct_13',              '直總-13'),
+    ('direct_20',              '直總-20'),
+    ('direct_25',              '直總-25'),
+    ('direct_40',              '直總-40'),
+    ('indirect_13',            '間接-13'),
+    ('indirect_20',            '間接-20'),
+    ('indirect_25',            '間接-25'),
+    ('indirect_40',            '間接-40'),
+    ('original_change',        '原改'),
+    ('direct_switch_valve',    '直總-換由令(含表)-13~25'),
+    ('indirect_switch_valve',  '間接-換由令(含表)-13~25'),
+    ('switch_valve_13_25',     '13~25換開關(含表)'),
+    ('switch_valve_40',        '40換開關(含表)'),
+    ('direct_fixed_13_25',     '直總-13~25固拆(含表)'),
+    ('direct_fixed_40',        '直總-40固拆(含表)'),
+    ('indirect_fixed_13_25',   '間接-13~25固拆(含表)'),
+    ('indirect_fixed_40',      '間接-40固拆(含表)'),
+    ('pipe_repair',            '管修(提高)'),
+    ('mobilization',           '動員'),
+    ('recheck',                '複查案/9年表'),
+    ('soil_clearing',          '清積土'),
 ]
+
+DEFAULT_PRICES = {
+    'direct_13':            100.0,
+    'direct_20':            100.0,
+    'direct_25':            100.0,
+    'direct_40':            150.0,
+    'indirect_13':           55.0,
+    'indirect_20':           55.0,
+    'indirect_25':           55.0,
+    'indirect_40':          105.0,
+    'original_change':       45.0,
+    'direct_switch_valve':  200.0,
+    'indirect_switch_valve':150.0,
+    'switch_valve_13_25':   320.0,
+    'switch_valve_40':      450.0,
+    'direct_fixed_13_25':   340.0,
+    'direct_fixed_40':      500.0,
+    'indirect_fixed_13_25': 230.0,
+    'indirect_fixed_40':    450.0,
+    'pipe_repair':          150.0,
+    'mobilization':        1200.0,
+    'recheck':               60.0,
+    'soil_clearing':        100.0,
+}
+
+# 保留金：以下 8 個欄位每只抽 20 NTD
+RETENTION_FIELDS = [
+    'direct_13', 'direct_20', 'direct_25', 'direct_40',
+    'indirect_13', 'indirect_20', 'indirect_25', 'indirect_40',
+]
+RETENTION_RATE = 20  # default fallback
+
+
+def get_retention_rate() -> float:
+    """從 SystemConfig 讀取保留金費率，找不到則回傳預設值 20"""
+    cfg = db.session.get(SystemConfig, 'retention_rate')
+    return float(cfg.value) if cfg else float(RETENTION_RATE)
+
+
+def calc_retention_from_totals(totals: dict) -> float:
+    """計算保留金：RETENTION_FIELDS 的合計只數 × 當前費率"""
+    rate = get_retention_rate()
+    return sum(totals.get(f, 0) for f in RETENTION_FIELDS) * rate
+
+
+def get_ytd_retention(user_id: int) -> float:
+    """取得指定帳戶今年度（Jan 1 ~ 今日）累積保留金（僅計算已確認回報）"""
+    year_start = date(date.today().year, 1, 1)
+    reports = Report.query.filter(
+        Report.user_id == user_id,
+        Report.is_confirmed == True,
+        Report.report_date >= year_start,
+        Report.report_date <= date.today()
+    ).all()
+    totals = {f: sum(getattr(r, f, 0) for r in reports) for f in RETENTION_FIELDS}
+    return calc_retention_from_totals(totals)
+
+
+CASH_DENOMINATIONS = [1000, 500, 100, 50, 10, 5, 1]
+
+
+def calculate_cash_bills(amount: float) -> dict:
+    """以最少張/枚數組合現金面額，回傳 {面額: 張數} dict（只含非零項）"""
+    remaining = round(amount)
+    result = {}
+    for d in CASH_DENOMINATIONS:
+        count = remaining // d
+        if count:
+            result[d] = count
+            remaining -= count * d
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +357,8 @@ def history_delete(report_id):
 @login_required
 def settings():
     all_users = User.query.order_by(User.created_at).all() if current_user.role == 'ADMIN' else []
-    return render_template('settings.html', all_users=all_users)
+    return render_template('settings.html', all_users=all_users,
+                           retention_rate=int(get_retention_rate()))
 
 
 @app.route('/settings/password', methods=['POST'])
@@ -311,9 +400,13 @@ def settings_create_user():
     elif len(password) < 4:
         flash('密碼至少需要 4 個字元', 'danger')
     else:
+        payment_method = request.form.get('payment_method', 'TRANSFER')
+        if payment_method not in ('CASH', 'TRANSFER'):
+            payment_method = 'TRANSFER'
         u = User(display_name=display_name,
                  password_hash=generate_password_hash(password),
-                 role=role, is_active=True)
+                 role=role, is_active=True,
+                 payment_method=payment_method)
         db.session.add(u)
         add_audit(current_user.id, 'ACCOUNT_CREATE',
                   f'建立帳戶「{display_name}」（角色：{role}）')
@@ -341,6 +434,46 @@ def settings_update_display_name(user_id):
                   f'更新帳戶名稱：{old_name} → {new_name}')
         db.session.commit()
         flash(f'名稱已更新為「{new_name}」', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/users/<int:user_id>/payment-method', methods=['POST'])
+@admin_required
+def settings_payment_method(user_id):
+    target = db.session.get(User, user_id)
+    if not target:
+        abort(404)
+    method = request.form.get('payment_method', 'TRANSFER')
+    if method not in ('CASH', 'TRANSFER'):
+        method = 'TRANSFER'
+    old = target.payment_method
+    target.payment_method = method
+    target.updated_at = datetime.utcnow()
+    label = '領現' if method == 'CASH' else '轉帳'
+    add_audit(current_user.id, 'ACCOUNT_UPDATE',
+              f'更新「{target.display_name}」發薪方式：{old} → {method}')
+    db.session.commit()
+    flash(f'「{target.display_name}」發薪方式已更新為「{label}」', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/retention-rate', methods=['POST'])
+@admin_required
+def settings_retention_rate():
+    try:
+        rate = max(0, int(request.form.get('rate', 20)))
+    except (ValueError, TypeError):
+        flash('請輸入有效的整數', 'danger')
+        return redirect(url_for('settings'))
+    cfg = db.session.get(SystemConfig, 'retention_rate')
+    if cfg:
+        cfg.value = str(rate)
+    else:
+        db.session.add(SystemConfig(key='retention_rate', value=str(rate)))
+    add_audit(current_user.id, 'SYSTEM_CONFIG',
+              f'更新保留金費率：{rate} NTD/只')
+    db.session.commit()
+    flash(f'保留金費率已更新為 {rate} NTD/只', 'success')
     return redirect(url_for('settings'))
 
 
@@ -680,7 +813,7 @@ def audit():
 @admin_required
 def salary():
     salary_results = None
-    form_data = {'prices': {k: 0.0 for k, _ in REPORT_FIELDS}}
+    form_data = {'prices': {k: DEFAULT_PRICES.get(k, 0.0) for k, _ in REPORT_FIELDS}}
 
     if request.method == 'POST':
         action = request.form.get('action', 'calculate')
@@ -726,10 +859,27 @@ def salary():
                 subtotals = {k: data['totals'][k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
                 data['subtotals'] = subtotals
                 data['total_salary'] = sum(subtotals.values())
+                data['period_retention'] = calc_retention_from_totals(data['totals'])
+                data['ytd_retention'] = get_ytd_retention(uid)
+                u = users_dict.get(uid)
+                data['payment_method'] = u.payment_method if u else 'TRANSFER'
 
             grand = sum(d['total_salary'] for d in user_data.values())
+            grand_period_retention = sum(d['period_retention'] for d in user_data.values())
+            grand_ytd_retention = sum(d['ytd_retention'] for d in user_data.values())
+            transfer_total = sum(d['total_salary'] for d in user_data.values()
+                                 if d['payment_method'] == 'TRANSFER')
+            cash_total = sum(d['total_salary'] for d in user_data.values()
+                             if d['payment_method'] == 'CASH')
+            cash_bills = calculate_cash_bills(cash_total) if cash_total > 0 else {}
             salary_results = {'start_date': start_str, 'end_date': end_str,
-                              'user_data': user_data, 'grand_salary': grand, 'prices': prices}
+                              'user_data': user_data, 'grand_salary': grand,
+                              'grand_period_retention': grand_period_retention,
+                              'grand_ytd_retention': grand_ytd_retention,
+                              'transfer_total': transfer_total,
+                              'cash_total': cash_total,
+                              'cash_bills': cash_bills,
+                              'prices': prices}
 
             if action == 'export-excel':
                 return _export_salary_excel(salary_results)
@@ -737,7 +887,8 @@ def salary():
                 return _export_salary_pdf(salary_results)
 
     return render_template('salary.html', report_fields=REPORT_FIELDS,
-                           salary_results=salary_results, form_data=form_data)
+                           salary_results=salary_results, form_data=form_data,
+                           now_year=date.today().year)
 
 
 def _export_salary_excel(results):
@@ -867,15 +1018,12 @@ def _export_salary_pdf(results):
 
 
 # ---------------------------------------------------------------------------
-# Page 9: Personal Statistics (USER only)
+# Page 9: Personal Statistics (USER and ADMIN)
 # ---------------------------------------------------------------------------
 
 @app.route('/personal-stats', methods=['GET', 'POST'])
 @login_required
 def personal_stats():
-    if current_user.role == 'ADMIN':
-        abort(403)
-
     totals_result = None
     salary_result = None
     form = request.form if request.method == 'POST' else {}
@@ -886,6 +1034,9 @@ def personal_stats():
     stats_confirm = form.get('stats_confirm', 'all')
     salary_start = form.get('salary_start', '')
     salary_end = form.get('salary_end', '')
+
+    # 今年度累積保留金（固定顯示，已確認回報）
+    ytd_retention = get_ytd_retention(current_user.id)
 
     if action == 'stats' and stats_start and stats_end:
         q = Report.query.filter(
@@ -902,9 +1053,11 @@ def personal_stats():
         for r in reports:
             for k, _ in REPORT_FIELDS:
                 totals[k] += getattr(r, k, 0)
+        period_retention = calc_retention_from_totals(totals)
         totals_result = {'start': stats_start, 'end': stats_end,
                          'confirm_filter': stats_confirm,
-                         'totals': totals, 'count': len(reports)}
+                         'totals': totals, 'count': len(reports),
+                         'period_retention': period_retention}
 
     elif action == 'salary' and salary_start and salary_end:
         prices = {}
@@ -927,16 +1080,21 @@ def personal_stats():
                 totals[k] += getattr(r, k, 0)
 
         subtotals = {k: totals[k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
+        period_retention = calc_retention_from_totals(totals)
         salary_result = {'start': salary_start, 'end': salary_end,
                          'totals': totals, 'prices': prices,
                          'subtotals': subtotals,
                          'grand_total': sum(subtotals.values()),
+                         'period_retention': period_retention,
                          'count': len(reports)}
 
     return render_template('personal_stats.html',
                            report_fields=REPORT_FIELDS,
+                           default_prices=DEFAULT_PRICES,
                            totals_result=totals_result,
                            salary_result=salary_result,
+                           ytd_retention=ytd_retention,
+                           now_year=date.today().year,
                            stats_start=stats_start, stats_end=stats_end,
                            stats_confirm=stats_confirm,
                            salary_start=salary_start, salary_end=salary_end)

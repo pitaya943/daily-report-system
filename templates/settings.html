@@ -48,7 +48,7 @@
         <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
           <thead>
             <tr>
-              <th>#</th><th>名稱</th><th>角色</th><th>狀態</th><th>建立時間</th><th>操作</th>
+              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>狀態</th><th>建立時間</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -69,6 +69,13 @@
                 {% endif %}
               </td>
               <td>
+                {% if u.payment_method == 'CASH' %}
+                  <span class="badge bg-warning text-dark">領現</span>
+                {% else %}
+                  <span class="badge bg-info text-dark">轉帳</span>
+                {% endif %}
+              </td>
+              <td>
                 {% if u.is_active %}
                   <span class="badge bg-success">啟用</span>
                 {% else %}
@@ -81,6 +88,11 @@
                         onclick="openEditName({{ u.id }}, '{{ u.display_name|e }}')"
                         title="修改名稱">
                   <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-outline-info btn-sm py-0 px-2 ms-1"
+                        onclick="openPayment({{ u.id }}, '{{ u.display_name|e }}', '{{ u.payment_method }}')"
+                        title="修改發薪方式">
+                  <i class="bi bi-credit-card"></i>
                 </button>
                 {% if u.id != current_user.id %}
                 <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
@@ -107,6 +119,34 @@
 </div>
 
 {% if current_user.role == 'ADMIN' %}
+<!-- Retention Rate Card -->
+<div class="card mt-4">
+  <div class="card-header bg-warning bg-opacity-25 border-warning">
+    <i class="bi bi-piggy-bank me-1"></i>保留金費率設定
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('settings_retention_rate') }}"
+          onsubmit="return confirm('確定更新保留金費率？此變更影響後續所有保留金計算。')">
+      <div class="d-flex align-items-center gap-3">
+        <div>
+          <label class="form-label mb-1 small">每只抽取金額（適用直總/間接 8 個欄位）</label>
+          <div class="input-group" style="max-width:220px">
+            <input type="number" name="rate" class="form-control"
+                   value="{{ retention_rate }}" min="0" step="1" required>
+            <span class="input-group-text">NTD / 只</span>
+          </div>
+        </div>
+        <div class="mt-3">
+          <button type="submit" class="btn btn-warning btn-sm">
+            <i class="bi bi-check-lg me-1"></i>儲存費率
+          </button>
+        </div>
+      </div>
+      <div class="form-text mt-1">目前費率：<strong>{{ retention_rate }} NTD/只</strong></div>
+    </form>
+  </div>
+</div>
+
 <!-- Create User Modal -->
 <div class="modal fade" id="createUserModal" tabindex="-1">
   <div class="modal-dialog">
@@ -132,6 +172,13 @@
             <select name="role" class="form-select">
               <option value="USER">USER（一般使用者）</option>
               <option value="ADMIN">ADMIN（管理者）</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">發薪方式</label>
+            <select name="payment_method" class="form-select">
+              <option value="TRANSFER">轉帳</option>
+              <option value="CASH">領現</option>
             </select>
           </div>
         </div>
@@ -234,6 +281,35 @@
   </div>
 </div>
 
+<!-- Payment Method Modal -->
+<div class="modal fade" id="paymentModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-info text-white">
+        <h5 class="modal-title"><i class="bi bi-credit-card me-2"></i>修改發薪方式</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="paymentForm" method="POST"
+            onsubmit="return confirm('確定修改發薪方式？')">
+        <div class="modal-body">
+          <p class="small mb-3">帳戶：<strong id="paymentUsername"></strong></p>
+          <div class="mb-2">
+            <label class="form-label">發薪方式</label>
+            <select name="payment_method" id="paymentSelect" class="form-select">
+              <option value="TRANSFER">轉帳</option>
+              <option value="CASH">領現</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-info btn-sm text-white">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script>
 function openEditName(id, name) {
   document.getElementById('editNameForm').action = `/settings/users/${id}/display-name`;
@@ -249,6 +325,12 @@ function openDelete(id, name) {
   document.getElementById('deleteUserForm').action = `/settings/users/${id}/delete`;
   document.getElementById('deleteUsername').textContent = name;
   new bootstrap.Modal(document.getElementById('deleteUserModal')).show();
+}
+function openPayment(id, name, current) {
+  document.getElementById('paymentForm').action = `/settings/users/${id}/payment-method`;
+  document.getElementById('paymentUsername').textContent = name;
+  document.getElementById('paymentSelect').value = current;
+  new bootstrap.Modal(document.getElementById('paymentModal')).show();
 }
 </script>
 {% endif %}

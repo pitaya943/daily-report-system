@@ -11,7 +11,7 @@ import random
 from datetime import datetime, date, timedelta
 
 from app import app
-from models import db, User, Report, Material, MaterialRequest, AuditLog
+from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig
 from werkzeug.security import generate_password_hash
 
 
@@ -21,15 +21,18 @@ def seed():
         db.create_all()
 
         # ── Users ──────────────────────────────────────────────
+        # 系統設定
+        db.session.add(SystemConfig(key='retention_rate', value='20'))
+
         admin = User(display_name='張管理員',
                      password_hash=generate_password_hash('admin123'),
-                     role='ADMIN', is_active=True)
+                     role='ADMIN', is_active=True, payment_method='TRANSFER')
         user1 = User(display_name='陳小明',
                      password_hash=generate_password_hash('user123'),
-                     role='USER', is_active=True)
+                     role='USER', is_active=True, payment_method='TRANSFER')
         user2 = User(display_name='李小華',
                      password_hash=generate_password_hash('user123'),
-                     role='USER', is_active=True)
+                     role='USER', is_active=True, payment_method='CASH')
         db.session.add_all([admin, user1, user2])
         db.session.flush()
 
@@ -60,14 +63,19 @@ def seed():
                 indirect_20=random.randint(0, 10),
                 indirect_25=random.randint(0, 8),
                 indirect_40=random.randint(0, 5),
-                direct_special_group=random.randint(0, 6),
-                indirect_special_group=random.randint(0, 4),
-                downsize=random.randint(0, 5),
-                original_downsize=random.randint(0, 3),
-                special=random.randint(0, 4),
-                mobilization=random.randint(0, 8),
+                original_change=random.randint(0, 5),
+                direct_switch_valve=random.randint(0, 4),
+                indirect_switch_valve=random.randint(0, 3),
+                switch_valve_13_25=random.randint(0, 3),
+                switch_valve_40=random.randint(0, 2),
+                direct_fixed_13_25=random.randint(0, 3),
+                direct_fixed_40=random.randint(0, 2),
+                indirect_fixed_13_25=random.randint(0, 2),
+                indirect_fixed_40=random.randint(0, 1),
+                pipe_repair=random.randint(0, 4),
+                mobilization=random.randint(0, 3),
                 recheck=random.randint(0, 5),
-                soil_clearing=random.randint(0, 10),
+                soil_clearing=random.randint(0, 8),
                 is_confirmed=confirmed,
                 confirmed_by=admin.id if confirmed else None,
                 confirmed_at=datetime.utcnow() if confirmed else None,
@@ -79,7 +87,7 @@ def seed():
 
         for u, r in reports_created:
             audit(u.id, 'REPORT_CREATE',
-                  f'新增 {r.report_date} 的回報（直總-13:{r.direct_13}, 間接-13:{r.indirect_13}）')
+                  f'新增 {r.report_date} 的回報（直總-13:{r.direct_13}, 間接-13:{r.indirect_13}, 原改:{r.original_change}）')
             if r.is_confirmed:
                 audit(admin.id, 'REPORT_CONFIRM',
                       f'確認 {u.display_name} 的回報 #{r.id}（{r.report_date}）')

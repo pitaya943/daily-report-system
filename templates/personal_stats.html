@@ -8,6 +8,23 @@
   此頁面的薪資試算僅供參考，不具正式效力。<strong>正式薪資以管理員於 Salary 頁面計算的結果為準。</strong>
 </div>
 
+<!-- 今年度累積保留金 -->
+<div class="card mb-4 border-warning">
+  <div class="card-body py-3 d-flex align-items-center gap-3">
+    <div class="rounded-circle d-flex align-items-center justify-content-center bg-warning bg-opacity-25"
+         style="width:52px;height:52px;flex-shrink:0">
+      <i class="bi bi-piggy-bank-fill text-warning fs-4"></i>
+    </div>
+    <div>
+      <div class="text-muted small">今年度累積保留金（{{ now_year }} 年，已確認回報）</div>
+      <div class="fw-bold fs-4 text-warning">{{ ytd_retention | money }} NTD</div>
+      <div class="text-muted" style="font-size:.75rem">
+        每筆直總-13/20/25/40、間接-13/20/25/40 各抽保留金費率，年底結算歸零
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="row g-4">
 
   <!-- ── 工項總和查詢 ── -->
@@ -65,10 +82,14 @@
             </tr>
             {% endfor %}
           </tbody>
-          <tfoot class="table-primary fw-bold">
-            <tr>
+          <tfoot>
+            <tr class="table-primary fw-bold">
               <td>合計</td>
               <td class="text-end">{{ totals_result.totals.values()|sum }}</td>
+            </tr>
+            <tr class="table-warning fw-semibold">
+              <td><i class="bi bi-piggy-bank me-1"></i>本期保留金</td>
+              <td class="text-end">{{ totals_result.period_retention | money }} NTD</td>
             </tr>
           </tfoot>
         </table>
@@ -103,7 +124,7 @@
           <div class="mb-1 d-flex align-items-center gap-2">
             <label class="mb-0 text-muted" style="min-width:180px;font-size:.77rem">{{ label }}</label>
             <input type="number" name="price_{{ key }}" class="form-control form-control-sm"
-                   value="{{ salary_result.prices.get(key,0) if salary_result else 0 }}"
+                   value="{{ salary_result.prices.get(key, default_prices.get(key,0)) if salary_result else default_prices.get(key,0) }}"
                    min="0" step="0.01" style="max-width:90px">
           </div>
           {% endfor %}
@@ -126,16 +147,20 @@
             {% for key, label in report_fields %}
             <tr>
               <td>{{ label }}</td>
-              <td class="text-end">{{ salary_result.totals[key] }}</td>
-              <td class="text-end">{{ '%.2f' % salary_result.prices.get(key,0) }}</td>
-              <td class="text-end">{{ '%.2f' % salary_result.subtotals[key] }}</td>
+              <td class="text-end">{{ salary_result.totals[key] | money }}</td>
+              <td class="text-end">{{ salary_result.prices.get(key,0) | money }}</td>
+              <td class="text-end">{{ salary_result.subtotals[key] | money }}</td>
             </tr>
             {% endfor %}
           </tbody>
-          <tfoot class="table-warning fw-bold">
-            <tr>
+          <tfoot>
+            <tr class="table-warning fw-bold">
               <td colspan="3">試算薪資總額</td>
-              <td class="text-end">{{ '%.2f' % salary_result.grand_total }} NTD</td>
+              <td class="text-end">{{ salary_result.grand_total | money }} NTD</td>
+            </tr>
+            <tr class="fw-semibold" style="background:#fff3cd">
+              <td colspan="3"><i class="bi bi-piggy-bank me-1"></i>本期保留金</td>
+              <td class="text-end text-warning">{{ salary_result.period_retention | money }} NTD</td>
             </tr>
           </tfoot>
         </table>
