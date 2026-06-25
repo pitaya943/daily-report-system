@@ -20,6 +20,13 @@ if _db_url.startswith('postgres://'):
     _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = _db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# 保持連線池熱機，避免每次請求重新建立 TCP 連線到 Supabase
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 1800,
+    'pool_size': 3,
+    'max_overflow': 3,
+}
 
 db.init_app(app)
 
@@ -98,6 +105,30 @@ def _init_db():
         db.session.commit()
     except Exception:
         pass
+    # Performance indexes (idempotent — IF NOT EXISTS)
+    _indexes = [
+        # 確認頁：待確認回報掃描（最關鍵）
+        "CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(is_confirmed, is_rejected, report_date, id)",
+        # 薪資/歷史：帳戶 + 日期範圍
+        "CREATE INDEX IF NOT EXISTS idx_reports_user_date ON reports(user_id, report_date, is_confirmed)",
+        # 薪資：日期範圍 + 已確認
+        "CREATE INDEX IF NOT EXISTS idx_reports_date_conf ON reports(report_date, is_confirmed)",
+        # 材料申請
+        "CREATE INDEX IF NOT EXISTS idx_mat_req_status ON material_requests(status, created_at)",
+        # 變動紀錄
+        "CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id, created_at)",
+        # 帳戶保留金費率批次載入
+        "CREATE INDEX IF NOT EXISTS idx_urt_user ON user_retention_rates(user_id)",
+    ]
+    from sqlalchemy import text as _text
+    for _sql in _indexes:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(_text(_sql))
+                conn.commit()
+        except Exception:
+            pass
 
 with app.app_context():
     _init_db()
@@ -448,8 +479,9 @@ def history():
     page = request.args.get('page', 1, type=int)
     pagination = (q.order_by(Report.report_date.desc(), Report.created_at.desc())
                   .paginate(page=page, per_page=20, error_out=False))
-    users_dict = {u.id: u for u in User.query.all()}
-    all_users = User.query.all() if current_user.role == 'ADMIN' else []
+    _all_users_list = User.query.all()
+    users_dict = {u.id: u for u in _all_users_list}
+    all_users = _all_users_list if current_user.role == 'ADMIN' else []
     url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
     return render_template('history.html',
@@ -527,24 +559,48 @@ def history_delete(report_id):
 @login_required
 def settings():
     all_users = User.query.order_by(User.created_at).all() if current_user.role == 'ADMIN' else []
-    ytd_by_user = {u.id: get_ytd_retention(u.id) for u in all_users}
-
-    # 批次載入各帳戶客製保留金費率，供 Modal 使用
-    global_rate = int(get_retention_rate())
     uid_list = [u.id for u in all_users]
-    all_custom = (UserRetentionRate.query
-                  .filter(UserRetentionRate.user_id.in_(uid_list)).all()
-                  if uid_list else [])
-    custom_map = {}
-    for cr in all_custom:
-        custom_map.setdefault(cr.user_id, {})[cr.field] = cr.rate
-    user_ret_rates = {
-        u.id: {
-            'rates': {f: custom_map.get(u.id, {}).get(f, global_rate) for f in RETENTION_FIELDS},
-            'is_custom': bool(custom_map.get(u.id))
-        }
-        for u in all_users
-    }
+
+    # ── 3 queries total (was N×2 + 1) ────────────────────────────────
+    global_rate = int(get_retention_rate())
+
+    # 1 query: 當年全部已確認回報（供 YTD 保留金計算）
+    ytd_by_user: dict = {}
+    user_ret_rates: dict = {}
+    if uid_list:
+        year_start = date(date.today().year, 1, 1)
+        ytd_reports = (Report.query
+                       .filter(Report.is_confirmed == True,
+                               Report.report_date >= year_start,
+                               Report.report_date <= date.today())
+                       .all())
+        ytd_totals: dict = {}
+        for r in ytd_reports:
+            uid = r.user_id
+            if uid not in ytd_totals:
+                ytd_totals[uid] = {f: 0 for f in RETENTION_FIELDS}
+            for f in RETENTION_FIELDS:
+                ytd_totals[uid][f] += getattr(r, f, 0)
+
+        # 1 query: 所有帳戶客製費率
+        all_custom = (UserRetentionRate.query
+                      .filter(UserRetentionRate.user_id.in_(uid_list)).all())
+        custom_map: dict = {}
+        for cr in all_custom:
+            custom_map.setdefault(cr.user_id, {})[cr.field] = cr.rate
+
+        for u in all_users:
+            custom = custom_map.get(u.id, {})
+            user_rates = {f: float(custom.get(f, global_rate)) for f in RETENTION_FIELDS}
+            user_ret_rates[u.id] = {
+                'rates': {f: int(v) for f, v in user_rates.items()},
+                'is_custom': bool(custom)
+            }
+            totals = ytd_totals.get(u.id, {})
+            calculated = sum(totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
+            ytd_by_user[u.id] = min(float(RETENTION_CAP),
+                                    max(0.0, calculated + u.retention_offset))
+    # ─────────────────────────────────────────────────────────────────
 
     return render_template('settings.html', all_users=all_users,
                            retention_rate=global_rate,
@@ -1217,8 +1273,9 @@ def audit():
 
     page = request.args.get('page', 1, type=int)
     pagination = q.order_by(AuditLog.created_at.desc()).paginate(page=page, per_page=20, error_out=False)
-    users_dict = {u.id: u for u in User.query.all()}
-    all_users = User.query.order_by(User.display_name).all() if current_user.role == 'ADMIN' else []
+    _all_users_list = User.query.order_by(User.display_name).all()
+    users_dict = {u.id: u for u in _all_users_list}
+    all_users = _all_users_list if current_user.role == 'ADMIN' else []
     all_action_types = [r[0] for r in db.session.query(AuditLog.action_type).distinct().all()]
     url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
@@ -1282,20 +1339,32 @@ def salary():
                 Report.report_date <= ed
             ).all()
 
-            # 本期前已確認回報，用於計算保留金上限 (Jan 1 ~ period_start - 1 day)
-            year_start = date(sd.year, 1, 1)
-            pre_reports = Report.query.filter(
+            # 一次查詢涵蓋全年：pre-period 上限計算 + YTD 保留金（消除 N 次 per-user 查詢）
+            today = date.today()
+            pre_year_start = date(sd.year, 1, 1)      # 保留金上限計算基準年
+            ytd_year_start = date(today.year, 1, 1)   # YTD 顯示基準年（今年）
+            query_start = min(pre_year_start, ytd_year_start)
+            year_confirmed = Report.query.filter(
                 Report.is_confirmed == True,
-                Report.report_date >= year_start,
-                Report.report_date < sd
+                Report.report_date >= query_start,
+                Report.report_date <= today
             ).all()
-            pre_ret_by_user = {}
-            for pr in pre_reports:
-                uid = pr.user_id
-                if uid not in pre_ret_by_user:
-                    pre_ret_by_user[uid] = {f: 0 for f in RETENTION_FIELDS}
-                for f in RETENTION_FIELDS:
-                    pre_ret_by_user[uid][f] += getattr(pr, f, 0)
+            pre_ret_by_user: dict = {}
+            ytd_totals_by_user: dict = {}
+            for _r in year_confirmed:
+                _uid = _r.user_id
+                # YTD：今年的累積保留金（含本期）
+                if _r.report_date >= ytd_year_start:
+                    if _uid not in ytd_totals_by_user:
+                        ytd_totals_by_user[_uid] = {f: 0 for f in RETENTION_FIELDS}
+                    for f in RETENTION_FIELDS:
+                        ytd_totals_by_user[_uid][f] += getattr(_r, f, 0)
+                # Pre-period：計薪年度 Jan 1 到 sd 之前（用於保留金上限）
+                if pre_year_start <= _r.report_date < sd:
+                    if _uid not in pre_ret_by_user:
+                        pre_ret_by_user[_uid] = {f: 0 for f in RETENTION_FIELDS}
+                    for f in RETENTION_FIELDS:
+                        pre_ret_by_user[_uid][f] += getattr(_r, f, 0)
 
             users_dict = {u.id: u for u in User.query.all()}
             user_data = {}
@@ -1327,7 +1396,11 @@ def salary():
                 data['period_retention'] = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
 
                 data['net_salary'] = data['gross_salary'] - data['period_retention']
-                data['ytd_retention'] = get_ytd_retention(uid)
+                # YTD 保留金：使用已批次載入的全年回報（不再逐帳戶發 DB 查詢）
+                _ytd_totals = ytd_totals_by_user.get(uid, {})
+                _ytd_calc = sum(_ytd_totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
+                data['ytd_retention'] = min(float(RETENTION_CAP),
+                                            max(0.0, _ytd_calc + ret_offset))
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
 
                 # 勞健保：只在 25 號發薪時扣，且帳戶需已投保
