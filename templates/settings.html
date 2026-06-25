@@ -48,7 +48,7 @@
         <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
           <thead>
             <tr>
-              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>狀態</th><th>建立時間</th><th>操作</th>
+              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>勞健保扣除額</th><th>狀態</th><th>建立時間</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -75,6 +75,13 @@
                   <span class="badge bg-info text-dark">轉帳</span>
                 {% endif %}
               </td>
+              <td class="text-end" style="font-size:.82rem">
+                {% if u.insurance_deduction > 0 %}
+                  <span class="text-danger fw-semibold">{{ u.insurance_deduction | money }}</span>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
               <td>
                 {% if u.is_active %}
                   <span class="badge bg-success">啟用</span>
@@ -93,6 +100,11 @@
                         onclick="openPayment({{ u.id }}, '{{ u.display_name|e }}', '{{ u.payment_method }}')"
                         title="修改發薪方式">
                   <i class="bi bi-credit-card"></i>
+                </button>
+                <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
+                        onclick="openInsurance({{ u.id }}, '{{ u.display_name|e }}', {{ u.insurance_deduction }})"
+                        title="設定勞健保扣除額">
+                  <i class="bi bi-shield-check"></i>
                 </button>
                 {% if u.id != current_user.id %}
                 <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
@@ -310,7 +322,44 @@
   </div>
 </div>
 
+<!-- Insurance Deduction Modal -->
+<div class="modal fade" id="insuranceModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>勞健保扣除額</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="insuranceForm" method="POST"
+            onsubmit="return confirm('確定更新勞健保扣除額？')">
+        <div class="modal-body">
+          <p class="small mb-3">帳戶：<strong id="insuranceUsername"></strong></p>
+          <div class="mb-2">
+            <label class="form-label small">每期扣除金額（NTD）</label>
+            <div class="input-group">
+              <input type="number" name="insurance_deduction" id="insuranceAmount"
+                     class="form-control" min="0" step="1" required>
+              <span class="input-group-text">NTD</span>
+            </div>
+            <div class="form-text">設為 0 代表不在公司投保，不扣除勞健保。</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-danger btn-sm">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script>
+function openInsurance(id, name, current) {
+  document.getElementById('insuranceUsername').textContent = name;
+  document.getElementById('insuranceAmount').value = current;
+  document.getElementById('insuranceForm').action = '/settings/users/' + id + '/insurance';
+  new bootstrap.Modal(document.getElementById('insuranceModal')).show();
+}
 function openEditName(id, name) {
   document.getElementById('editNameForm').action = `/settings/users/${id}/display-name`;
   document.getElementById('editNameInput').value = name;

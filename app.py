@@ -28,6 +28,16 @@ def _init_db():
         db.create_all()
     except Exception as e:
         app.logger.error(f'db.create_all() failed: {e}')
+    # Column migration: add insurance_deduction if missing (idempotent)
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN insurance_deduction INTEGER NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+    except Exception:
+        pass  # column already exists → safe to ignore
 
 with app.app_context():
     _init_db()
@@ -471,6 +481,26 @@ def settings_payment_method(user_id):
     return redirect(url_for('settings'))
 
 
+@app.route('/settings/users/<int:user_id>/insurance', methods=['POST'])
+@admin_required
+def settings_insurance(user_id):
+    target = db.session.get(User, user_id)
+    if not target:
+        abort(404)
+    try:
+        amount = max(0, int(request.form.get('insurance_deduction', 0)))
+    except (ValueError, TypeError):
+        flash('請輸入有效的整數', 'danger')
+        return redirect(url_for('settings'))
+    target.insurance_deduction = amount
+    target.updated_at = datetime.utcnow()
+    add_audit(current_user.id, 'ACCOUNT_UPDATE',
+              f'更新「{target.display_name}」勞健保扣除額：{amount} NTD')
+    db.session.commit()
+    flash(f'「{target.display_name}」勞健保扣除額已更新為 {amount:,} NTD', 'success')
+    return redirect(url_for('settings'))
+
+
 @app.route('/settings/retention-rate', methods=['POST'])
 @admin_required
 def settings_retention_rate():
@@ -847,7 +877,9 @@ def salary():
             except (ValueError, TypeError):
                 prices[key] = 0.0
 
-        form_data = {'start_date': start_str, 'end_date': end_str, 'prices': prices}
+        deduct_insurance = request.form.get('deduct_insurance') == '1'
+        form_data = {'start_date': start_str, 'end_date': end_str,
+                     'prices': prices, 'deduct_insurance': deduct_insurance}
 
         if start_str and end_str:
             try:
@@ -884,14 +916,18 @@ def salary():
                 data['ytd_retention'] = get_ytd_retention(uid)
                 u = users_dict.get(uid)
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
+                ins = (u.insurance_deduction if u else 0) if deduct_insurance else 0
+                data['insurance_deduction'] = ins
+                data['final_salary'] = data['net_salary'] - ins
 
-            grand = sum(d['net_salary'] for d in user_data.values())
             grand_gross = sum(d['gross_salary'] for d in user_data.values())
             grand_period_retention = sum(d['period_retention'] for d in user_data.values())
             grand_ytd_retention = sum(d['ytd_retention'] for d in user_data.values())
-            transfer_total = sum(d['net_salary'] for d in user_data.values()
+            grand_insurance = sum(d['insurance_deduction'] for d in user_data.values())
+            grand = sum(d['final_salary'] for d in user_data.values())
+            transfer_total = sum(d['final_salary'] for d in user_data.values()
                                  if d['payment_method'] == 'TRANSFER')
-            cash_total = sum(d['net_salary'] for d in user_data.values()
+            cash_total = sum(d['final_salary'] for d in user_data.values()
                              if d['payment_method'] == 'CASH')
             cash_bills = calculate_cash_bills(cash_total) if cash_total > 0 else {}
             salary_results = {'start_date': start_str, 'end_date': end_str,
@@ -900,9 +936,11 @@ def salary():
                               'grand_gross': grand_gross,
                               'grand_period_retention': grand_period_retention,
                               'grand_ytd_retention': grand_ytd_retention,
+                              'grand_insurance': grand_insurance,
                               'transfer_total': transfer_total,
                               'cash_total': cash_total,
                               'cash_bills': cash_bills,
+                              'deduct_insurance': deduct_insurance,
                               'prices': prices}
 
             if action == 'export-excel':
@@ -971,17 +1009,24 @@ def _export_salary_excel(results):
         ws.cell(row=row, column=4, value=-round(data['period_retention'], 2)).font = Font(color='C00000')
         row += 1
 
+        if data.get('insurance_deduction', 0) > 0:
+            for col in range(1, 5):
+                ws.cell(row=row, column=col).fill = PatternFill('solid', fgColor='FDECEA')
+            ws.cell(row=row, column=1, value='勞健保扣除').font = Font(color='C00000')
+            ws.cell(row=row, column=4, value=-round(data['insurance_deduction'], 2)).font = Font(color='C00000')
+            row += 1
+
         for col in range(1, 5):
             ws.cell(row=row, column=col).fill = lgreen
         net_cell = ws.cell(row=row, column=1, value='本期實領金額')
         net_cell.font = Font(bold=True, color='375623')
-        nv_cell = ws.cell(row=row, column=4, value=round(data['net_salary'], 2))
+        nv_cell = ws.cell(row=row, column=4, value=round(data['final_salary'], 2))
         nv_cell.font = Font(bold=True, color='375623')
         row += 1
 
         # 提現面額配置
-        if data['payment_method'] == 'CASH' and data['net_salary'] > 0:
-            bills = calculate_cash_bills(data['net_salary'])
+        if data['payment_method'] == 'CASH' and data['final_salary'] > 0:
+            bills = calculate_cash_bills(data['final_salary'])
             if bills:
                 ws.cell(row=row, column=1, value='── 提現面額配置 ──').font = Font(italic=True, color='7F7F7F')
                 row += 1
@@ -1012,6 +1057,10 @@ def _export_salary_excel(results):
     ws.cell(row=row, column=1, value='保留金合計（扣除）').font = Font(color='C00000')
     ws.cell(row=row, column=4, value=-round(results['grand_period_retention'], 2)).font = Font(color='C00000')
     row += 1
+    if results.get('grand_insurance', 0) > 0:
+        ws.cell(row=row, column=1, value='勞健保扣除合計').font = Font(color='C00000')
+        ws.cell(row=row, column=4, value=-round(results['grand_insurance'], 2)).font = Font(color='C00000')
+        row += 1
 
     for col in range(1, 5):
         ws.cell(row=row, column=col).fill = lgreen
@@ -1130,13 +1179,18 @@ def _export_salary_pdf(results):
         # 小結行
         tdata.append(['計薪小計（稅前）', '', '', f'{data["gross_salary"]:,.0f}'])
         tdata.append(['本期保留金（扣除）', '', '', f'-{data["period_retention"]:,.0f}'])
-        tdata.append(['本期實領金額', '', '', f'{data["net_salary"]:,.0f}'])
+        ins_d = data.get('insurance_deduction', 0)
+        if ins_d > 0:
+            tdata.append(['勞健保扣除', '', '', f'-{ins_d:,.0f}'])
+        tdata.append(['本期實領金額', '', '', f'{data["final_salary"]:,.0f}'])
 
-        subtotal_row = 1 + n_fields       # 計薪小計
-        retention_row = subtotal_row + 1  # 保留金
-        net_row = retention_row + 1       # 實領
+        subtotal_row = 1 + n_fields
+        retention_row = subtotal_row + 1
+        extra = 1 if ins_d > 0 else 0
+        ins_row = retention_row + 1 if ins_d > 0 else None
+        net_row = retention_row + 1 + extra
 
-        ts = TableStyle([
+        ts_cmds = [
             ('FONTNAME',   (0, 0), (-1, -1), font_name),
             ('FONTSIZE',   (0, 0), (-1, -1), 8),
             ('BACKGROUND', (0, 0), (-1, 0),  C_BLUE),
@@ -1144,20 +1198,25 @@ def _export_salary_pdf(results):
             ('ALIGN',      (1, 0), (-1, -1), 'RIGHT'),
             ('GRID',       (0, 0), (-1, -1), 0.4, colors.grey),
             ('BACKGROUND', (0, subtotal_row), (-1, subtotal_row), C_DGREY),
-            ('FONTNAME',   (0, subtotal_row), (-1, subtotal_row), font_name),
             ('BACKGROUND', (0, retention_row), (-1, retention_row), C_AMBER),
             ('TEXTCOLOR',  (0, retention_row), (-1, retention_row), C_RED),
             ('BACKGROUND', (0, net_row), (-1, net_row), C_GREEN),
             ('TEXTCOLOR',  (0, net_row), (-1, net_row), C_DGREEN),
             ('FONTNAME',   (0, net_row), (-1, net_row), font_name),
-        ])
+        ]
+        if ins_row:
+            ts_cmds += [
+                ('BACKGROUND', (0, ins_row), (-1, ins_row), colors.HexColor('#FDECEA')),
+                ('TEXTCOLOR',  (0, ins_row), (-1, ins_row), C_RED),
+            ]
+        ts = TableStyle(ts_cmds)
         t = Table(tdata, colWidths=[210, 55, 90, 90])
         t.setStyle(ts)
         story.append(t)
 
         # 提現面額配置（僅限領現帳戶）
-        if data['payment_method'] == 'CASH' and data['net_salary'] > 0:
-            bills = calculate_cash_bills(data['net_salary'])
+        if data['payment_method'] == 'CASH' and data['final_salary'] > 0:
+            bills = calculate_cash_bills(data['final_salary'])
             if bills:
                 story.append(Spacer(1, 4))
                 bdata = [['面額', '張 / 枚', '小計(NTD)']]
@@ -1186,6 +1245,10 @@ def _export_salary_pdf(results):
         ['項目', '金額 (NTD)'],
         ['計薪小計（稅前）合計', f'{results["grand_gross"]:,.0f}'],
         ['保留金合計（扣除）',   f'-{results["grand_period_retention"]:,.0f}'],
+    ]
+    if results.get('grand_insurance', 0) > 0:
+        sdata.append(['勞健保扣除合計', f'-{results["grand_insurance"]:,.0f}'])
+    sdata += [
         ['實領薪資總合計',       f'{results["grand_salary"]:,.0f}'],
         ['轉帳薪資總額',         f'{results["transfer_total"]:,.0f}'],
         ['提現薪資總額',         f'{results["cash_total"]:,.0f}'],
@@ -1272,6 +1335,8 @@ def personal_stats():
             except (ValueError, TypeError):
                 prices[k] = 0.0
 
+        deduct_ins = form.get('deduct_insurance') == '1'
+
         reports = Report.query.filter(
             Report.user_id == current_user.id,
             Report.is_confirmed == True,
@@ -1286,11 +1351,16 @@ def personal_stats():
 
         subtotals = {k: totals[k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
         period_retention = calc_retention_from_totals(totals)
+        grand_total = sum(subtotals.values())
+        ins_amount = current_user.insurance_deduction if deduct_ins else 0
         salary_result = {'start': salary_start, 'end': salary_end,
                          'totals': totals, 'prices': prices,
                          'subtotals': subtotals,
-                         'grand_total': sum(subtotals.values()),
+                         'grand_total': grand_total,
                          'period_retention': period_retention,
+                         'insurance_deduction': ins_amount,
+                         'final_salary': grand_total - period_retention - ins_amount,
+                         'deduct_insurance': deduct_ins,
                          'count': len(reports)}
 
     return render_template('personal_stats.html',
@@ -1302,7 +1372,8 @@ def personal_stats():
                            now_year=date.today().year,
                            stats_start=stats_start, stats_end=stats_end,
                            stats_confirm=stats_confirm,
-                           salary_start=salary_start, salary_end=salary_end)
+                           salary_start=salary_start, salary_end=salary_end,
+                           my_insurance=current_user.insurance_deduction)
 
 
 # ---------------------------------------------------------------------------

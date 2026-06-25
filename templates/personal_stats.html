@@ -119,6 +119,21 @@
                      value="{{ salary_end }}" required>
             </div>
           </div>
+          <!-- Insurance deduction toggle -->
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="deduct_insurance"
+                   id="deductInsuranceMe" value="1"
+                   {% if salary_result and salary_result.deduct_insurance %}checked{% endif %}>
+            <label class="form-check-label small" for="deductInsuranceMe">
+              <i class="bi bi-shield-check text-danger me-1"></i>扣除勞健保
+              {% if my_insurance > 0 %}
+                <span class="badge bg-danger ms-1">{{ my_insurance | money }} NTD</span>
+              {% else %}
+                <span class="text-muted">(我的扣除額：0，不在公司投保)</span>
+              {% endif %}
+            </label>
+          </div>
+
           <p class="small text-muted mb-1">各工項單位計薪（NTD）：</p>
           {% for key, label in report_fields %}
           <div class="mb-1 d-flex align-items-center gap-2">
@@ -162,9 +177,15 @@
               <td colspan="3"><i class="bi bi-piggy-bank me-1"></i>本期保留金（扣除）</td>
               <td class="text-end text-warning">－ {{ salary_result.period_retention | money }} NTD</td>
             </tr>
+            {% if salary_result.insurance_deduction > 0 %}
+            <tr class="fw-semibold" style="background:#fdecea">
+              <td colspan="3"><i class="bi bi-shield-check me-1 text-danger"></i>勞健保扣除</td>
+              <td class="text-end text-danger">－ {{ salary_result.insurance_deduction | money }} NTD</td>
+            </tr>
+            {% endif %}
             <tr class="table-success fw-bold">
               <td colspan="3"><i class="bi bi-cash-coin me-1"></i>試算實領金額</td>
-              <td class="text-end text-success">{{ (salary_result.grand_total - salary_result.period_retention) | money }} NTD</td>
+              <td class="text-end text-success">{{ salary_result.final_salary | money }} NTD</td>
             </tr>
           </tfoot>
         </table>

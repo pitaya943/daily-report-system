@@ -14,17 +14,41 @@
       <div class="card-body">
         <form method="POST" action="{{ url_for('salary') }}" id="salaryForm">
 
+          <!-- Quick payroll date shortcuts -->
+          <div class="mb-2 d-flex gap-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm py-0"
+                    onclick="setPayday10()">
+              <i class="bi bi-calendar-check me-1"></i>10號發薪<small class="opacity-75 ms-1">（上月21~本月5）</small>
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm py-0"
+                    onclick="setPayday25()">
+              <i class="bi bi-calendar-check me-1"></i>25號發薪<small class="opacity-75 ms-1">（本月6~20）</small>
+            </button>
+          </div>
+
           <div class="row g-2 mb-3">
             <div class="col-6">
               <label class="form-label small mb-1">開始日期</label>
-              <input type="date" name="start_date" class="form-control form-control-sm"
+              <input type="date" name="start_date" id="salaryStartDate"
+                     class="form-control form-control-sm"
                      value="{{ form_data.get('start_date','') }}" required>
             </div>
             <div class="col-6">
               <label class="form-label small mb-1">結束日期</label>
-              <input type="date" name="end_date" class="form-control form-control-sm"
+              <input type="date" name="end_date" id="salaryEndDate"
+                     class="form-control form-control-sm"
                      value="{{ form_data.get('end_date','') }}" required>
             </div>
+          </div>
+
+          <!-- Insurance deduction toggle -->
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="deduct_insurance"
+                   id="deductInsurance" value="1"
+                   {% if form_data.get('deduct_insurance') %}checked{% endif %}>
+            <label class="form-check-label small" for="deductInsurance">
+              <i class="bi bi-shield-check text-danger me-1"></i>扣除勞健保
+            </label>
           </div>
 
           <p class="small text-muted mb-2">各工項單位計薪（NTD）：</p>
@@ -108,11 +132,19 @@
                 </td>
                 <td class="text-end text-warning">－ {{ data.period_retention | money }} NTD</td>
               </tr>
+              {% if data.insurance_deduction > 0 %}
+              <tr class="fw-semibold" style="background:#fdecea">
+                <td colspan="3">
+                  <i class="bi bi-shield-check me-1 text-danger"></i>勞健保扣除
+                </td>
+                <td class="text-end text-danger">－ {{ data.insurance_deduction | money }} NTD</td>
+              </tr>
+              {% endif %}
               <tr class="table-success fw-bold">
                 <td colspan="3">
                   <i class="bi bi-cash-coin me-1"></i>本期實領金額
                 </td>
-                <td class="text-end text-success fs-6">{{ data.net_salary | money }} NTD</td>
+                <td class="text-end text-success fs-6">{{ data.final_salary | money }} NTD</td>
               </tr>
               <tr class="fw-semibold" style="background:#fff8e1">
                 <td colspan="3">
@@ -201,6 +233,12 @@
           <i class="bi bi-piggy-bank me-1 text-warning"></i>
           本期保留金合計（扣除）：－ {{ salary_results.grand_period_retention | money }} NTD
         </div>
+        {% if salary_results.grand_insurance > 0 %}
+        <div class="alert mb-1 py-2 fw-semibold" style="background:#fdecea;border-color:#ef9a9a">
+          <i class="bi bi-shield-check me-1 text-danger"></i>
+          勞健保扣除合計：－ {{ salary_results.grand_insurance | money }} NTD
+        </div>
+        {% endif %}
         <div class="alert alert-success fw-bold mb-1">
           <i class="bi bi-cash-stack me-2"></i>
           所有帳戶實領薪資總合計：{{ salary_results.grand_salary | money }} NTD
@@ -229,4 +267,29 @@
   </div>
 
 </div>
+
+{% block scripts %}
+<script>
+function setPayday10() {
+  const today = new Date();
+  let y = today.getFullYear(), m = today.getMonth(); // m is 0-indexed
+  // Previous month's 21st
+  let pm = m - 1, py = y;
+  if (pm < 0) { pm = 11; py -= 1; }
+  document.getElementById('salaryStartDate').value =
+    `${py}-${String(pm + 1).padStart(2, '0')}-21`;
+  // Current month's 5th
+  document.getElementById('salaryEndDate').value =
+    `${y}-${String(m + 1).padStart(2, '0')}-05`;
+}
+
+function setPayday25() {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, '0');
+  document.getElementById('salaryStartDate').value = `${y}-${m}-06`;
+  document.getElementById('salaryEndDate').value   = `${y}-${m}-20`;
+}
+</script>
+{% endblock %}
 {% endblock %}

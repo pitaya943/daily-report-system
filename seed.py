@@ -26,13 +26,16 @@ def seed():
 
         admin = User(display_name='張管理員',
                      password_hash=generate_password_hash('admin123'),
-                     role='ADMIN', is_active=True, payment_method='TRANSFER')
+                     role='ADMIN', is_active=True,
+                     payment_method='TRANSFER', insurance_deduction=0)
         user1 = User(display_name='陳小明',
                      password_hash=generate_password_hash('user123'),
-                     role='USER', is_active=True, payment_method='TRANSFER')
+                     role='USER', is_active=True,
+                     payment_method='TRANSFER', insurance_deduction=1200)
         user2 = User(display_name='李小華',
                      password_hash=generate_password_hash('user123'),
-                     role='USER', is_active=True, payment_method='CASH')
+                     role='USER', is_active=True,
+                     payment_method='CASH', insurance_deduction=800)
         db.session.add_all([admin, user1, user2])
         db.session.flush()
 

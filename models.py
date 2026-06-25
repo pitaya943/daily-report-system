@@ -15,7 +15,8 @@ class User(UserMixin, db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    payment_method = db.Column(db.String(10), nullable=False, default='TRANSFER')  # CASH or TRANSFER
+    payment_method      = db.Column(db.String(10), nullable=False, default='TRANSFER')  # CASH or TRANSFER
+    insurance_deduction = db.Column(db.Integer,   nullable=False, default=0)           # NTD per pay period
 
     @property
     def username(self):
