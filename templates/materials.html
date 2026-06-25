@@ -27,20 +27,33 @@
       <tbody>
         {% for m in all_materials %}
         <tr>
-          <td class="text-muted">{{ m.id }}</td>
+          <td class="text-muted">{{ loop.index }}</td>
           <td>{{ m.name }}</td>
           <td>{{ m.unit }}</td>
           <td class="text-center fw-semibold
             {% if m.remaining_quantity <= 5 %}text-danger{% elif m.remaining_quantity <= 20 %}text-warning{% else %}text-success{% endif %}">
             {{ m.remaining_quantity }}
           </td>
-          <td class="text-center">
+          <td class="text-center" style="white-space:nowrap">
             {% if current_user.role == 'USER' %}
             <button class="btn btn-outline-primary btn-sm py-0 px-2"
                     onclick="openRequest({{ m.id }}, '{{ m.name }}', '{{ m.unit }}', {{ m.remaining_quantity }})">
               <i class="bi bi-cart-plus me-1"></i>申請
             </button>
             {% else %}
+            <!-- 排序移動 -->
+            <form method="POST" action="{{ url_for('materials_move_up', material_id=m.id) }}" style="display:inline">
+              <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1"
+                      {% if loop.first %}disabled{% endif %} title="上移">
+                <i class="bi bi-chevron-up"></i>
+              </button>
+            </form>
+            <form method="POST" action="{{ url_for('materials_move_down', material_id=m.id) }}" style="display:inline">
+              <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1 me-1"
+                      {% if loop.last %}disabled{% endif %} title="下移">
+                <i class="bi bi-chevron-down"></i>
+              </button>
+            </form>
             <button class="btn btn-outline-warning btn-sm py-0 px-2"
                     onclick="openUpdate({{ m.id }}, '{{ m.name }}', '{{ m.unit }}', {{ m.remaining_quantity }})">
               <i class="bi bi-pencil me-1"></i>調整

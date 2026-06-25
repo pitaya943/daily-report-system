@@ -38,9 +38,27 @@ def _init_db():
             conn.commit()
     except Exception:
         pass  # column already exists → safe to ignore
+    # Column migration: add sort_order to materials if missing
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text(
+                "ALTER TABLE materials ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+    # Initialize sort_order for existing materials (sort_order=0 → use id)
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text("UPDATE materials SET sort_order = id WHERE sort_order = 0"))
+            conn.commit()
+    except Exception:
+        pass
     # Seed default SystemConfig entries if missing
     try:
-        for _key, _val in [('retention_rate', '20'), ('tax_rate', '5')]:
+        for _key, _val in [('retention_rate', '20'), ('tax_rate', '3')]:
             if not db.session.get(SystemConfig, _key):
                 db.session.add(SystemConfig(key=_key, value=_val))
         db.session.commit()
@@ -188,9 +206,9 @@ def get_retention_rate() -> float:
 
 
 def get_tax_rate() -> float:
-    """未在公司保勞健者適用的稅務支出比率（%），預設 5"""
+    """未在公司保勞健者適用的稅務支出比率（%），預設 3"""
     cfg = db.session.get(SystemConfig, 'tax_rate')
-    return float(cfg.value) if cfg else 5.0
+    return float(cfg.value) if cfg else 3.0
 
 
 def calc_retention_from_totals(totals: dict) -> float:
@@ -662,7 +680,7 @@ def settings_reset_password(user_id):
 @app.route('/materials')
 @login_required
 def materials():
-    all_materials = Material.query.order_by(Material.name).all()
+    all_materials = Material.query.order_by(Material.sort_order, Material.id).all()
     users_dict = {u.id: u for u in User.query.all()}
 
     my_requests = None
@@ -719,7 +737,8 @@ def materials_add():
     if not name or not unit:
         flash('材料名稱和單位不能為空', 'danger')
     else:
-        m = Material(name=name, unit=unit, remaining_quantity=qty)
+        max_order = db.session.query(db.func.max(Material.sort_order)).scalar() or 0
+        m = Material(name=name, unit=unit, remaining_quantity=qty, sort_order=max_order + 1)
         db.session.add(m)
         add_audit(current_user.id, 'MATERIAL_ADD',
                   f'新增材料「{name}」（{unit}），初始數量：{qty}')
@@ -760,6 +779,34 @@ def materials_delete(material_id):
     add_audit(current_user.id, 'MATERIAL_DELETE', f'刪除材料「{name}」及其所有申請紀錄')
     db.session.commit()
     flash(f'材料「{name}」已刪除', 'success')
+    return redirect(url_for('materials'))
+
+
+@app.route('/materials/<int:material_id>/move-up', methods=['POST'])
+@admin_required
+def materials_move_up(material_id):
+    m = db.session.get(Material, material_id)
+    if not m:
+        abort(404)
+    prev = (Material.query.filter(Material.sort_order < m.sort_order)
+            .order_by(Material.sort_order.desc()).first())
+    if prev:
+        m.sort_order, prev.sort_order = prev.sort_order, m.sort_order
+        db.session.commit()
+    return redirect(url_for('materials'))
+
+
+@app.route('/materials/<int:material_id>/move-down', methods=['POST'])
+@admin_required
+def materials_move_down(material_id):
+    m = db.session.get(Material, material_id)
+    if not m:
+        abort(404)
+    nxt = (Material.query.filter(Material.sort_order > m.sort_order)
+           .order_by(Material.sort_order.asc()).first())
+    if nxt:
+        m.sort_order, nxt.sort_order = nxt.sort_order, m.sort_order
+        db.session.commit()
     return redirect(url_for('materials'))
 
 

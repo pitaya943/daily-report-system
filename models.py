@@ -62,6 +62,7 @@ class Material(db.Model):
     name = db.Column(db.String(100), nullable=False)
     unit = db.Column(db.String(20), nullable=False)
     remaining_quantity = db.Column(db.Integer, default=0)
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 

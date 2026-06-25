@@ -3,11 +3,11 @@
 {% block page_title %}<i class="bi bi-currency-dollar me-2"></i>薪資計算{% endblock %}
 
 {% block content %}
-<div class="row g-4">
+<div class="row g-4" id="salaryLayout" style="flex-wrap:nowrap">
 
   <!-- Input form -->
-  <div class="col-lg-5">
-    <div class="card sticky-top" style="top:80px">
+  <div class="col-lg-5" id="salaryLeft" style="overflow-y:auto">
+    <div class="card">
       <div class="card-header bg-success text-white">
         <i class="bi bi-calculator me-1"></i>填入計算條件
       </div>
@@ -50,6 +50,16 @@
               {% if any_insured %}
               <table class="table table-sm table-borderless mb-0">
                 <tbody>
+                <tr>
+                  <td class="py-0 ps-0" style="width:28px">
+                    <input class="form-check-input" type="checkbox" id="insSelectAll"
+                           onchange="toggleAllIns(this.checked)">
+                  </td>
+                  <td colspan="2" class="py-0">
+                    <label for="insSelectAll" class="mb-0 fw-semibold text-secondary"
+                           style="font-size:.78rem;cursor:pointer">全選</label>
+                  </td>
+                </tr>
                 {% for u in all_active_users %}
                 <tr>
                   <td class="py-0 ps-0" style="width:28px">
@@ -118,7 +128,7 @@
   </div>
 
   <!-- Results -->
-  <div class="col-lg-7">
+  <div class="col-lg-7" id="salaryRight" style="overflow-y:auto">
     {% if salary_results %}
     <div class="card">
       <div class="card-header bg-primary text-white">
@@ -324,13 +334,11 @@
 <script>
 function setPayday10() {
   const today = new Date();
-  let y = today.getFullYear(), m = today.getMonth(); // m is 0-indexed
-  // Previous month's 21st
+  let y = today.getFullYear(), m = today.getMonth();
   let pm = m - 1, py = y;
   if (pm < 0) { pm = 11; py -= 1; }
   document.getElementById('salaryStartDate').value =
     `${py}-${String(pm + 1).padStart(2, '0')}-21`;
-  // Current month's 5th
   document.getElementById('salaryEndDate').value =
     `${y}-${String(m + 1).padStart(2, '0')}-05`;
 }
@@ -342,6 +350,42 @@ function setPayday25() {
   document.getElementById('salaryStartDate').value = `${y}-${m}-06`;
   document.getElementById('salaryEndDate').value   = `${y}-${m}-20`;
 }
+
+// 全選/全不選
+function toggleAllIns(checked) {
+  document.querySelectorAll('[id^="dins_"]').forEach(cb => {
+    if (!cb.disabled) cb.checked = checked;
+  });
+}
+
+// 個別 checkbox 變動時同步全選狀態
+document.querySelectorAll('[id^="dins_"]').forEach(cb => {
+  cb.addEventListener('change', syncSelectAll);
+});
+function syncSelectAll() {
+  const all = [...document.querySelectorAll('[id^="dins_"]')].filter(c => !c.disabled);
+  const selectAll = document.getElementById('insSelectAll');
+  if (selectAll) selectAll.checked = all.length > 0 && all.every(c => c.checked);
+}
+
+// 左右欄各自獨立滾動（高度填滿視窗剩餘空間）
+function fixSalaryLayout() {
+  const layout = document.getElementById('salaryLayout');
+  if (!layout) return;
+  const top = layout.getBoundingClientRect().top + window.scrollY;
+  const h = Math.floor(window.innerHeight - top - 8);
+  layout.style.height = h + 'px';
+  layout.style.overflow = 'hidden';
+  ['salaryLeft', 'salaryRight'].forEach(id => {
+    const col = document.getElementById(id);
+    if (col) col.style.height = '100%';
+  });
+}
+fixSalaryLayout();
+window.addEventListener('resize', fixSalaryLayout);
+
+// 初始同步全選狀態
+syncSelectAll();
 </script>
 {% endblock %}
 {% endblock %}
