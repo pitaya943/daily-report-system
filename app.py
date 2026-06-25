@@ -963,10 +963,10 @@ def summary():
 def confirmation():
     page = request.args.get('page', 1, type=int)
     pending_pagination = (Report.query.filter_by(is_confirmed=False)
-                          .order_by(Report.report_date.desc(), Report.id.desc())
+                          .order_by(Report.report_date.asc(), Report.id.asc())
                           .paginate(page=page, per_page=20, error_out=False))
     pending_materials = (MaterialRequest.query.filter_by(status='PENDING')
-                         .order_by(MaterialRequest.created_at.desc()).all())
+                         .order_by(MaterialRequest.created_at.asc()).all())
     users_dict = {u.id: u for u in User.query.all()}
     materials_dict = {m.id: m for m in Material.query.all()}
     url_args = {k: v for k, v in request.args.items() if k != 'page'}
