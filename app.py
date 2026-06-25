@@ -71,7 +71,7 @@ def _init_db():
         with db.engine.connect() as conn:
             from sqlalchemy import text
             conn.execute(text(
-                "ALTER TABLE users ADD COLUMN tax_exempt BOOLEAN NOT NULL DEFAULT 0"
+                "ALTER TABLE users ADD COLUMN tax_exempt BOOLEAN NOT NULL DEFAULT FALSE"
             ))
             conn.commit()
     except Exception:
@@ -81,7 +81,7 @@ def _init_db():
         with db.engine.connect() as conn:
             from sqlalchemy import text
             conn.execute(text(
-                "ALTER TABLE reports ADD COLUMN is_rejected BOOLEAN NOT NULL DEFAULT 0"
+                "ALTER TABLE reports ADD COLUMN is_rejected BOOLEAN NOT NULL DEFAULT FALSE"
             ))
             conn.commit()
     except Exception:
