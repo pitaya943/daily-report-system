@@ -57,7 +57,7 @@
 <!-- Sidebar -->
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-brand">
-    <i class="bi bi-clipboard-data-fill me-2"></i>員工日報系統
+    <i class="bi bi-clipboard-data-fill me-2"></i>宇丞 — 員工日報系統
   </div>
   <div class="sidebar-nav">
     <div class="sidebar-section">一般</div>
@@ -92,7 +92,7 @@
     <div class="sidebar-section mt-2">管理</div>
     <a href="{{ url_for('summary') }}"
        class="nav-link {% if request.endpoint == 'summary' %}active{% endif %}">
-      <i class="bi bi-table"></i> Summary
+      <i class="bi bi-table"></i> 統計報表
     </a>
     <a href="{{ url_for('confirmation') }}"
        class="nav-link {% if request.endpoint == 'confirmation' %}active{% endif %}">
@@ -100,7 +100,7 @@
     </a>
     <a href="{{ url_for('salary') }}"
        class="nav-link {% if request.endpoint == 'salary' %}active{% endif %}">
-      <i class="bi bi-currency-dollar"></i> Salary
+      <i class="bi bi-currency-dollar"></i> 薪資計算
     </a>
     {% endif %}
   </div>
