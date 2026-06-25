@@ -42,6 +42,33 @@ def _init_db():
 with app.app_context():
     _init_db()
 
+
+class SimplePagination:
+    """Paginate a plain Python list (mirrors Flask-SQLAlchemy Pagination API)."""
+    def __init__(self, items_all, page, per_page=20):
+        self.total = len(items_all)
+        self.per_page = per_page
+        self.pages = max(1, (self.total + per_page - 1) // per_page)
+        self.page = max(1, min(page, self.pages))
+        start = (self.page - 1) * per_page
+        self.items = items_all[start:start + per_page]
+        self.has_prev = self.page > 1
+        self.has_next = self.page < self.pages
+        self.prev_num = self.page - 1 if self.has_prev else None
+        self.next_num = self.page + 1 if self.has_next else None
+
+    def iter_pages(self, left_edge=1, right_edge=1, left_current=2, right_current=2):
+        last = 0
+        for num in range(1, self.pages + 1):
+            if (num <= left_edge
+                    or (self.page - left_current - 1 < num < self.page + right_current)
+                    or num > self.pages - right_edge):
+                if last + 1 != num:
+                    yield None
+                yield num
+                last = num
+
+
 @app.template_filter('money')
 def money_filter(value):
     """Format number with comma thousands separator; auto-detects decimal need."""
@@ -727,18 +754,26 @@ def summary():
             user_totals[uid]['count'] += 1
 
         grand = {k: sum(d['totals'][k] for d in user_totals.values()) for k, _ in REPORT_FIELDS}
-        results = {'user_totals': user_totals, 'grand_total': grand,
+        page = request.args.get('page', 1, type=int)
+        summary_pagination = SimplePagination(list(user_totals.items()), page, 20)
+        results = {'user_totals': dict(summary_pagination.items),
+                   'grand_total': grand,
                    'total_reports': len(reports)}
+    else:
+        summary_pagination = None
 
+    url_args = {k: v for k, v in request.args.items() if k != 'page'}
     return render_template('summary.html',
                            results=results,
+                           summary_pagination=summary_pagination,
                            all_users=all_users,
                            report_fields=REPORT_FIELDS,
                            selected_fields=selected_fields,
                            start_date=start_date,
                            end_date=end_date,
                            selected_user_id=selected_user_id,
-                           confirm_filter=confirm_filter)
+                           confirm_filter=confirm_filter,
+                           url_args=url_args)
 
 
 # ---------------------------------------------------------------------------
@@ -748,19 +783,24 @@ def summary():
 @app.route('/confirmation')
 @admin_required
 def confirmation():
-    pending_reports = (Report.query.filter_by(is_confirmed=False)
-                       .order_by(Report.report_date.desc()).all())
+    page = request.args.get('page', 1, type=int)
+    pending_pagination = (Report.query.filter_by(is_confirmed=False)
+                          .order_by(Report.report_date.desc(), Report.id.desc())
+                          .paginate(page=page, per_page=20, error_out=False))
     pending_materials = (MaterialRequest.query.filter_by(status='PENDING')
                          .order_by(MaterialRequest.created_at.desc()).all())
     users_dict = {u.id: u for u in User.query.all()}
     materials_dict = {m.id: m for m in Material.query.all()}
+    url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
     return render_template('confirmation.html',
-                           pending_reports=pending_reports,
+                           pending_pagination=pending_pagination,
+                           pending_reports=pending_pagination.items,
                            pending_materials=pending_materials,
                            users_dict=users_dict,
                            materials_dict=materials_dict,
-                           report_fields=REPORT_FIELDS)
+                           report_fields=REPORT_FIELDS,
+                           url_args=url_args)
 
 
 @app.route('/confirmation/report/<int:report_id>/confirm', methods=['POST'])
@@ -858,20 +898,24 @@ def audit():
     if action_type_filter:
         q = q.filter_by(action_type=action_type_filter)
 
-    logs = q.order_by(AuditLog.created_at.desc()).limit(500).all()
+    page = request.args.get('page', 1, type=int)
+    pagination = q.order_by(AuditLog.created_at.desc()).paginate(page=page, per_page=20, error_out=False)
     users_dict = {u.id: u for u in User.query.all()}
     all_users = User.query.order_by(User.display_name).all() if current_user.role == 'ADMIN' else []
     all_action_types = [r[0] for r in db.session.query(AuditLog.action_type).distinct().all()]
+    url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
     return render_template('audit.html',
-                           logs=logs,
+                           logs=pagination.items,
+                           pagination=pagination,
                            users_dict=users_dict,
                            all_users=all_users,
                            all_action_types=all_action_types,
                            start_date=start_date,
                            end_date=end_date,
                            selected_action=action_type_filter,
-                           selected_user_id=user_id_filter)
+                           selected_user_id=user_id_filter,
+                           url_args=url_args)
 
 
 # ---------------------------------------------------------------------------

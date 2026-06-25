@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_pagination.html' import paginate %}
 {% block title %}確認{% endblock %}
 {% block page_title %}<i class="bi bi-check-circle me-2"></i>確認頁面{% endblock %}
 
@@ -9,13 +10,16 @@
   <div class="card-header bg-warning bg-opacity-25 border-warning">
     <i class="bi bi-clipboard-check me-1"></i>
     待確認回報
-    <span class="badge bg-warning text-dark ms-1">{{ pending_reports|length }}</span>
+    <span class="badge bg-warning text-dark ms-1">{{ pending_pagination.total }}</span>
   </div>
   <div class="card-body p-0">
-    {% if pending_reports %}
+    {% if pending_pagination.total > 0 %}
+
+    {{ paginate(pending_pagination, 'confirmation', url_args) }}
+
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0" style="font-size:.82rem; min-width:1200px">
-        <thead>
+        <thead class="table-light">
           <tr>
             <th>#</th><th>帳戶</th><th>日期</th>
             {% for key, label in report_fields %}
@@ -48,6 +52,9 @@
         </tbody>
       </table>
     </div>
+
+    {{ paginate(pending_pagination, 'confirmation', url_args) }}
+
     {% else %}
     <p class="text-center text-muted py-3 mb-0">
       <i class="bi bi-check-all me-1"></i>所有回報皆已確認

@@ -1,0 +1,44 @@
+{% macro paginate(pagination, endpoint, url_args) %}
+{% if pagination.pages > 1 %}
+<div class="d-flex justify-content-between align-items-center px-3 py-2 bg-light border-top border-bottom">
+  <small class="text-muted">
+    第 {{ pagination.page }} 頁 / 共 {{ pagination.pages }} 頁（共 {{ pagination.total }} 筆）
+  </small>
+  <ul class="pagination pagination-sm mb-0 flex-wrap gap-0">
+    <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+      <a class="page-link" href="{{ url_for(endpoint, page=1, **url_args) }}" title="第一頁">
+        <i class="bi bi-skip-start-fill"></i>
+      </a>
+    </li>
+    <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+      <a class="page-link" href="{{ url_for(endpoint, page=(pagination.prev_num or 1), **url_args) }}" title="上一頁">
+        <i class="bi bi-chevron-left"></i>
+      </a>
+    </li>
+    {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+      {% if p %}
+        <li class="page-item {% if p == pagination.page %}active{% endif %}">
+          <a class="page-link" href="{{ url_for(endpoint, page=p, **url_args) }}">{{ p }}</a>
+        </li>
+      {% else %}
+        <li class="page-item disabled"><span class="page-link">…</span></li>
+      {% endif %}
+    {% endfor %}
+    <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+      <a class="page-link" href="{{ url_for(endpoint, page=(pagination.next_num or pagination.pages), **url_args) }}" title="下一頁">
+        <i class="bi bi-chevron-right"></i>
+      </a>
+    </li>
+    <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+      <a class="page-link" href="{{ url_for(endpoint, page=pagination.pages, **url_args) }}" title="最後頁">
+        <i class="bi bi-skip-end-fill"></i>
+      </a>
+    </li>
+  </ul>
+</div>
+{% else %}
+<div class="px-3 py-2 bg-light border-top">
+  <small class="text-muted">共 {{ pagination.total }} 筆</small>
+</div>
+{% endif %}
+{% endmacro %}

@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_pagination.html' import paginate %}
 {% block title %}統計報表{% endblock %}
 {% block page_title %}<i class="bi bi-table me-2"></i>統計報表{% endblock %}
 
@@ -31,8 +32,8 @@
       <div class="col-md-2">
         <label class="form-label small mb-1">確認狀態</label>
         <select name="confirm_filter" class="form-select form-select-sm">
-          <option value="all"       {% if confirm_filter == 'all'         %}selected{% endif %}>全部</option>
-          <option value="confirmed" {% if confirm_filter == 'confirmed'   %}selected{% endif %}>僅已確認</option>
+          <option value="all"         {% if confirm_filter == 'all'         %}selected{% endif %}>全部</option>
+          <option value="confirmed"   {% if confirm_filter == 'confirmed'   %}selected{% endif %}>僅已確認</option>
           <option value="unconfirmed" {% if confirm_filter == 'unconfirmed' %}selected{% endif %}>僅未確認</option>
         </select>
       </div>
@@ -51,6 +52,9 @@
   <div class="card-header bg-primary text-white d-flex justify-content-between">
     <span>{{ start_date }} ～ {{ end_date }}｜共 {{ results.total_reports }} 筆回報</span>
   </div>
+
+  {{ paginate(summary_pagination, 'summary', url_args) }}
+
   <div class="card-body p-0">
     <div class="table-responsive">
       <table class="table table-bordered table-sm mb-0" style="font-size:.82rem; min-width:1400px">
@@ -76,18 +80,29 @@
           </tr>
           {% endfor %}
         </tbody>
-        <tfoot class="table-success">
-          <tr class="fw-bold">
-            <td>合計</td>
+        <tfoot>
+          <!-- 重複欄位標題，捲到底部時仍可辨識欄位 -->
+          <tr class="table-secondary" style="font-size:.78rem">
+            <th class="text-muted">欄位名稱</th>
+            <th class="text-center text-muted">筆數</th>
+            {% for key, label in report_fields %}
+            <th class="text-center text-muted" title="{{ label }}">{{ label }}</th>
+            {% endfor %}
+          </tr>
+          <tr class="table-success fw-bold">
+            <td>全體合計</td>
             <td class="text-center">{{ results.total_reports }}</td>
             {% for key, _ in report_fields %}
-            <td class="text-center">{{ results.grand_total[key] }}</td>
+            <td class="text-center">{{ results.grand_total[key] if results.grand_total[key] else '' }}</td>
             {% endfor %}
           </tr>
         </tfoot>
       </table>
     </div>
   </div>
+
+  {{ paginate(summary_pagination, 'summary', url_args) }}
+
 </div>
 {% elif start_date %}
 <div class="alert alert-info">

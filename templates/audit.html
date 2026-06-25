@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from '_pagination.html' import paginate %}
 {% block title %}變動紀錄{% endblock %}
 {% block page_title %}<i class="bi bi-journal-text me-2"></i>變動紀錄{% endblock %}
 
@@ -51,14 +52,17 @@
 </div>
 
 <div class="card">
-  <div class="card-header d-flex justify-content-between">
-    <span>共 {{ logs|length }} 筆（最多顯示 500 筆）</span>
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>共 {{ pagination.total }} 筆紀錄</span>
     <small class="text-muted">變動紀錄不可修改或刪除</small>
   </div>
+
+  {{ paginate(pagination, 'audit', url_args) }}
+
   <div class="card-body p-0">
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0" style="font-size:.83rem">
-        <thead>
+        <thead class="table-light">
           <tr>
             <th>#</th>
             <th>時間</th>
@@ -93,5 +97,8 @@
       </table>
     </div>
   </div>
+
+  {{ paginate(pagination, 'audit', url_args) }}
+
 </div>
 {% endblock %}
