@@ -364,7 +364,7 @@ def get_user_display(users_dict, uid):
 @app.route('/')
 def index():
     if current_user.is_authenticated:
-        return redirect(url_for('summary') if current_user.role == 'ADMIN' else url_for('report'))
+        return redirect(url_for('confirmation') if current_user.role == 'ADMIN' else url_for('report'))
     return redirect(url_for('login'))
 
 
@@ -383,7 +383,7 @@ def login():
         user = db.session.get(User, int(user_id)) if user_id.isdigit() else None
         if user and user.is_active and check_password_hash(user.password_hash, password):
             login_user(user, remember=True)
-            return redirect(url_for('summary') if user.role == 'ADMIN' else url_for('report'))
+            return redirect(url_for('confirmation') if user.role == 'ADMIN' else url_for('report'))
         flash('密碼錯誤，請重試', 'danger')
     return render_template('login.html', active_users=active_users)
 
@@ -584,14 +584,17 @@ def settings_create_user():
     password = request.form.get('password', '')
     role = request.form.get('role', 'USER')
 
+    confirm_password = request.form.get('confirm_password', '')
     if not display_name or not password:
         flash('名稱和密碼不能為空', 'danger')
     elif role not in ('ADMIN', 'USER'):
         flash('無效的角色', 'danger')
-    elif User.query.filter_by(display_name=display_name).first():
-        flash(f'名稱「{display_name}」已存在', 'danger')
     elif len(password) < 4:
         flash('密碼至少需要 4 個字元', 'danger')
+    elif password != confirm_password:
+        flash('兩次輸入的密碼不相符', 'danger')
+    elif User.query.filter_by(display_name=display_name).first():
+        flash(f'名稱「{display_name}」已存在', 'danger')
     else:
         payment_method = request.form.get('payment_method', 'TRANSFER')
         if payment_method not in ('CASH', 'TRANSFER'):
@@ -838,8 +841,11 @@ def settings_reset_password(user_id):
     if not target:
         abort(404)
     new_pw = request.form.get('new_password', '')
+    confirm_pw = request.form.get('confirm_password', '')
     if len(new_pw) < 4:
         flash('密碼至少需要 4 個字元', 'danger')
+    elif new_pw != confirm_pw:
+        flash('兩次輸入的密碼不相符', 'danger')
     else:
         target.password_hash = generate_password_hash(new_pw)
         target.updated_at = datetime.utcnow()

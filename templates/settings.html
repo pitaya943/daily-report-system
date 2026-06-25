@@ -5,7 +5,8 @@
 {% block content %}
 <div class="row g-4">
 
-  <!-- Change own password -->
+  {% if current_user.role != 'ADMIN' %}
+  <!-- USER：修改自己的密碼 -->
   <div class="col-md-5">
     <div class="card h-100">
       <div class="card-header bg-secondary text-white">
@@ -33,10 +34,11 @@
       </div>
     </div>
   </div>
+  {% endif %}
 
   {% if current_user.role == 'ADMIN' %}
-  <!-- User management -->
-  <div class="col-md-7">
+  <!-- ADMIN：帳戶管理全寬 -->
+  <div class="col-12">
     <div class="card mb-4">
       <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
         <span><i class="bi bi-people me-1"></i>帳戶管理</span>
@@ -126,12 +128,12 @@
                         title="{% if user_ret_rates[u.id]['is_custom'] %}已自訂保留金費率{% else %}設定各工項保留金費率{% endif %}">
                   <i class="bi bi-sliders2"></i>
                 </button>
-                {% if u.id != current_user.id %}
                 <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
                         onclick="openResetPwd({{ u.id }}, '{{ u.display_name|e }}')"
                         title="重設密碼">
                   <i class="bi bi-key"></i>
                 </button>
+                {% if u.id != current_user.id %}
                 {% if u.is_active %}
                 <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
                         onclick="openDelete({{ u.id }}, '{{ u.display_name|e }}')"
@@ -277,7 +279,7 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <form method="POST" action="{{ url_for('settings_create_user') }}"
-            onsubmit="return confirm('確定建立此帳戶？')">
+            onsubmit="return validateCreatePwd() && confirm('確定建立此帳戶？')">
         <div class="modal-body">
           <div class="mb-3">
             <label class="form-label fw-semibold">帳戶名稱（可使用中文）</label>
@@ -286,7 +288,13 @@
           </div>
           <div class="mb-3">
             <label class="form-label">密碼</label>
-            <input type="password" name="password" class="form-control" required minlength="4">
+            <input type="password" name="password" id="createPwdNew"
+                   class="form-control" required minlength="4">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">確認密碼</label>
+            <input type="password" name="confirm_password" id="createPwdConfirm"
+                   class="form-control" required minlength="4">
           </div>
           <div class="mb-3">
             <label class="form-label">帳戶類型</label>
@@ -347,12 +355,18 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <form id="resetPwdForm" method="POST"
-            onsubmit="return confirm('確定重設此帳戶密碼？')">
+            onsubmit="return validateResetPwd() && confirm('確定重設「' + document.getElementById('resetPwdUsername').textContent + '」的密碼？')">
         <div class="modal-body">
           <p class="small mb-3">帳戶：<strong id="resetPwdUsername"></strong></p>
           <div class="mb-2">
             <label class="form-label">新密碼</label>
-            <input type="password" name="new_password" class="form-control" required minlength="4">
+            <input type="password" name="new_password" id="resetPwdNew"
+                   class="form-control" required minlength="4">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">確認新密碼</label>
+            <input type="password" name="confirm_password" id="resetPwdConfirm"
+                   class="form-control" required minlength="4">
           </div>
         </div>
         <div class="modal-footer">
@@ -537,6 +551,18 @@ const RET_FIELDS = {{ retention_fields_labeled | tojson }};
 const USER_RET_RATES = {{ user_ret_rates | tojson }};
 const GLOBAL_RATE = {{ retention_rate }};
 
+function validateResetPwd() {
+  var pw = document.getElementById('resetPwdNew').value;
+  var cpw = document.getElementById('resetPwdConfirm').value;
+  if (pw !== cpw) { alert('兩次輸入的密碼不相符，請重新輸入'); return false; }
+  return true;
+}
+function validateCreatePwd() {
+  var pw = document.getElementById('createPwdNew').value;
+  var cpw = document.getElementById('createPwdConfirm').value;
+  if (pw !== cpw) { alert('兩次輸入的密碼不相符，請重新輸入'); return false; }
+  return true;
+}
 function openRetRates(userId, name) {
   const url = '/settings/users/' + userId + '/retention-rates';
   document.getElementById('retRatesUsername').textContent = name;

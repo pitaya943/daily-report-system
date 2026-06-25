@@ -176,7 +176,10 @@
       showLoading();
     });
     document.addEventListener('submit', function(e){
-      if(!e.defaultPrevented) showLoading();
+      if(e.defaultPrevented) return;
+      // 匯出 Excel/PDF 等檔案下載不顯示 loading（頁面不會跳轉）
+      if(e.submitter && e.submitter.dataset.noLoading) return;
+      showLoading();
     });
   });
 })();
