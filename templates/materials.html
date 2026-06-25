@@ -45,6 +45,13 @@
                     onclick="openUpdate({{ m.id }}, '{{ m.name }}', '{{ m.unit }}', {{ m.remaining_quantity }})">
               <i class="bi bi-pencil me-1"></i>調整
             </button>
+            <form method="POST" action="{{ url_for('materials_delete', material_id=m.id) }}"
+                  style="display:inline"
+                  onsubmit="return confirm('確定刪除材料「{{ m.name }}」？相關申請紀錄也將一併刪除，此操作無法復原。')">
+              <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2 ms-1">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
             {% endif %}
           </td>
         </tr>

@@ -177,6 +177,15 @@
                 <td class="text-end text-danger">－ {{ data.insurance_deduction | money }} NTD</td>
               </tr>
               {% endif %}
+              {% if data.tax_deduction > 0 %}
+              <tr class="fw-semibold" style="background:#fff3e0">
+                <td colspan="3">
+                  <i class="bi bi-receipt me-1" style="color:#e65100"></i>
+                  稅務支出（{{ salary_results.tax_rate }}%，未投保）
+                </td>
+                <td class="text-end" style="color:#e65100">－ {{ data.tax_deduction | money }} NTD</td>
+              </tr>
+              {% endif %}
               <tr class="table-success fw-bold">
                 <td colspan="3">
                   <i class="bi bi-cash-coin me-1"></i>本期實領金額
@@ -274,6 +283,12 @@
         <div class="alert mb-1 py-2 fw-semibold" style="background:#fdecea;border-color:#ef9a9a">
           <i class="bi bi-shield-check me-1 text-danger"></i>
           勞健保扣除合計：－ {{ salary_results.grand_insurance | money }} NTD
+        </div>
+        {% endif %}
+        {% if salary_results.grand_tax > 0 %}
+        <div class="alert mb-1 py-2 fw-semibold" style="background:#fff3e0;border-color:#ffb74d">
+          <i class="bi bi-receipt me-1" style="color:#e65100"></i>
+          稅務支出合計（{{ salary_results.tax_rate }}%，未投保）：－ {{ salary_results.grand_tax | money }} NTD
         </div>
         {% endif %}
         <div class="alert alert-success fw-bold mb-1">

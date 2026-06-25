@@ -38,6 +38,14 @@ def _init_db():
             conn.commit()
     except Exception:
         pass  # column already exists → safe to ignore
+    # Seed default SystemConfig entries if missing
+    try:
+        for _key, _val in [('retention_rate', '20'), ('tax_rate', '5')]:
+            if not db.session.get(SystemConfig, _key):
+                db.session.add(SystemConfig(key=_key, value=_val))
+        db.session.commit()
+    except Exception:
+        pass
 
 with app.app_context():
     _init_db()
@@ -175,9 +183,14 @@ RETENTION_RATE = 20  # default fallback
 
 
 def get_retention_rate() -> float:
-    """從 SystemConfig 讀取保留金費率，找不到則回傳預設值 20"""
     cfg = db.session.get(SystemConfig, 'retention_rate')
     return float(cfg.value) if cfg else float(RETENTION_RATE)
+
+
+def get_tax_rate() -> float:
+    """未在公司保勞健者適用的稅務支出比率（%），預設 5"""
+    cfg = db.session.get(SystemConfig, 'tax_rate')
+    return float(cfg.value) if cfg else 5.0
 
 
 def calc_retention_from_totals(totals: dict) -> float:
@@ -336,18 +349,23 @@ def history():
     if end_date:
         q = q.filter(Report.report_date <= date.fromisoformat(end_date))
 
-    reports = q.order_by(Report.report_date.desc(), Report.created_at.desc()).all()
+    page = request.args.get('page', 1, type=int)
+    pagination = (q.order_by(Report.report_date.desc(), Report.created_at.desc())
+                  .paginate(page=page, per_page=20, error_out=False))
     users_dict = {u.id: u for u in User.query.all()}
     all_users = User.query.all() if current_user.role == 'ADMIN' else []
+    url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
     return render_template('history.html',
-                           reports=reports,
+                           reports=pagination.items,
+                           pagination=pagination,
                            users_dict=users_dict,
                            all_users=all_users,
                            report_fields=REPORT_FIELDS,
                            start_date=start_date,
                            end_date=end_date,
-                           selected_user_id=selected_user_id)
+                           selected_user_id=selected_user_id,
+                           url_args=url_args)
 
 
 @app.route('/history/<int:report_id>/edit', methods=['POST'])
@@ -409,7 +427,8 @@ def history_delete(report_id):
 def settings():
     all_users = User.query.order_by(User.created_at).all() if current_user.role == 'ADMIN' else []
     return render_template('settings.html', all_users=all_users,
-                           retention_rate=int(get_retention_rate()))
+                           retention_rate=int(get_retention_rate()),
+                           tax_rate=get_tax_rate())
 
 
 @app.route('/settings/password', methods=['POST'])
@@ -525,6 +544,25 @@ def settings_insurance(user_id):
               f'更新「{target.display_name}」勞健保扣除額：{amount} NTD')
     db.session.commit()
     flash(f'「{target.display_name}」勞健保扣除額已更新為 {amount:,} NTD', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/tax-rate', methods=['POST'])
+@admin_required
+def settings_tax_rate():
+    try:
+        rate = max(0.0, float(request.form.get('rate', 5)))
+    except (ValueError, TypeError):
+        flash('請輸入有效的數值', 'danger')
+        return redirect(url_for('settings'))
+    cfg = db.session.get(SystemConfig, 'tax_rate')
+    if cfg:
+        cfg.value = str(rate)
+    else:
+        db.session.add(SystemConfig(key='tax_rate', value=str(rate)))
+    add_audit(current_user.id, 'SYSTEM_CONFIG', f'更新稅務支出費率：{rate}%')
+    db.session.commit()
+    flash(f'稅務支出費率已更新為 {rate}%', 'success')
     return redirect(url_for('settings'))
 
 
@@ -707,6 +745,21 @@ def materials_update(material_id):
               f'調整「{m.name}」數量：{old_qty}{m.unit} → {new_qty}{m.unit}')
     db.session.commit()
     flash(f'「{m.name}」數量已更新', 'success')
+    return redirect(url_for('materials'))
+
+
+@app.route('/materials/<int:material_id>/delete', methods=['POST'])
+@admin_required
+def materials_delete(material_id):
+    m = db.session.get(Material, material_id)
+    if not m:
+        abort(404)
+    name = m.name
+    MaterialRequest.query.filter_by(material_id=material_id).delete()
+    db.session.delete(m)
+    add_audit(current_user.id, 'MATERIAL_DELETE', f'刪除材料「{name}」及其所有申請紀錄')
+    db.session.commit()
+    flash(f'材料「{name}」已刪除', 'success')
     return redirect(url_for('materials'))
 
 
@@ -985,6 +1038,7 @@ def salary():
                 for k, _ in REPORT_FIELDS:
                     user_data[uid]['totals'][k] += getattr(r, k, 0)
 
+            tax_rate = get_tax_rate()
             for uid, data in user_data.items():
                 subtotals = {k: data['totals'][k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
                 data['subtotals'] = subtotals
@@ -996,12 +1050,16 @@ def salary():
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
                 ins = (u.insurance_deduction if u else 0) if uid in deduct_uid_set else 0
                 data['insurance_deduction'] = ins
-                data['final_salary'] = data['net_salary'] - ins
+                # 未在公司保勞健者扣稅（以計薪小計為基數，四捨五入整數）
+                not_enrolled = (u.insurance_deduction == 0) if u else True
+                data['tax_deduction'] = round(data['gross_salary'] * tax_rate / 100) if not_enrolled else 0
+                data['final_salary'] = data['net_salary'] - ins - data['tax_deduction']
 
             grand_gross = sum(d['gross_salary'] for d in user_data.values())
             grand_period_retention = sum(d['period_retention'] for d in user_data.values())
             grand_ytd_retention = sum(d['ytd_retention'] for d in user_data.values())
             grand_insurance = sum(d['insurance_deduction'] for d in user_data.values())
+            grand_tax = sum(d['tax_deduction'] for d in user_data.values())
             grand = sum(d['final_salary'] for d in user_data.values())
             transfer_total = sum(d['final_salary'] for d in user_data.values()
                                  if d['payment_method'] == 'TRANSFER')
@@ -1015,6 +1073,8 @@ def salary():
                               'grand_period_retention': grand_period_retention,
                               'grand_ytd_retention': grand_ytd_retention,
                               'grand_insurance': grand_insurance,
+                              'grand_tax': grand_tax,
+                              'tax_rate': tax_rate,
                               'transfer_total': transfer_total,
                               'cash_total': cash_total,
                               'cash_bills': cash_bills,
@@ -1099,6 +1159,14 @@ def _export_salary_excel(results):
             ws.cell(row=row, column=4, value=-round(data['insurance_deduction'], 2)).font = Font(color='C00000')
             row += 1
 
+        if data.get('tax_deduction', 0) > 0:
+            for col in range(1, 5):
+                ws.cell(row=row, column=col).fill = PatternFill('solid', fgColor='FFF3E0')
+            tax_pct = results.get('tax_rate', 5)
+            ws.cell(row=row, column=1, value=f'稅務支出（{tax_pct}%，未投保）').font = Font(color='E65100')
+            ws.cell(row=row, column=4, value=-round(data['tax_deduction'], 2)).font = Font(color='E65100')
+            row += 1
+
         for col in range(1, 5):
             ws.cell(row=row, column=col).fill = lgreen
         net_cell = ws.cell(row=row, column=1, value='本期實領金額')
@@ -1143,6 +1211,11 @@ def _export_salary_excel(results):
     if results.get('grand_insurance', 0) > 0:
         ws.cell(row=row, column=1, value='勞健保扣除合計').font = Font(color='C00000')
         ws.cell(row=row, column=4, value=-round(results['grand_insurance'], 2)).font = Font(color='C00000')
+        row += 1
+    if results.get('grand_tax', 0) > 0:
+        tax_pct = results.get('tax_rate', 5)
+        ws.cell(row=row, column=1, value=f'稅務支出合計（{tax_pct}%）').font = Font(color='E65100')
+        ws.cell(row=row, column=4, value=-round(results['grand_tax'], 2)).font = Font(color='E65100')
         row += 1
 
     for col in range(1, 5):
@@ -1331,6 +1404,8 @@ def _export_salary_pdf(results):
     ]
     if results.get('grand_insurance', 0) > 0:
         sdata.append(['勞健保扣除合計', f'-{results["grand_insurance"]:,.0f}'])
+    if results.get('grand_tax', 0) > 0:
+        sdata.append([f'稅務支出合計（{results.get("tax_rate",5)}%）', f'-{results["grand_tax"]:,.0f}'])
     sdata += [
         ['實領薪資總合計',       f'{results["grand_salary"]:,.0f}'],
         ['轉帳薪資總額',         f'{results["transfer_total"]:,.0f}'],
@@ -1436,13 +1511,19 @@ def personal_stats():
         period_retention = calc_retention_from_totals(totals)
         grand_total = sum(subtotals.values())
         ins_amount = current_user.insurance_deduction if deduct_ins else 0
+        not_enrolled = (current_user.insurance_deduction == 0)
+        tax_rate = get_tax_rate()
+        tax_amount = round(grand_total * tax_rate / 100) if not_enrolled else 0
         salary_result = {'start': salary_start, 'end': salary_end,
                          'totals': totals, 'prices': prices,
                          'subtotals': subtotals,
                          'grand_total': grand_total,
                          'period_retention': period_retention,
                          'insurance_deduction': ins_amount,
-                         'final_salary': grand_total - period_retention - ins_amount,
+                         'tax_deduction': tax_amount,
+                         'tax_rate': tax_rate,
+                         'not_enrolled': not_enrolled,
+                         'final_salary': grand_total - period_retention - ins_amount - tax_amount,
                          'deduct_insurance': deduct_ins,
                          'count': len(reports)}
 

@@ -62,6 +62,7 @@ def seed():
 
         # ── 系統設定 ──────────────────────────────────────────────────────────
         db.session.add(SystemConfig(key='retention_rate', value='20'))
+        db.session.add(SystemConfig(key='tax_rate', value='5'))
 
         # ── 建立帳戶 ──────────────────────────────────────────────────────────
         admin_objs = []
