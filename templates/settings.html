@@ -112,11 +112,23 @@
                         title="重設密碼">
                   <i class="bi bi-key"></i>
                 </button>
+                {% if u.is_active %}
                 <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
                         onclick="openDelete({{ u.id }}, '{{ u.display_name|e }}')"
-                        title="刪除帳戶">
+                        title="刪除 / 停用帳戶">
                   <i class="bi bi-trash"></i>
                 </button>
+                {% else %}
+                <form method="POST"
+                      action="{{ url_for('settings_reactivate_user', user_id=u.id) }}"
+                      class="d-inline"
+                      onsubmit="return confirm('確定重新啟用「{{ u.display_name|e }}」？')">
+                  <button type="submit" class="btn btn-outline-success btn-sm py-0 px-2 ms-1"
+                          title="重新啟用帳戶">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                  </button>
+                </form>
+                {% endif %}
                 {% endif %}
               </td>
             </tr>

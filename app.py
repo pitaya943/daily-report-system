@@ -552,6 +552,25 @@ def settings_delete_user(user_id):
     return redirect(url_for('settings'))
 
 
+@app.route('/settings/users/<int:user_id>/reactivate', methods=['POST'])
+@admin_required
+def settings_reactivate_user(user_id):
+    target = db.session.get(User, user_id)
+    if not target:
+        abort(404)
+    if target.is_active:
+        flash('該帳戶目前為啟用狀態', 'warning')
+        return redirect(url_for('settings'))
+    target.is_active = True
+    target.updated_at = datetime.utcnow()
+    add_audit(current_user.id, 'ACCOUNT_REACTIVATE',
+              f'重新啟用帳戶「{target.display_name}」')
+    db.session.commit()
+    flash(f'帳戶「{target.display_name}」已重新啟用', 'success')
+    return redirect(url_for('settings'))
+
+
+
 @app.route('/settings/users/<int:user_id>/password', methods=['POST'])
 @admin_required
 def settings_reset_password(user_id):
