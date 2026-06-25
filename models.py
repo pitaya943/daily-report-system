@@ -95,3 +95,12 @@ class AuditLog(db.Model):
     action_type = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class UserRetentionRate(db.Model):
+    """Per-user per-field retention rate overrides. Absence = use global rate."""
+    __tablename__ = 'user_retention_rates'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    field = db.Column(db.String(50), nullable=False)
+    rate = db.Column(db.Integer, nullable=False, default=0)

@@ -121,6 +121,11 @@
                         title="重置/設定累積保留金">
                   <i class="bi bi-piggy-bank"></i>
                 </button>
+                <button class="btn btn-{% if user_ret_rates[u.id]['is_custom'] %}warning{% else %}outline-secondary{% endif %} btn-sm py-0 px-2 ms-1"
+                        onclick="openRetRates({{ u.id }}, '{{ u.display_name|e }}')"
+                        title="{% if user_ret_rates[u.id]['is_custom'] %}已自訂保留金費率{% else %}設定各工項保留金費率{% endif %}">
+                  <i class="bi bi-sliders2"></i>
+                </button>
                 {% if u.id != current_user.id %}
                 <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
                         onclick="openResetPwd({{ u.id }}, '{{ u.display_name|e }}')"
@@ -158,6 +163,55 @@
 </div>
 
 {% if current_user.role == 'ADMIN' %}
+
+<!-- Per-User Retention Rates Modal -->
+<div class="modal fade" id="retRatesModal" tabindex="-1">
+  <div class="modal-dialog modal-md">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title">
+          <i class="bi bi-sliders2 me-2"></i>各工項保留金費率設定
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small mb-1">帳戶：<strong id="retRatesUsername"></strong></p>
+        <p class="small text-muted mb-3">
+          設定此帳戶各工項的保留金費率（NTD/只）。<br>
+          設為 <strong>0</strong> 表示該工項不扣除保留金。未自訂時使用全域費率（目前：<strong>{{ retention_rate }} NTD/只</strong>）。
+        </p>
+        <form id="retRatesForm" method="POST">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-secondary">
+              <tr>
+                <th>工項</th>
+                <th style="width:180px">費率（NTD/只）</th>
+              </tr>
+            </thead>
+            <tbody id="retRatesBody"></tbody>
+          </table>
+        </form>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <form id="retRatesResetForm" method="POST"
+              onsubmit="return confirm('確定將此帳戶所有保留金費率重置為全域費率（{{ retention_rate }} NTD/只）？')">
+          <input type="hidden" name="action" value="reset">
+          <button type="submit" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>重置為全域費率
+          </button>
+        </form>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" form="retRatesForm" class="btn btn-warning btn-sm"
+                  onclick="return confirm('確定儲存此帳戶的保留金費率？')">
+            <i class="bi bi-check-lg me-1"></i>儲存
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Retention Rate Card -->
 <div class="card mt-4">
   <div class="card-header bg-warning bg-opacity-25 border-warning">
@@ -479,6 +533,31 @@
 </div>
 
 <script>
+const RET_FIELDS = {{ retention_fields_labeled | tojson }};
+const USER_RET_RATES = {{ user_ret_rates | tojson }};
+const GLOBAL_RATE = {{ retention_rate }};
+
+function openRetRates(userId, name) {
+  const url = '/settings/users/' + userId + '/retention-rates';
+  document.getElementById('retRatesUsername').textContent = name;
+  document.getElementById('retRatesForm').action = url;
+  document.getElementById('retRatesResetForm').action = url;
+  const info = USER_RET_RATES[userId] || { rates: {}, is_custom: false };
+  const tbody = document.getElementById('retRatesBody');
+  tbody.innerHTML = '';
+  RET_FIELDS.forEach(function([field, label]) {
+    const rate = info.rates[field] !== undefined ? info.rates[field] : GLOBAL_RATE;
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + label + '</td>' +
+      '<td><div class="input-group input-group-sm">' +
+      '<input type="number" name="rate_' + field + '" class="form-control" min="0" step="1" value="' + rate + '">' +
+      '<span class="input-group-text">NTD</span></div></td>';
+    tbody.appendChild(tr);
+  });
+  new bootstrap.Modal(document.getElementById('retRatesModal')).show();
+}
+
 function openInsurance(id, name, amount, taxExempt) {
   document.getElementById('insuranceUsername').textContent = name;
   document.getElementById('insuranceForm').action = '/settings/users/' + id + '/insurance';

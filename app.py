@@ -9,7 +9,7 @@ from flask_login import (LoginManager, login_user, logout_user,
                          login_required, current_user)
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig
+from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig, UserRetentionRate
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'daily-report-secret-2026-yc-local')
@@ -226,11 +226,12 @@ DEFAULT_PRICES = {
     'soil_clearing':        100.0,
 }
 
-# 保留金：以下 8 個欄位每只抽 20 NTD
+# 保留金：以下 8 個欄位每只抽固定費率（可依帳戶客製化）
 RETENTION_FIELDS = [
     'direct_13', 'direct_20', 'direct_25', 'direct_40',
     'indirect_13', 'indirect_20', 'indirect_25', 'indirect_40',
 ]
+RETENTION_FIELDS_LABELED = [(f, lbl) for f, lbl in REPORT_FIELDS if f in set(RETENTION_FIELDS)]
 RETENTION_RATE = 20  # default fallback
 RETENTION_CAP  = 60000  # 年度保留金上限 (NTD)
 
@@ -247,9 +248,33 @@ def get_tax_rate() -> float:
 
 
 def calc_retention_from_totals(totals: dict) -> float:
-    """計算保留金：RETENTION_FIELDS 的合計只數 × 當前費率"""
+    """全域費率版：RETENTION_FIELDS 合計只數 × 全域費率（向後相容，勿刪）"""
     rate = get_retention_rate()
     return sum(totals.get(f, 0) for f in RETENTION_FIELDS) * rate
+
+
+def get_user_all_retention_rates(user_id: int) -> dict:
+    """回傳 {field: rate}，未自訂的欄位使用全域費率。"""
+    global_rate = get_retention_rate()
+    result = {f: global_rate for f in RETENTION_FIELDS}
+    for cr in UserRetentionRate.query.filter_by(user_id=user_id).all():
+        if cr.field in result:
+            result[cr.field] = float(cr.rate)
+    return result
+
+
+def get_users_all_retention_rates(user_ids) -> dict:
+    """批次載入多帳戶費率，回傳 {uid: {field: rate}}，減少 DB 查詢次數。"""
+    ids = list(user_ids)
+    global_rate = get_retention_rate()
+    result = {uid: {f: global_rate for f in RETENTION_FIELDS} for uid in ids}
+    if ids:
+        for cr in UserRetentionRate.query.filter(
+            UserRetentionRate.user_id.in_(ids)
+        ).all():
+            if cr.user_id in result and cr.field in result[cr.user_id]:
+                result[cr.user_id][cr.field] = float(cr.rate)
+    return result
 
 
 def get_ytd_retention(user_id: int) -> float:
@@ -262,7 +287,8 @@ def get_ytd_retention(user_id: int) -> float:
         Report.report_date <= date.today()
     ).all()
     totals = {f: sum(getattr(r, f, 0) for r in reports) for f in RETENTION_FIELDS}
-    calculated = calc_retention_from_totals(totals)
+    user_rates = get_user_all_retention_rates(user_id)
+    calculated = sum(totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
     u = db.session.get(User, user_id)
     offset = u.retention_offset if u else 0
     return min(float(RETENTION_CAP), max(0.0, calculated + offset))
@@ -278,7 +304,8 @@ def _calc_ytd_retention_raw(user_id: int) -> float:
         Report.report_date <= date.today()
     ).all()
     totals = {f: sum(getattr(r, f, 0) for r in reports) for f in RETENTION_FIELDS}
-    return calc_retention_from_totals(totals)
+    user_rates = get_user_all_retention_rates(user_id)
+    return sum(totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
 
 
 CASH_DENOMINATIONS = [1000, 500, 100, 50, 10, 5, 1]
@@ -501,10 +528,30 @@ def history_delete(report_id):
 def settings():
     all_users = User.query.order_by(User.created_at).all() if current_user.role == 'ADMIN' else []
     ytd_by_user = {u.id: get_ytd_retention(u.id) for u in all_users}
+
+    # 批次載入各帳戶客製保留金費率，供 Modal 使用
+    global_rate = int(get_retention_rate())
+    uid_list = [u.id for u in all_users]
+    all_custom = (UserRetentionRate.query
+                  .filter(UserRetentionRate.user_id.in_(uid_list)).all()
+                  if uid_list else [])
+    custom_map = {}
+    for cr in all_custom:
+        custom_map.setdefault(cr.user_id, {})[cr.field] = cr.rate
+    user_ret_rates = {
+        u.id: {
+            'rates': {f: custom_map.get(u.id, {}).get(f, global_rate) for f in RETENTION_FIELDS},
+            'is_custom': bool(custom_map.get(u.id))
+        }
+        for u in all_users
+    }
+
     return render_template('settings.html', all_users=all_users,
-                           retention_rate=int(get_retention_rate()),
+                           retention_rate=global_rate,
                            tax_rate=get_tax_rate(),
-                           ytd_by_user=ytd_by_user)
+                           ytd_by_user=ytd_by_user,
+                           user_ret_rates=user_ret_rates,
+                           retention_fields_labeled=RETENTION_FIELDS_LABELED)
 
 
 @app.route('/settings/password', methods=['POST'])
@@ -700,6 +747,37 @@ def settings_set_retention(user_id):
                   f'設定「{u.display_name}」今年度累積保留金為 {int(target)}（計算值 {calculated:.0f}，偏移 {u.retention_offset}）')
         flash(f'「{u.display_name}」累積保留金已設定為 {int(target)} NTD', 'success')
     db.session.commit()
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/users/<int:user_id>/retention-rates', methods=['POST'])
+@admin_required
+def settings_retention_rates(user_id):
+    u = db.session.get(User, user_id)
+    if not u:
+        abort(404)
+    action = request.form.get('action', 'set')
+    if action == 'reset':
+        UserRetentionRate.query.filter_by(user_id=user_id).delete()
+        add_audit(current_user.id, 'ACCOUNT_UPDATE',
+                  f'重置「{u.display_name}」保留金費率為全域設定')
+        db.session.commit()
+        flash(f'「{u.display_name}」保留金費率已重置為全域設定', 'success')
+    else:
+        for field in RETENTION_FIELDS:
+            try:
+                rate = max(0, int(request.form.get(f'rate_{field}', 0)))
+            except (ValueError, TypeError):
+                rate = 0
+            existing = UserRetentionRate.query.filter_by(user_id=user_id, field=field).first()
+            if existing:
+                existing.rate = rate
+            else:
+                db.session.add(UserRetentionRate(user_id=user_id, field=field, rate=rate))
+        add_audit(current_user.id, 'ACCOUNT_UPDATE',
+                  f'更新「{u.display_name}」各工項保留金客製費率')
+        db.session.commit()
+        flash(f'「{u.display_name}」保留金費率已更新', 'success')
     return redirect(url_for('settings'))
 
 
@@ -1225,18 +1303,21 @@ def salary():
                     user_data[uid]['totals'][k] += getattr(r, k, 0)
 
             tax_rate = get_tax_rate()
+            # 批次載入所有帳戶的客製保留金費率
+            batch_rates = get_users_all_retention_rates(list(user_data.keys()))
             for uid, data in user_data.items():
                 subtotals = {k: data['totals'][k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
                 data['subtotals'] = subtotals
                 data['gross_salary'] = sum(subtotals.values())
 
-                # 保留金上限邏輯
+                # 保留金上限邏輯（使用帳戶客製費率）
                 u = users_dict.get(uid)
+                user_rates = batch_rates[uid]
                 ret_offset = u.retention_offset if u else 0
                 pre_totals = pre_ret_by_user.get(uid, {f: 0 for f in RETENTION_FIELDS})
-                pre_calc = calc_retention_from_totals(pre_totals)
+                pre_calc = sum(pre_totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
                 ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + ret_offset))
-                period_ret_raw = calc_retention_from_totals(data['totals'])
+                period_ret_raw = sum(data['totals'].get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
                 data['period_retention'] = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
 
                 data['net_salary'] = data['gross_salary'] - data['period_retention']
@@ -1262,7 +1343,12 @@ def salary():
                                  if d['payment_method'] == 'TRANSFER')
             cash_total = sum(d['final_salary'] for d in user_data.values()
                              if d['payment_method'] == 'CASH')
-            cash_bills = calculate_cash_bills(cash_total) if cash_total > 0 else {}
+            # 提現面額：各人分開計算後再相加，避免合並面額被拆分（例如 500+500 ≠ 1000）
+            cash_bills = {}
+            for _d in user_data.values():
+                if _d['payment_method'] == 'CASH' and _d['final_salary'] > 0:
+                    for _denom, _cnt in calculate_cash_bills(_d['final_salary']).items():
+                        cash_bills[_denom] = cash_bills.get(_denom, 0) + _cnt
             salary_results = {'start_date': start_str, 'end_date': end_str,
                               'user_data': user_data,
                               'grand_salary': grand,
@@ -1656,6 +1742,8 @@ def personal_stats():
 
     # 今年度累積保留金（固定顯示，已確認回報）
     ytd_retention = get_ytd_retention(current_user.id)
+    # 此帳戶的客製保留金費率（stats / salary 兩個 action 共用）
+    my_ret_rates = get_user_all_retention_rates(current_user.id)
 
     if action == 'stats' and stats_start and stats_end:
         q = Report.query.filter(
@@ -1672,7 +1760,7 @@ def personal_stats():
         for r in reports:
             for k, _ in REPORT_FIELDS:
                 totals[k] += getattr(r, k, 0)
-        period_retention = calc_retention_from_totals(totals)
+        period_retention = sum(totals.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
         totals_result = {'start': stats_start, 'end': stats_end,
                          'confirm_filter': stats_confirm,
                          'totals': totals, 'count': len(reports),
@@ -1713,9 +1801,9 @@ def personal_stats():
             Report.report_date < sd_ps
         ).all()
         pre_totals = {f: sum(getattr(r, f, 0) for r in pre_reports) for f in RETENTION_FIELDS}
-        pre_calc = calc_retention_from_totals(pre_totals)
+        pre_calc = sum(pre_totals.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
         ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + current_user.retention_offset))
-        period_ret_raw = calc_retention_from_totals(totals)
+        period_ret_raw = sum(totals.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
         period_retention = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
 
         ins_amount = current_user.insurance_deduction if deduct_ins else 0
