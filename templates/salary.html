@@ -3,10 +3,11 @@
 {% block page_title %}<i class="bi bi-currency-dollar me-2"></i>薪資計算{% endblock %}
 
 {% block content %}
-<div class="row g-4" id="salaryLayout" style="flex-wrap:nowrap">
+<div class="row g-4 align-items-start" id="salaryLayout">
 
   <!-- Input form -->
-  <div class="col-lg-5" id="salaryLeft" style="overflow-y:auto">
+  <div class="col-lg-5" id="salaryLeft"
+       style="position:sticky; top:72px; max-height:calc(100vh - 88px); overflow-y:auto;">
     <div class="card">
       <div class="card-header bg-success text-white">
         <i class="bi bi-calculator me-1"></i>填入計算條件
@@ -15,7 +16,7 @@
         <form method="POST" action="{{ url_for('salary') }}" id="salaryForm">
 
           <!-- Quick payroll date shortcuts -->
-          <div class="mb-2 d-flex gap-2">
+          <div class="mb-2 d-flex gap-2 flex-wrap">
             <button type="button" class="btn btn-outline-secondary btn-sm py-0"
                     onclick="setPayday10()">
               <i class="bi bi-calendar-check me-1"></i>10號發薪<small class="opacity-75 ms-1">（上月21~本月5）</small>
@@ -24,6 +25,21 @@
                     onclick="setPayday25()">
               <i class="bi bi-calendar-check me-1"></i>25號發薪<small class="opacity-75 ms-1">（本月6~20）</small>
             </button>
+          </div>
+
+          <!-- Action buttons (計算 / 匯出) -->
+          <div class="mb-3 d-flex gap-2 flex-wrap">
+            <button type="submit" name="action" value="calculate" class="btn btn-success btn-sm">
+              <i class="bi bi-calculator me-1"></i>計算
+            </button>
+            {% if salary_results %}
+            <button type="submit" name="action" value="export-excel" class="btn btn-outline-success btn-sm">
+              <i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel
+            </button>
+            <button type="submit" name="action" value="export-pdf" class="btn btn-outline-danger btn-sm">
+              <i class="bi bi-file-earmark-pdf me-1"></i>匯出 PDF
+            </button>
+            {% endif %}
           </div>
 
           <div class="row g-2 mb-3">
@@ -109,26 +125,13 @@
           </div>
           {% endfor %}
 
-          <div class="mt-4 d-flex gap-2 flex-wrap">
-            <button type="submit" name="action" value="calculate" class="btn btn-success btn-sm">
-              <i class="bi bi-calculator me-1"></i>計算
-            </button>
-            {% if salary_results %}
-            <button type="submit" name="action" value="export-excel" class="btn btn-outline-success btn-sm">
-              <i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel
-            </button>
-            <button type="submit" name="action" value="export-pdf" class="btn btn-outline-danger btn-sm">
-              <i class="bi bi-file-earmark-pdf me-1"></i>匯出 PDF
-            </button>
-            {% endif %}
-          </div>
         </form>
       </div>
     </div>
   </div>
 
   <!-- Results -->
-  <div class="col-lg-7" id="salaryRight" style="overflow-y:auto">
+  <div class="col-lg-7" id="salaryRight">
     {% if salary_results %}
     <div class="card">
       <div class="card-header bg-primary text-white">
@@ -367,22 +370,6 @@ function syncSelectAll() {
   const selectAll = document.getElementById('insSelectAll');
   if (selectAll) selectAll.checked = all.length > 0 && all.every(c => c.checked);
 }
-
-// 左右欄各自獨立滾動（高度填滿視窗剩餘空間）
-function fixSalaryLayout() {
-  const layout = document.getElementById('salaryLayout');
-  if (!layout) return;
-  const top = layout.getBoundingClientRect().top;   // viewport-relative，不加 scrollY
-  const h = Math.floor(window.innerHeight - top - 16);
-  layout.style.height = h + 'px';
-  layout.style.overflow = 'hidden';
-  ['salaryLeft', 'salaryRight'].forEach(id => {
-    const col = document.getElementById(id);
-    if (col) col.style.height = '100%';
-  });
-}
-fixSalaryLayout();
-window.addEventListener('resize', fixSalaryLayout);
 
 // 初始同步全選狀態
 syncSelectAll();
