@@ -372,8 +372,8 @@ function syncSelectAll() {
 function fixSalaryLayout() {
   const layout = document.getElementById('salaryLayout');
   if (!layout) return;
-  const top = layout.getBoundingClientRect().top + window.scrollY;
-  const h = Math.floor(window.innerHeight - top - 8);
+  const top = layout.getBoundingClientRect().top;   // viewport-relative，不加 scrollY
+  const h = Math.floor(window.innerHeight - top - 16);
   layout.style.height = h + 'px';
   layout.style.overflow = 'hidden';
   ['salaryLeft', 'salaryRight'].forEach(id => {

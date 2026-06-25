@@ -85,7 +85,7 @@
   <div class="card-body p-0">
     <table class="table table-sm table-hover mb-0">
       <thead>
-        <tr><th>材料</th><th class="text-center">數量</th><th>申請時間</th><th class="text-center">狀態</th></tr>
+        <tr><th>材料</th><th class="text-center">數量</th><th>申請時間</th><th class="text-center">狀態</th><th class="text-center">操作</th></tr>
       </thead>
       <tbody>
         {% for req in my_requests %}
@@ -105,9 +105,23 @@
               <span class="badge bg-danger">已駁回</span>
             {% endif %}
           </td>
+          <td class="text-center">
+            {% if req.status == 'PENDING' %}
+            <form method="POST"
+                  action="{{ url_for('materials_cancel_request', req_id=req.id) }}"
+                  style="display:inline"
+                  onsubmit="return confirm('確定取消此申請？')">
+              <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2">
+                <i class="bi bi-x-circle me-1"></i>取消
+              </button>
+            </form>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="4" class="text-center text-muted py-3">尚無申請紀錄</td></tr>
+        <tr><td colspan="5" class="text-center text-muted py-3">尚無申請紀錄</td></tr>
         {% endfor %}
       </tbody>
     </table>

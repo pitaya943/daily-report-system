@@ -56,11 +56,25 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
-    # Seed default SystemConfig entries if missing
+    # Column migration: add retention_offset to users if missing
     try:
-        for _key, _val in [('retention_rate', '20'), ('tax_rate', '3')]:
-            if not db.session.get(SystemConfig, _key):
-                db.session.add(SystemConfig(key=_key, value=_val))
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN retention_offset INTEGER NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+    # Seed / correct default SystemConfig entries
+    try:
+        for _key, _default in [('retention_rate', '20'), ('tax_rate', '3')]:
+            cfg = db.session.get(SystemConfig, _key)
+            if not cfg:
+                db.session.add(SystemConfig(key=_key, value=_default))
+            elif _key == 'tax_rate' and cfg.value == '5':
+                # 舊預設值 5% → 修正為 3%
+                cfg.value = '3'
         db.session.commit()
     except Exception:
         pass
@@ -218,7 +232,23 @@ def calc_retention_from_totals(totals: dict) -> float:
 
 
 def get_ytd_retention(user_id: int) -> float:
-    """取得指定帳戶今年度（Jan 1 ~ 今日）累積保留金（僅計算已確認回報）"""
+    """今年度累積保留金 = 計算值 + ADMIN 手動調整偏移量（最低為 0）"""
+    year_start = date(date.today().year, 1, 1)
+    reports = Report.query.filter(
+        Report.user_id == user_id,
+        Report.is_confirmed == True,
+        Report.report_date >= year_start,
+        Report.report_date <= date.today()
+    ).all()
+    totals = {f: sum(getattr(r, f, 0) for r in reports) for f in RETENTION_FIELDS}
+    calculated = calc_retention_from_totals(totals)
+    u = db.session.get(User, user_id)
+    offset = u.retention_offset if u else 0
+    return max(0.0, calculated + offset)
+
+
+def _calc_ytd_retention_raw(user_id: int) -> float:
+    """純計算值（不含偏移），供 set-retention 路由使用"""
     year_start = date(date.today().year, 1, 1)
     reports = Report.query.filter(
         Report.user_id == user_id,
@@ -425,6 +455,9 @@ def history_delete(report_id):
         abort(404)
     if current_user.role != 'ADMIN' and r.user_id != current_user.id:
         abort(403)
+    if r.is_confirmed and current_user.role != 'ADMIN':
+        flash('已確認的回報只能由管理員刪除', 'danger')
+        return redirect(url_for('history'))
 
     users_dict = {u.id: u for u in User.query.all()}
     uname = get_user_display(users_dict, r.user_id)
@@ -444,9 +477,11 @@ def history_delete(report_id):
 @login_required
 def settings():
     all_users = User.query.order_by(User.created_at).all() if current_user.role == 'ADMIN' else []
+    ytd_by_user = {u.id: get_ytd_retention(u.id) for u in all_users}
     return render_template('settings.html', all_users=all_users,
                            retention_rate=int(get_retention_rate()),
-                           tax_rate=get_tax_rate())
+                           tax_rate=get_tax_rate(),
+                           ytd_by_user=ytd_by_user)
 
 
 @app.route('/settings/password', methods=['POST'])
@@ -604,6 +639,32 @@ def settings_retention_rate():
     return redirect(url_for('settings'))
 
 
+@app.route('/settings/users/<int:user_id>/set-retention', methods=['POST'])
+@admin_required
+def settings_set_retention(user_id):
+    u = db.session.get(User, user_id)
+    if not u:
+        abort(404)
+    action = request.form.get('action', 'set')
+    try:
+        target = float(request.form.get('amount', 0))
+    except (ValueError, TypeError):
+        target = 0.0
+    calculated = _calc_ytd_retention_raw(user_id)
+    if action == 'reset':
+        u.retention_offset = -int(calculated)
+        add_audit(current_user.id, 'RETENTION_RESET',
+                  f'重置「{u.display_name}」今年度累積保留金為 0（計算值 {calculated:.0f}，偏移 {u.retention_offset}）')
+        flash(f'「{u.display_name}」累積保留金已重置為 0', 'success')
+    else:
+        u.retention_offset = int(target - calculated)
+        add_audit(current_user.id, 'RETENTION_SET',
+                  f'設定「{u.display_name}」今年度累積保留金為 {int(target)}（計算值 {calculated:.0f}，偏移 {u.retention_offset}）')
+        flash(f'「{u.display_name}」累積保留金已設定為 {int(target)} NTD', 'success')
+    db.session.commit()
+    return redirect(url_for('settings'))
+
+
 @app.route('/settings/users/<int:user_id>/delete', methods=['POST'])
 @admin_required
 def settings_delete_user(user_id):
@@ -721,6 +782,23 @@ def materials_request():
               f'申請領取「{m.name}」{qty}{m.unit}')
     db.session.commit()
     flash('申請已送出，等待管理員審核', 'success')
+    return redirect(url_for('materials'))
+
+
+@app.route('/materials/requests/<int:req_id>/cancel', methods=['POST'])
+@login_required
+def materials_cancel_request(req_id):
+    req = db.session.get(MaterialRequest, req_id)
+    if not req or req.user_id != current_user.id or req.status != 'PENDING':
+        flash('無法取消此申請', 'danger')
+        return redirect(url_for('materials'))
+    m = db.session.get(Material, req.material_id)
+    mat_name = m.name if m else '(已刪除)'
+    add_audit(current_user.id, 'MATERIAL_CANCEL',
+              f'取消申請領取「{mat_name}」{req.requested_quantity}')
+    db.session.delete(req)
+    db.session.commit()
+    flash('申請已取消', 'success')
     return redirect(url_for('materials'))
 
 

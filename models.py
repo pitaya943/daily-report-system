@@ -17,6 +17,7 @@ class User(UserMixin, db.Model):
 
     payment_method      = db.Column(db.String(10), nullable=False, default='TRANSFER')  # CASH or TRANSFER
     insurance_deduction = db.Column(db.Integer,   nullable=False, default=0)           # NTD per pay period
+    retention_offset    = db.Column(db.Integer,   nullable=False, default=0)           # ADMIN adjustment to YTD retention
 
     @property
     def username(self):

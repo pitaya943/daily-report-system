@@ -48,7 +48,9 @@
         <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
           <thead>
             <tr>
-              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>勞健保扣除額</th><th>狀態</th><th>建立時間</th><th>操作</th>
+              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>勞健保扣除額</th>
+              <th class="text-end">今年累積保留金</th>
+              <th>狀態</th><th>建立時間</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -82,6 +84,12 @@
                   <span class="text-muted">—</span>
                 {% endif %}
               </td>
+              <td class="text-end" style="font-size:.82rem">
+                {% set ytd = ytd_by_user.get(u.id, 0) %}
+                <span class="{% if ytd > 0 %}text-warning fw-semibold{% else %}text-muted{% endif %}">
+                  {{ ytd | money }}
+                </span>
+              </td>
               <td>
                 {% if u.is_active %}
                   <span class="badge bg-success">啟用</span>
@@ -105,6 +113,11 @@
                         onclick="openInsurance({{ u.id }}, '{{ u.display_name|e }}', {{ u.insurance_deduction }})"
                         title="設定勞健保扣除額">
                   <i class="bi bi-shield-check"></i>
+                </button>
+                <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
+                        onclick="openRetention({{ u.id }}, '{{ u.display_name|e }}', {{ ytd_by_user.get(u.id, 0) | int }})"
+                        title="重置/設定累積保留金">
+                  <i class="bi bi-piggy-bank"></i>
                 </button>
                 {% if u.id != current_user.id %}
                 <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
@@ -362,6 +375,50 @@
   </div>
 </div>
 
+<!-- Retention Modal -->
+<div class="modal fade" id="retentionModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title"><i class="bi bi-piggy-bank me-2"></i>累積保留金管理</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small mb-2">帳戶：<strong id="retentionUsername"></strong></p>
+        <p class="mb-3 small">
+          目前今年度累積保留金：
+          <span class="fw-semibold text-warning" id="retentionCurrent"></span> NTD
+        </p>
+        <!-- 重置為 0 -->
+        <form id="retentionResetForm" method="POST"
+              onsubmit="return confirm('確定將此帳戶累積保留金重置為 0？')">
+          <input type="hidden" name="action" value="reset">
+          <button type="submit" class="btn btn-outline-danger btn-sm w-100 mb-3">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>重置為 0
+          </button>
+        </form>
+        <hr class="my-2">
+        <!-- 設定為指定值 -->
+        <form id="retentionSetForm" method="POST"
+              onsubmit="return confirm('確定更新此帳戶累積保留金？')">
+          <input type="hidden" name="action" value="set">
+          <label class="form-label small">設定為指定金額（NTD）</label>
+          <div class="input-group input-group-sm">
+            <input type="number" name="amount" id="retentionAmount"
+                   class="form-control" min="0" step="1" value="0" required>
+            <span class="input-group-text">NTD</span>
+          </div>
+          <div class="mt-2">
+            <button type="submit" class="btn btn-warning btn-sm w-100">
+              <i class="bi bi-check-lg me-1"></i>設定
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Insurance Deduction Modal -->
 <div class="modal fade" id="insuranceModal" tabindex="-1">
   <div class="modal-dialog modal-sm">
@@ -420,6 +477,15 @@ function openPayment(id, name, current) {
   document.getElementById('paymentUsername').textContent = name;
   document.getElementById('paymentSelect').value = current;
   new bootstrap.Modal(document.getElementById('paymentModal')).show();
+}
+function openRetention(id, name, current) {
+  const url = `/settings/users/${id}/set-retention`;
+  document.getElementById('retentionUsername').textContent = name;
+  document.getElementById('retentionCurrent').textContent = current.toLocaleString();
+  document.getElementById('retentionAmount').value = current;
+  document.getElementById('retentionResetForm').action = url;
+  document.getElementById('retentionSetForm').action = url;
+  new bootstrap.Modal(document.getElementById('retentionModal')).show();
 }
 </script>
 {% endif %}
