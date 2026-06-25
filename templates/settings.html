@@ -48,7 +48,7 @@
         <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
           <thead>
             <tr>
-              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>勞健保扣除額</th>
+              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>投保狀態</th>
               <th class="text-end">今年累積保留金</th>
               <th>狀態</th><th>建立時間</th><th>操作</th>
             </tr>
@@ -77,11 +77,13 @@
                   <span class="badge bg-info text-dark">轉帳</span>
                 {% endif %}
               </td>
-              <td class="text-end" style="font-size:.82rem">
+              <td style="font-size:.80rem">
                 {% if u.insurance_deduction > 0 %}
-                  <span class="text-danger fw-semibold">{{ u.insurance_deduction | money }}</span>
+                  <span class="badge bg-danger">投保 {{ u.insurance_deduction | money }} NTD</span>
+                {% elif u.tax_exempt %}
+                  <span class="badge bg-secondary">未投保，免稅</span>
                 {% else %}
-                  <span class="text-muted">—</span>
+                  <span class="badge bg-warning text-dark">未投保，扣稅</span>
                 {% endif %}
               </td>
               <td class="text-end" style="font-size:.82rem">
@@ -110,8 +112,8 @@
                   <i class="bi bi-credit-card"></i>
                 </button>
                 <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
-                        onclick="openInsurance({{ u.id }}, '{{ u.display_name|e }}', {{ u.insurance_deduction }})"
-                        title="設定勞健保扣除額">
+                        onclick="openInsurance({{ u.id }}, '{{ u.display_name|e }}', {{ u.insurance_deduction }}, {{ 'true' if u.tax_exempt else 'false' }})"
+                        title="設定投保狀態">
                   <i class="bi bi-shield-check"></i>
                 </button>
                 <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
@@ -419,26 +421,52 @@
   </div>
 </div>
 
-<!-- Insurance Deduction Modal -->
+<!-- Insurance / Tax Status Modal -->
 <div class="modal fade" id="insuranceModal" tabindex="-1">
-  <div class="modal-dialog modal-sm">
+  <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header bg-danger text-white">
-        <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>勞健保扣除額</h5>
+        <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>投保狀態設定</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <form id="insuranceForm" method="POST"
-            onsubmit="return confirm('確定更新勞健保扣除額？')">
+            onsubmit="return confirm('確定更新投保狀態？')">
         <div class="modal-body">
           <p class="small mb-3">帳戶：<strong id="insuranceUsername"></strong></p>
-          <div class="mb-2">
-            <label class="form-label small">每期扣除金額（NTD）</label>
-            <div class="input-group">
+
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="radio" name="ins_type" value="insured"
+                   id="insTypeInsured" onchange="toggleInsType()">
+            <label class="form-check-label" for="insTypeInsured">
+              <strong>公司投保</strong>
+              <span class="text-muted small">（25號發薪時扣除固定金額）</span>
+            </label>
+          </div>
+          <div id="insuranceAmountGroup" class="ms-4 mb-3" style="display:none">
+            <label class="form-label small mb-1">每期扣除金額（NTD）</label>
+            <div class="input-group input-group-sm" style="max-width:180px">
               <input type="number" name="insurance_deduction" id="insuranceAmount"
-                     class="form-control" min="0" step="1" required>
+                     class="form-control" min="1" step="1" value="0">
               <span class="input-group-text">NTD</span>
             </div>
-            <div class="form-text">設為 0 代表不在公司投保，不扣除勞健保。</div>
+          </div>
+
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="radio" name="ins_type" value="uninsured_taxed"
+                   id="insTypeTaxed" onchange="toggleInsType()">
+            <label class="form-check-label" for="insTypeTaxed">
+              <strong>未投保，扣稅務支出</strong>
+              <span class="text-muted small">（計薪小計 × {{ tax_rate }}%，四捨五入整數）</span>
+            </label>
+          </div>
+
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="ins_type" value="uninsured_exempt"
+                   id="insTypeExempt" onchange="toggleInsType()">
+            <label class="form-check-label" for="insTypeExempt">
+              <strong>未投保，免稅</strong>
+              <span class="text-muted small">（不扣勞健保，也不扣稅務支出）</span>
+            </label>
           </div>
         </div>
         <div class="modal-footer">
@@ -451,11 +479,23 @@
 </div>
 
 <script>
-function openInsurance(id, name, current) {
+function openInsurance(id, name, amount, taxExempt) {
   document.getElementById('insuranceUsername').textContent = name;
-  document.getElementById('insuranceAmount').value = current;
   document.getElementById('insuranceForm').action = '/settings/users/' + id + '/insurance';
+  if (amount > 0) {
+    document.getElementById('insTypeInsured').checked = true;
+    document.getElementById('insuranceAmount').value = amount;
+  } else if (taxExempt) {
+    document.getElementById('insTypeExempt').checked = true;
+  } else {
+    document.getElementById('insTypeTaxed').checked = true;
+  }
+  toggleInsType();
   new bootstrap.Modal(document.getElementById('insuranceModal')).show();
+}
+function toggleInsType() {
+  const show = document.getElementById('insTypeInsured').checked;
+  document.getElementById('insuranceAmountGroup').style.display = show ? '' : 'none';
 }
 function openEditName(id, name) {
   document.getElementById('editNameForm').action = `/settings/users/${id}/display-name`;

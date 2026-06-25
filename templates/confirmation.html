@@ -37,13 +37,28 @@
             {% for key, _ in report_fields %}
             <td class="text-center">{{ r[key] if r[key] else '' }}</td>
             {% endfor %}
-            <td class="text-center">
+            <td class="text-center text-nowrap">
+              <button type="button" class="btn btn-outline-info btn-sm py-0 px-2"
+                      data-report='{{ r | report_json }}'
+                      data-username="{{ users_dict.get(r.user_id).display_name if users_dict.get(r.user_id) else '?' }}"
+                      onclick="openReportDetail(this)"
+                      title="查看詳情">
+                <i class="bi bi-eye me-1"></i>詳情
+              </button>
               <form method="POST"
                     action="{{ url_for('confirm_report', report_id=r.id) }}"
                     style="display:inline"
                     onsubmit="return confirm('確定確認 {{ r.report_date }} 的回報 #{{ r.id }}？此操作無法撤銷。')">
-                <button type="submit" class="btn btn-success btn-sm py-0 px-3">
+                <button type="submit" class="btn btn-success btn-sm py-0 px-2 ms-1">
                   <i class="bi bi-check-lg me-1"></i>確認
+                </button>
+              </form>
+              <form method="POST"
+                    action="{{ url_for('reject_report', report_id=r.id) }}"
+                    style="display:inline"
+                    onsubmit="return confirm('確定駁回 {{ r.report_date }} 的回報 #{{ r.id }}？回報者將在歷史紀錄中看到「已駁回」狀態。')">
+                <button type="submit" class="btn btn-danger btn-sm py-0 px-2 ms-1">
+                  <i class="bi bi-x-lg me-1"></i>駁回
                 </button>
               </form>
             </td>
@@ -117,4 +132,65 @@
     {% endif %}
   </div>
 </div>
+
+<!-- Report Detail Modal (read-only) -->
+<div class="modal fade" id="reportDetailModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-info text-white">
+        <h5 class="modal-title" id="detailModalTitle">
+          <i class="bi bi-file-text me-2"></i>回報詳情
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <table class="table table-sm table-bordered">
+          <thead class="table-secondary">
+            <tr><th>工項</th><th class="text-end">只數</th></tr>
+          </thead>
+          <tbody id="detailModalBody"></tbody>
+          <tfoot class="table-light fw-semibold">
+            <tr>
+              <td>合計</td>
+              <td class="text-end" id="detailModalTotal"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% block scripts %}
+<script>
+const CONFIRM_FIELDS = {{ report_fields | tojson }};
+
+function openReportDetail(btn) {
+  const data = JSON.parse(btn.dataset.report);
+  const username = btn.dataset.username;
+  document.getElementById('detailModalTitle').innerHTML =
+    '<i class="bi bi-file-text me-2"></i>' + username + '　' + data.report_date + '　#' + data.id;
+  const tbody = document.getElementById('detailModalBody');
+  tbody.innerHTML = '';
+  let total = 0;
+  for (const [key, label] of CONFIRM_FIELDS) {
+    const val = data[key] || 0;
+    if (val > 0) {
+      total += val;
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + label + '</td><td class="text-end fw-semibold">' + val + '</td>';
+      tbody.appendChild(tr);
+    }
+  }
+  if (!tbody.hasChildNodes()) {
+    tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted">所有欄位均為 0</td></tr>';
+  }
+  document.getElementById('detailModalTotal').textContent = total;
+  new bootstrap.Modal(document.getElementById('reportDetailModal')).show();
+}
+</script>
+{% endblock %}
 {% endblock %}

@@ -57,60 +57,47 @@
             </div>
           </div>
 
-          <!-- Per-user insurance deduction -->
+          <!-- 25號發薪 toggle -->
+          <div class="mb-2">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="is_25th_payday" value="1"
+                     id="is25thPayday" {% if form_data.get('is_25th_payday') %}checked{% endif %}>
+              <label class="form-check-label fw-semibold" for="is25thPayday">
+                <i class="bi bi-shield-check text-danger me-1"></i>本次為25號發薪（自動扣除勞健保）
+              </label>
+            </div>
+            <div class="form-text">勾選後計薪時自動扣除所有已投保帳戶的固定勞健保金額。10號發薪請不要勾選。</div>
+          </div>
+
+          <!-- 各帳戶投保狀態（唯讀顯示） -->
           <div class="mb-3">
-            <p class="small fw-semibold mb-1">
-              <i class="bi bi-shield-check text-danger me-1"></i>本次計薪扣除勞健保：
+            <p class="small fw-semibold mb-1 text-secondary">
+              <i class="bi bi-people me-1"></i>各帳戶投保狀態：
             </p>
-            <div class="border rounded p-2 bg-light" style="font-size:.82rem">
-              {% if any_insured %}
+            <div class="border rounded p-2 bg-light" style="font-size:.81rem">
               <table class="table table-sm table-borderless mb-0">
                 <tbody>
-                <tr>
-                  <td class="py-0 ps-0" style="width:28px">
-                    <input class="form-check-input" type="checkbox" id="insSelectAll"
-                           onchange="toggleAllIns(this.checked)">
-                  </td>
-                  <td colspan="2" class="py-0">
-                    <label for="insSelectAll" class="mb-0 fw-semibold text-secondary"
-                           style="font-size:.78rem;cursor:pointer">全選</label>
-                  </td>
-                </tr>
                 {% for u in all_active_users %}
                 <tr>
-                  <td class="py-0 ps-0" style="width:28px">
-                    {% if u.insurance_deduction > 0 %}
-                    <input class="form-check-input" type="checkbox"
-                           name="deduct_ins_{{ u.id }}" value="1"
-                           id="dins_{{ u.id }}"
-                           {% if u.id in deduct_uid_set %}checked{% endif %}>
-                    {% else %}
-                    <input class="form-check-input" type="checkbox" disabled>
-                    {% endif %}
-                  </td>
                   <td class="py-0">
-                    <label class="mb-0 {% if u.insurance_deduction == 0 %}text-muted{% endif %}"
-                           {% if u.insurance_deduction > 0 %}for="dins_{{ u.id }}"{% endif %}>
-                      {{ u.display_name }}
-                      {% if u.id == current_user.id %}
-                        <span class="badge bg-primary ms-1" style="font-size:.6rem">我</span>
-                      {% endif %}
-                    </label>
+                    {{ u.display_name }}
+                    {% if u.id == current_user.id %}
+                      <span class="badge bg-primary ms-1" style="font-size:.6rem">我</span>
+                    {% endif %}
                   </td>
                   <td class="py-0 text-end">
                     {% if u.insurance_deduction > 0 %}
-                      <span class="badge bg-danger">{{ u.insurance_deduction | money }} NTD</span>
+                      <span class="badge bg-danger">投保 {{ u.insurance_deduction | money }} NTD</span>
+                    {% elif u.tax_exempt %}
+                      <span class="badge bg-secondary">未投保，免稅</span>
                     {% else %}
-                      <span class="text-muted" style="font-size:.75rem">未投保</span>
+                      <span class="badge bg-warning text-dark">未投保，扣稅</span>
                     {% endif %}
                   </td>
                 </tr>
                 {% endfor %}
                 </tbody>
               </table>
-              {% else %}
-              <span class="text-muted">目前所有帳戶的勞健保扣除額均為 0（未設定）</span>
-              {% endif %}
             </div>
           </div>
 
@@ -344,6 +331,8 @@ function setPayday10() {
     `${py}-${String(pm + 1).padStart(2, '0')}-21`;
   document.getElementById('salaryEndDate').value =
     `${y}-${String(m + 1).padStart(2, '0')}-05`;
+  // 10 號發薪不扣勞健保
+  document.getElementById('is25thPayday').checked = false;
 }
 
 function setPayday25() {
@@ -352,27 +341,9 @@ function setPayday25() {
   const m = String(today.getMonth() + 1).padStart(2, '0');
   document.getElementById('salaryStartDate').value = `${y}-${m}-06`;
   document.getElementById('salaryEndDate').value   = `${y}-${m}-20`;
+  // 25 號發薪自動勾選扣勞健保
+  document.getElementById('is25thPayday').checked = true;
 }
-
-// 全選/全不選
-function toggleAllIns(checked) {
-  document.querySelectorAll('[id^="dins_"]').forEach(cb => {
-    if (!cb.disabled) cb.checked = checked;
-  });
-}
-
-// 個別 checkbox 變動時同步全選狀態
-document.querySelectorAll('[id^="dins_"]').forEach(cb => {
-  cb.addEventListener('change', syncSelectAll);
-});
-function syncSelectAll() {
-  const all = [...document.querySelectorAll('[id^="dins_"]')].filter(c => !c.disabled);
-  const selectAll = document.getElementById('insSelectAll');
-  if (selectAll) selectAll.checked = all.length > 0 && all.every(c => c.checked);
-}
-
-// 初始同步全選狀態
-syncSelectAll();
 </script>
 {% endblock %}
 {% endblock %}

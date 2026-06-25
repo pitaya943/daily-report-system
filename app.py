@@ -1,6 +1,6 @@
 import io
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from functools import wraps
 
 from flask import (Flask, render_template, request, redirect, url_for,
@@ -62,6 +62,26 @@ def _init_db():
             from sqlalchemy import text
             conn.execute(text(
                 "ALTER TABLE users ADD COLUMN retention_offset INTEGER NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+    # Column migration: add tax_exempt to users if missing
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN tax_exempt BOOLEAN NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+    # Column migration: add is_rejected to reports if missing
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text(
+                "ALTER TABLE reports ADD COLUMN is_rejected BOOLEAN NOT NULL DEFAULT 0"
             ))
             conn.commit()
     except Exception:
@@ -183,14 +203,14 @@ REPORT_FIELDS = [
 ]
 
 DEFAULT_PRICES = {
-    'direct_13':            100.0,
-    'direct_20':            100.0,
-    'direct_25':            100.0,
-    'direct_40':            150.0,
-    'indirect_13':           55.0,
-    'indirect_20':           55.0,
-    'indirect_25':           55.0,
-    'indirect_40':          105.0,
+    'direct_13':            120.0,
+    'direct_20':            120.0,
+    'direct_25':            120.0,
+    'direct_40':            170.0,
+    'indirect_13':           75.0,
+    'indirect_20':           75.0,
+    'indirect_25':           75.0,
+    'indirect_40':          125.0,
     'original_change':       45.0,
     'direct_switch_valve':  200.0,
     'indirect_switch_valve':150.0,
@@ -212,6 +232,7 @@ RETENTION_FIELDS = [
     'indirect_13', 'indirect_20', 'indirect_25', 'indirect_40',
 ]
 RETENTION_RATE = 20  # default fallback
+RETENTION_CAP  = 60000  # 年度保留金上限 (NTD)
 
 
 def get_retention_rate() -> float:
@@ -232,7 +253,7 @@ def calc_retention_from_totals(totals: dict) -> float:
 
 
 def get_ytd_retention(user_id: int) -> float:
-    """今年度累積保留金 = 計算值 + ADMIN 手動調整偏移量（最低為 0）"""
+    """今年度累積保留金（最低 0，最高 RETENTION_CAP）"""
     year_start = date(date.today().year, 1, 1)
     reports = Report.query.filter(
         Report.user_id == user_id,
@@ -244,7 +265,7 @@ def get_ytd_retention(user_id: int) -> float:
     calculated = calc_retention_from_totals(totals)
     u = db.session.get(User, user_id)
     offset = u.retention_offset if u else 0
-    return max(0.0, calculated + offset)
+    return min(float(RETENTION_CAP), max(0.0, calculated + offset))
 
 
 def _calc_ytd_retention_raw(user_id: int) -> float:
@@ -439,6 +460,8 @@ def history_edit(report_id):
         r.confirmed_at = None
         add_audit(current_user.id, 'REPORT_UNCONFIRM',
                   f'修改回報 #{r.id} ({r.report_date}) 導致確認狀態重置為尚未確認')
+    if r.is_rejected:
+        r.is_rejected = False
 
     add_audit(current_user.id, 'REPORT_UPDATE',
               f'修改回報 #{r.id} ({r.report_date})｜{diff}')
@@ -586,17 +609,32 @@ def settings_insurance(user_id):
     target = db.session.get(User, user_id)
     if not target:
         abort(404)
-    try:
-        amount = max(0, int(request.form.get('insurance_deduction', 0)))
-    except (ValueError, TypeError):
-        flash('請輸入有效的整數', 'danger')
-        return redirect(url_for('settings'))
-    target.insurance_deduction = amount
+    ins_type = request.form.get('ins_type', 'uninsured_taxed')
+    if ins_type == 'insured':
+        try:
+            amount = max(1, int(request.form.get('insurance_deduction', 1)))
+        except (ValueError, TypeError):
+            flash('請輸入有效的整數', 'danger')
+            return redirect(url_for('settings'))
+        target.insurance_deduction = amount
+        target.tax_exempt = False
+        add_audit(current_user.id, 'ACCOUNT_UPDATE',
+                  f'更新「{target.display_name}」投保狀態：公司投保，扣除額 {amount} NTD')
+        flash(f'「{target.display_name}」已設為公司投保，每期扣除 {amount:,} NTD', 'success')
+    elif ins_type == 'uninsured_exempt':
+        target.insurance_deduction = 0
+        target.tax_exempt = True
+        add_audit(current_user.id, 'ACCOUNT_UPDATE',
+                  f'更新「{target.display_name}」投保狀態：未投保，免稅')
+        flash(f'「{target.display_name}」已設為未投保（免稅）', 'success')
+    else:
+        target.insurance_deduction = 0
+        target.tax_exempt = False
+        add_audit(current_user.id, 'ACCOUNT_UPDATE',
+                  f'更新「{target.display_name}」投保狀態：未投保，扣稅務支出')
+        flash(f'「{target.display_name}」已設為未投保（扣稅務支出）', 'success')
     target.updated_at = datetime.utcnow()
-    add_audit(current_user.id, 'ACCOUNT_UPDATE',
-              f'更新「{target.display_name}」勞健保扣除額：{amount} NTD')
     db.session.commit()
-    flash(f'「{target.display_name}」勞健保扣除額已更新為 {amount:,} NTD', 'success')
     return redirect(url_for('settings'))
 
 
@@ -962,7 +1000,8 @@ def summary():
 @admin_required
 def confirmation():
     page = request.args.get('page', 1, type=int)
-    pending_pagination = (Report.query.filter_by(is_confirmed=False)
+    pending_pagination = (Report.query
+                          .filter(Report.is_confirmed == False, Report.is_rejected == False)
                           .order_by(Report.report_date.asc(), Report.id.asc())
                           .paginate(page=page, per_page=20, error_out=False))
     pending_materials = (MaterialRequest.query.filter_by(status='PENDING')
@@ -996,6 +1035,22 @@ def confirm_report(report_id):
               f'確認 {get_user_display(users_dict, r.user_id)} 的回報 #{r.id}（{r.report_date}）')
     db.session.commit()
     flash('回報已確認', 'success')
+    return redirect(url_for('confirmation'))
+
+
+@app.route('/confirmation/report/<int:report_id>/reject', methods=['POST'])
+@admin_required
+def reject_report(report_id):
+    r = db.session.get(Report, report_id)
+    if not r:
+        abort(404)
+    users_dict = {u.id: u for u in User.query.all()}
+    r.is_rejected = True
+    r.updated_at = datetime.utcnow()
+    add_audit(current_user.id, 'REPORT_REJECT',
+              f'駁回 {get_user_display(users_dict, r.user_id)} 的回報 #{r.id}（{r.report_date}）')
+    db.session.commit()
+    flash('回報已駁回，回報者可在歷史紀錄中查看', 'warning')
     return redirect(url_for('confirmation'))
 
 
@@ -1106,7 +1161,7 @@ def salary():
     salary_results = None
     all_active_users = User.query.filter_by(is_active=True).order_by(User.display_name).all()
     form_data = {'prices': {k: DEFAULT_PRICES.get(k, 0.0) for k, _ in REPORT_FIELDS},
-                 'deduct_uid_set': set()}
+                 'is_25th_payday': False}
 
     if request.method == 'POST':
         action = request.form.get('action', 'calculate')
@@ -1120,17 +1175,11 @@ def salary():
             except (ValueError, TypeError):
                 prices[key] = 0.0
 
-        # Per-user insurance deduction selection
-        deduct_uid_set = set()
-        for key in request.form:
-            if key.startswith('deduct_ins_'):
-                try:
-                    deduct_uid_set.add(int(key[len('deduct_ins_'):]))
-                except (ValueError, IndexError):
-                    pass
+        # 25號發薪才扣勞健保
+        is_25th_payday = request.form.get('is_25th_payday') == '1'
 
         form_data = {'start_date': start_str, 'end_date': end_str,
-                     'prices': prices, 'deduct_uid_set': deduct_uid_set}
+                     'prices': prices, 'is_25th_payday': is_25th_payday}
 
         if start_str and end_str:
             try:
@@ -1138,12 +1187,9 @@ def salary():
                 ed = date.fromisoformat(end_str)
             except ValueError:
                 flash('日期格式錯誤', 'danger')
-                _any_ins = any(u.insurance_deduction > 0 for u in all_active_users)
                 return render_template('salary.html', report_fields=REPORT_FIELDS,
                                        salary_results=None, form_data=form_data,
                                        all_active_users=all_active_users,
-                                       deduct_uid_set=form_data.get('deduct_uid_set', set()),
-                                       any_insured=_any_ins,
                                        now_year=date.today().year)
 
             reports = Report.query.filter(
@@ -1151,6 +1197,21 @@ def salary():
                 Report.report_date >= sd,
                 Report.report_date <= ed
             ).all()
+
+            # 本期前已確認回報，用於計算保留金上限 (Jan 1 ~ period_start - 1 day)
+            year_start = date(sd.year, 1, 1)
+            pre_reports = Report.query.filter(
+                Report.is_confirmed == True,
+                Report.report_date >= year_start,
+                Report.report_date < sd
+            ).all()
+            pre_ret_by_user = {}
+            for pr in pre_reports:
+                uid = pr.user_id
+                if uid not in pre_ret_by_user:
+                    pre_ret_by_user[uid] = {f: 0 for f in RETENTION_FIELDS}
+                for f in RETENTION_FIELDS:
+                    pre_ret_by_user[uid][f] += getattr(pr, f, 0)
 
             users_dict = {u.id: u for u in User.query.all()}
             user_data = {}
@@ -1168,15 +1229,26 @@ def salary():
                 subtotals = {k: data['totals'][k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
                 data['subtotals'] = subtotals
                 data['gross_salary'] = sum(subtotals.values())
-                data['period_retention'] = calc_retention_from_totals(data['totals'])
+
+                # 保留金上限邏輯
+                u = users_dict.get(uid)
+                ret_offset = u.retention_offset if u else 0
+                pre_totals = pre_ret_by_user.get(uid, {f: 0 for f in RETENTION_FIELDS})
+                pre_calc = calc_retention_from_totals(pre_totals)
+                ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + ret_offset))
+                period_ret_raw = calc_retention_from_totals(data['totals'])
+                data['period_retention'] = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
+
                 data['net_salary'] = data['gross_salary'] - data['period_retention']
                 data['ytd_retention'] = get_ytd_retention(uid)
-                u = users_dict.get(uid)
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
-                ins = (u.insurance_deduction if u else 0) if uid in deduct_uid_set else 0
+
+                # 勞健保：只在 25 號發薪時扣，且帳戶需已投保
+                ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if is_25th_payday else 0
                 data['insurance_deduction'] = ins
-                # 未在公司保勞健者扣稅（以計薪小計為基數，四捨五入整數）
-                not_enrolled = (u.insurance_deduction == 0) if u else True
+
+                # 稅務支出：未投保且未設免稅者
+                not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt) if u else True
                 data['tax_deduction'] = round(data['gross_salary'] * tax_rate / 100) if not_enrolled else 0
                 data['final_salary'] = data['net_salary'] - ins - data['tax_deduction']
 
@@ -1200,10 +1272,10 @@ def salary():
                               'grand_insurance': grand_insurance,
                               'grand_tax': grand_tax,
                               'tax_rate': tax_rate,
+                              'is_25th_payday': is_25th_payday,
                               'transfer_total': transfer_total,
                               'cash_total': cash_total,
                               'cash_bills': cash_bills,
-                              'deduct_uid_set': deduct_uid_set,
                               'prices': prices}
 
             if action == 'export-excel':
@@ -1211,13 +1283,9 @@ def salary():
             elif action == 'export-pdf':
                 return _export_salary_pdf(salary_results)
 
-    deduct_uid_set = form_data.get('deduct_uid_set', set())
-    any_insured = any(u.insurance_deduction > 0 for u in all_active_users)
     return render_template('salary.html', report_fields=REPORT_FIELDS,
                            salary_results=salary_results, form_data=form_data,
                            all_active_users=all_active_users,
-                           deduct_uid_set=deduct_uid_set,
-                           any_insured=any_insured,
                            now_year=date.today().year)
 
 
@@ -1620,10 +1688,11 @@ def personal_stats():
 
         deduct_ins = form.get('deduct_insurance') == '1'
 
+        sd_ps = date.fromisoformat(salary_start)
         reports = Report.query.filter(
             Report.user_id == current_user.id,
             Report.is_confirmed == True,
-            Report.report_date >= date.fromisoformat(salary_start),
+            Report.report_date >= sd_ps,
             Report.report_date <= date.fromisoformat(salary_end)
         ).all()
 
@@ -1633,10 +1702,24 @@ def personal_stats():
                 totals[k] += getattr(r, k, 0)
 
         subtotals = {k: totals[k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
-        period_retention = calc_retention_from_totals(totals)
         grand_total = sum(subtotals.values())
+
+        # 保留金上限邏輯
+        year_start = date(sd_ps.year, 1, 1)
+        pre_reports = Report.query.filter(
+            Report.user_id == current_user.id,
+            Report.is_confirmed == True,
+            Report.report_date >= year_start,
+            Report.report_date < sd_ps
+        ).all()
+        pre_totals = {f: sum(getattr(r, f, 0) for r in pre_reports) for f in RETENTION_FIELDS}
+        pre_calc = calc_retention_from_totals(pre_totals)
+        ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + current_user.retention_offset))
+        period_ret_raw = calc_retention_from_totals(totals)
+        period_retention = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
+
         ins_amount = current_user.insurance_deduction if deduct_ins else 0
-        not_enrolled = (current_user.insurance_deduction == 0)
+        not_enrolled = (current_user.insurance_deduction == 0 and not current_user.tax_exempt)
         tax_rate = get_tax_rate()
         tax_amount = round(grand_total * tax_rate / 100) if not_enrolled else 0
         salary_result = {'start': salary_start, 'end': salary_end,

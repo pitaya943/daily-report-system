@@ -16,7 +16,8 @@ class User(UserMixin, db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     payment_method      = db.Column(db.String(10), nullable=False, default='TRANSFER')  # CASH or TRANSFER
-    insurance_deduction = db.Column(db.Integer,   nullable=False, default=0)           # NTD per pay period
+    insurance_deduction = db.Column(db.Integer,   nullable=False, default=0)           # NTD per pay period; 0 = not enrolled
+    tax_exempt          = db.Column(db.Boolean,   nullable=False, default=False)       # if True and not enrolled, skip tax deduction
     retention_offset    = db.Column(db.Integer,   nullable=False, default=0)           # ADMIN adjustment to YTD retention
 
     @property
@@ -53,6 +54,7 @@ class Report(db.Model):
     is_confirmed = db.Column(db.Boolean, default=False)
     confirmed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     confirmed_at = db.Column(db.DateTime, nullable=True)
+    is_rejected  = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
