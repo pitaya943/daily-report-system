@@ -41,14 +41,56 @@
             </div>
           </div>
 
-          <!-- Insurance deduction toggle -->
-          <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" name="deduct_insurance"
-                   id="deductInsurance" value="1"
-                   {% if form_data.get('deduct_insurance') %}checked{% endif %}>
-            <label class="form-check-label small" for="deductInsurance">
-              <i class="bi bi-shield-check text-danger me-1"></i>扣除勞健保
-            </label>
+          <!-- Per-user insurance deduction -->
+          <div class="mb-3">
+            <p class="small fw-semibold mb-1">
+              <i class="bi bi-shield-check text-danger me-1"></i>本次計薪扣除勞健保：
+            </p>
+            <div class="border rounded p-2 bg-light" style="font-size:.82rem">
+              {% set deduct_set = form_data.get('deduct_uid_set', set()) %}
+              {% set has_insured = namespace(v=false) %}
+              {% for u in all_active_users %}
+                {% if u.insurance_deduction > 0 %}{% set has_insured.v = true %}{% endif %}
+              {% endfor %}
+              {% if has_insured.v %}
+              <table class="table table-sm table-borderless mb-0">
+                <tbody>
+                {% for u in all_active_users %}
+                <tr>
+                  <td class="py-0 ps-0" style="width:28px">
+                    {% if u.insurance_deduction > 0 %}
+                    <input class="form-check-input" type="checkbox"
+                           name="deduct_ins_{{ u.id }}" value="1"
+                           id="dins_{{ u.id }}"
+                           {% if u.id in deduct_set %}checked{% endif %}>
+                    {% else %}
+                    <input class="form-check-input" type="checkbox" disabled>
+                    {% endif %}
+                  </td>
+                  <td class="py-0">
+                    <label class="mb-0 {% if u.insurance_deduction == 0 %}text-muted{% endif %}"
+                           {% if u.insurance_deduction > 0 %}for="dins_{{ u.id }}"{% endif %}>
+                      {{ u.display_name }}
+                      {% if u.id == current_user.id %}
+                        <span class="badge bg-primary ms-1" style="font-size:.6rem">我</span>
+                      {% endif %}
+                    </label>
+                  </td>
+                  <td class="py-0 text-end">
+                    {% if u.insurance_deduction > 0 %}
+                      <span class="badge bg-danger">{{ u.insurance_deduction | money }} NTD</span>
+                    {% else %}
+                      <span class="text-muted" style="font-size:.75rem">未投保</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <span class="text-muted">目前所有帳戶的勞健保扣除額均為 0（未設定）</span>
+              {% endif %}
+            </div>
           </div>
 
           <p class="small text-muted mb-2">各工項單位計薪（NTD）：</p>

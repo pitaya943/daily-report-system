@@ -863,7 +863,9 @@ def audit():
 @admin_required
 def salary():
     salary_results = None
-    form_data = {'prices': {k: DEFAULT_PRICES.get(k, 0.0) for k, _ in REPORT_FIELDS}}
+    all_active_users = User.query.filter_by(is_active=True).order_by(User.display_name).all()
+    form_data = {'prices': {k: DEFAULT_PRICES.get(k, 0.0) for k, _ in REPORT_FIELDS},
+                 'deduct_uid_set': set()}
 
     if request.method == 'POST':
         action = request.form.get('action', 'calculate')
@@ -877,9 +879,17 @@ def salary():
             except (ValueError, TypeError):
                 prices[key] = 0.0
 
-        deduct_insurance = request.form.get('deduct_insurance') == '1'
+        # Per-user insurance deduction selection
+        deduct_uid_set = set()
+        for key in request.form:
+            if key.startswith('deduct_ins_'):
+                try:
+                    deduct_uid_set.add(int(key[len('deduct_ins_'):]))
+                except (ValueError, IndexError):
+                    pass
+
         form_data = {'start_date': start_str, 'end_date': end_str,
-                     'prices': prices, 'deduct_insurance': deduct_insurance}
+                     'prices': prices, 'deduct_uid_set': deduct_uid_set}
 
         if start_str and end_str:
             try:
@@ -888,7 +898,9 @@ def salary():
             except ValueError:
                 flash('日期格式錯誤', 'danger')
                 return render_template('salary.html', report_fields=REPORT_FIELDS,
-                                       salary_results=None, form_data=form_data)
+                                       salary_results=None, form_data=form_data,
+                                       all_active_users=all_active_users,
+                                       now_year=date.today().year)
 
             reports = Report.query.filter(
                 Report.is_confirmed == True,
@@ -916,7 +928,7 @@ def salary():
                 data['ytd_retention'] = get_ytd_retention(uid)
                 u = users_dict.get(uid)
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
-                ins = (u.insurance_deduction if u else 0) if deduct_insurance else 0
+                ins = (u.insurance_deduction if u else 0) if uid in deduct_uid_set else 0
                 data['insurance_deduction'] = ins
                 data['final_salary'] = data['net_salary'] - ins
 
@@ -940,7 +952,7 @@ def salary():
                               'transfer_total': transfer_total,
                               'cash_total': cash_total,
                               'cash_bills': cash_bills,
-                              'deduct_insurance': deduct_insurance,
+                              'deduct_uid_set': deduct_uid_set,
                               'prices': prices}
 
             if action == 'export-excel':
@@ -950,6 +962,7 @@ def salary():
 
     return render_template('salary.html', report_fields=REPORT_FIELDS,
                            salary_results=salary_results, form_data=form_data,
+                           all_active_users=all_active_users,
                            now_year=date.today().year)
 
 
