@@ -897,9 +897,12 @@ def salary():
                 ed = date.fromisoformat(end_str)
             except ValueError:
                 flash('日期格式錯誤', 'danger')
+                _any_ins = any(u.insurance_deduction > 0 for u in all_active_users)
                 return render_template('salary.html', report_fields=REPORT_FIELDS,
                                        salary_results=None, form_data=form_data,
                                        all_active_users=all_active_users,
+                                       deduct_uid_set=form_data.get('deduct_uid_set', set()),
+                                       any_insured=_any_ins,
                                        now_year=date.today().year)
 
             reports = Report.query.filter(
@@ -960,9 +963,13 @@ def salary():
             elif action == 'export-pdf':
                 return _export_salary_pdf(salary_results)
 
+    deduct_uid_set = form_data.get('deduct_uid_set', set())
+    any_insured = any(u.insurance_deduction > 0 for u in all_active_users)
     return render_template('salary.html', report_fields=REPORT_FIELDS,
                            salary_results=salary_results, form_data=form_data,
                            all_active_users=all_active_users,
+                           deduct_uid_set=deduct_uid_set,
+                           any_insured=any_insured,
                            now_year=date.today().year)
 
 
