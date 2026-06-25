@@ -134,18 +134,7 @@
 const FIELDS = {{ report_fields | tojson }};
 
 function getVal(r, k) {
-  const map = {
-    direct_13: r.direct_13, direct_20: r.direct_20,
-    direct_25: r.direct_25, direct_40: r.direct_40,
-    indirect_13: r.indirect_13, indirect_20: r.indirect_20,
-    indirect_25: r.indirect_25, indirect_40: r.indirect_40,
-    direct_special_group: r.direct_special_group,
-    indirect_special_group: r.indirect_special_group,
-    downsize: r.downsize, original_downsize: r.original_downsize,
-    special: r.special, mobilization: r.mobilization,
-    recheck: r.recheck, soil_clearing: r.soil_clearing,
-  };
-  return map[k] ?? 0;
+  return r[k] ?? 0;
 }
 
 function openEdit(id, r) {
