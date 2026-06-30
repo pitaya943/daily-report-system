@@ -128,17 +128,19 @@
             </div>
           </div>
 
-          <!-- Insurance deduction toggle -->
+          <!-- Insurance / tax deduction toggle -->
           <div class="form-check mb-3">
             <input class="form-check-input" type="checkbox" name="deduct_insurance"
                    id="deductInsuranceMe" value="1"
                    {% if deduct_ins_checked %}checked{% endif %}>
             <label class="form-check-label small" for="deductInsuranceMe">
-              <i class="bi bi-shield-check text-danger me-1"></i>扣除勞健保
+              <i class="bi bi-shield-check text-danger me-1"></i>扣除勞健保 / 稅務支出
               {% if my_insurance > 0 %}
-                <span class="badge bg-danger ms-1">{{ my_insurance | money }} NTD</span>
+                <span class="badge bg-danger ms-1">勞健保 {{ my_insurance | money }} NTD</span>
+              {% elif not my_tax_exempt %}
+                <span class="text-warning fw-semibold">（未投保，將扣除 {{ tax_rate | int }}% 稅務支出）</span>
               {% else %}
-                <span class="text-muted">(我的扣除額：0，不在公司投保)</span>
+                <span class="text-muted">（未投保且免稅，無需扣除）</span>
               {% endif %}
             </label>
           </div>

@@ -66,6 +66,18 @@
             </div>
           </div>
 
+          <!-- 10號發薪 toggle -->
+          <div class="mb-2">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="is_10th_payday" value="1"
+                     id="is10thPayday" {% if form_data.get('is_10th_payday') %}checked{% endif %}>
+              <label class="form-check-label fw-semibold" for="is10thPayday">
+                <i class="bi bi-cash-coin text-success me-1"></i>本次為10號發薪（含固定薪資 &amp; 勞健保）
+              </label>
+            </div>
+            <div class="form-text">勾選後計算時加入各帳戶固定薪資並扣除勞健保。25號發薪請不要勾選。</div>
+          </div>
+
           <!-- 各帳戶投保狀態與固定薪資（唯讀顯示） -->
           <div class="mb-3">
             <p class="small fw-semibold mb-1 text-secondary">
@@ -365,8 +377,7 @@ function setPayday10() {
     `${py}-${String(pm + 1).padStart(2, '0')}-21`;
   document.getElementById('salaryEndDate').value =
     `${y}-${String(m + 1).padStart(2, '0')}-05`;
-  // 10 號發薪不扣勞健保
-  document.getElementById('is25thPayday').checked = false;
+  document.getElementById('is10thPayday').checked = true;
 }
 
 function setPayday25() {
@@ -375,8 +386,7 @@ function setPayday25() {
   const m = String(today.getMonth() + 1).padStart(2, '0');
   document.getElementById('salaryStartDate').value = `${y}-${m}-06`;
   document.getElementById('salaryEndDate').value   = `${y}-${m}-20`;
-  // 25 號發薪自動勾選扣勞健保
-  document.getElementById('is25thPayday').checked = true;
+  document.getElementById('is10thPayday').checked = false;
 }
 </script>
 {% endblock %}

@@ -1460,7 +1460,9 @@ def salary():
 
         prices = item_prices  # 單價固定由 SystemConfig 讀取，USER/ADMIN 無法從表單修改
 
-        form_data = {'start_date': start_str, 'end_date': end_str}
+        is_10th_payday = request.form.get('is_10th_payday') == '1'
+        form_data = {'start_date': start_str, 'end_date': end_str,
+                     'is_10th_payday': is_10th_payday}
 
         if start_str and end_str:
             try:
@@ -1555,10 +1557,11 @@ def salary():
                 data['bank_account']   = u.bank_account   if u else None
 
                 # 勞健保：10 號發薪時扣（下期），已投保帳戶
-                ins = u.insurance_deduction if u and u.insurance_deduction > 0 else 0
+                # 勞健保與固定薪資僅在10號發薪時計入
+                ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if is_10th_payday else 0
                 data['insurance_deduction'] = ins
 
-                fixed = u.fixed_salary if u else 0
+                fixed = (u.fixed_salary if u else 0) if is_10th_payday else 0
                 data['fixed_salary'] = fixed
 
                 # 稅務支出：未投保且未設免稅者
@@ -2450,7 +2453,8 @@ def personal_stats():
             ins_amount   = current_user.insurance_deduction if deduct_ins_checked else 0
             not_enrolled = (current_user.insurance_deduction == 0 and not current_user.tax_exempt)
             tax_rate_val = get_tax_rate()
-            tax_amount   = round(grand_total * tax_rate_val / 100) if not_enrolled else 0
+            # 未投保需扣稅者，僅在勾選checkbox時才計算稅務支出
+            tax_amount   = round(grand_total * tax_rate_val / 100) if (not_enrolled and deduct_ins_checked) else 0
             salary_result = {'start': salary_start, 'end': salary_end,
                              'totals': totals_p, 'prices': prices,
                              'subtotals': subtotals,
@@ -2477,7 +2481,9 @@ def personal_stats():
                            stats_confirm=stats_confirm,
                            salary_start=salary_start, salary_end=salary_end,
                            deduct_ins_checked=deduct_ins_checked,
-                           my_insurance=current_user.insurance_deduction)
+                           my_insurance=current_user.insurance_deduction,
+                           my_tax_exempt=current_user.tax_exempt,
+                           tax_rate=get_tax_rate())
 
 
 # ---------------------------------------------------------------------------
