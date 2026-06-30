@@ -35,7 +35,11 @@
       </div>
       <div class="card-body">
         <form method="POST">
-          <input type="hidden" name="action" value="stats">
+          <!-- 隱藏：保留薪資試算面板狀態 -->
+          <input type="hidden" name="salary_start"    value="{{ salary_start }}">
+          <input type="hidden" name="salary_end"      value="{{ salary_end }}">
+          <input type="hidden" name="deduct_insurance" value="{{ '1' if deduct_ins_checked else '' }}">
+
           <div class="row g-2 mb-3">
             <div class="col-6">
               <label class="form-label small mb-1">開始日期</label>
@@ -50,8 +54,8 @@
             <div class="col-12">
               <label class="form-label small mb-1">確認狀態</label>
               <select name="stats_confirm" class="form-select form-select-sm">
-                <option value="all"       {% if stats_confirm == 'all'         %}selected{% endif %}>全部</option>
-                <option value="confirmed" {% if stats_confirm == 'confirmed'   %}selected{% endif %}>僅已確認</option>
+                <option value="all"         {% if stats_confirm == 'all'         %}selected{% endif %}>全部</option>
+                <option value="confirmed"   {% if stats_confirm == 'confirmed'   %}selected{% endif %}>僅已確認</option>
                 <option value="unconfirmed" {% if stats_confirm == 'unconfirmed' %}selected{% endif %}>僅未確認</option>
               </select>
             </div>
@@ -106,7 +110,11 @@
       </div>
       <div class="card-body">
         <form method="POST">
-          <input type="hidden" name="action" value="salary">
+          <!-- 隱藏：保留工項查詢面板狀態 -->
+          <input type="hidden" name="stats_start"   value="{{ stats_start }}">
+          <input type="hidden" name="stats_end"     value="{{ stats_end }}">
+          <input type="hidden" name="stats_confirm" value="{{ stats_confirm }}">
+
           <div class="row g-2 mb-3">
             <div class="col-6">
               <label class="form-label small mb-1">開始日期</label>
@@ -119,11 +127,12 @@
                      value="{{ salary_end }}" required>
             </div>
           </div>
+
           <!-- Insurance deduction toggle -->
-          <div class="form-check mb-2">
+          <div class="form-check mb-3">
             <input class="form-check-input" type="checkbox" name="deduct_insurance"
                    id="deductInsuranceMe" value="1"
-                   {% if salary_result and salary_result.deduct_insurance %}checked{% endif %}>
+                   {% if deduct_ins_checked %}checked{% endif %}>
             <label class="form-check-label small" for="deductInsuranceMe">
               <i class="bi bi-shield-check text-danger me-1"></i>扣除勞健保
               {% if my_insurance > 0 %}
@@ -134,16 +143,26 @@
             </label>
           </div>
 
-          <p class="small text-muted mb-1">各工項單位計薪（NTD）：</p>
-          {% for key, label in report_fields %}
-          <div class="mb-1 d-flex align-items-center gap-2">
-            <label class="mb-0 text-muted" style="min-width:180px;font-size:.77rem">{{ label }}</label>
-            <input type="number" name="price_{{ key }}" class="form-control form-control-sm"
-                   value="{{ salary_result.prices.get(key, default_prices.get(key,0)) if salary_result else default_prices.get(key,0) }}"
-                   min="0" step="0.01" style="max-width:90px">
+          <!-- 各工項單位計薪：唯讀，一列兩行 -->
+          <p class="small text-muted mb-1">
+            <i class="bi bi-lock me-1 opacity-50"></i>各工項單位計薪（NTD，唯讀）：
+          </p>
+          <div class="row g-1 mb-3">
+            {% for key, label in report_fields %}
+            <div class="col-6">
+              <div class="d-flex justify-content-between align-items-center border rounded px-2 py-1 bg-light"
+                   style="font-size:.76rem">
+                <span class="text-muted text-truncate me-1" style="max-width:115px"
+                      title="{{ label }}">{{ label }}</span>
+                <span class="fw-semibold flex-shrink-0">
+                  {{ default_prices.get(key, 0) | int }}
+                </span>
+              </div>
+            </div>
+            {% endfor %}
           </div>
-          {% endfor %}
-          <button type="submit" class="btn btn-warning btn-sm mt-3">
+
+          <button type="submit" class="btn btn-warning btn-sm">
             <i class="bi bi-calculator me-1"></i>試算薪資
           </button>
         </form>

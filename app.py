@@ -1882,96 +1882,92 @@ def personal_stats():
     totals_result = None
     salary_result = None
     form = request.form if request.method == 'POST' else {}
-    action = form.get('action', '')
 
-    stats_start = form.get('stats_start', '')
-    stats_end = form.get('stats_end', '')
+    stats_start   = form.get('stats_start',   '')
+    stats_end     = form.get('stats_end',     '')
     stats_confirm = form.get('stats_confirm', 'all')
-    salary_start = form.get('salary_start', '')
-    salary_end = form.get('salary_end', '')
+    salary_start  = form.get('salary_start',  '')
+    salary_end    = form.get('salary_end',    '')
+    deduct_ins_checked = form.get('deduct_insurance') == '1'
 
-    # 今年度累積保留金（固定顯示，已確認回報）
     ytd_retention = get_ytd_retention(current_user.id)
-    # 此帳戶的客製保留金費率（stats / salary 兩個 action 共用）
-    my_ret_rates = get_user_all_retention_rates(current_user.id)
+    my_ret_rates  = get_user_all_retention_rates(current_user.id)
 
-    if action == 'stats' and stats_start and stats_end:
-        q = Report.query.filter(
-            Report.user_id == current_user.id,
-            Report.report_date >= date.fromisoformat(stats_start),
-            Report.report_date <= date.fromisoformat(stats_end)
-        )
-        if stats_confirm == 'confirmed':
-            q = q.filter_by(is_confirmed=True)
-        elif stats_confirm == 'unconfirmed':
-            q = q.filter_by(is_confirmed=False)
-        reports = q.all()
-        totals = {k: 0 for k, _ in REPORT_FIELDS}
-        for r in reports:
-            for k, _ in REPORT_FIELDS:
-                totals[k] += getattr(r, k, 0)
-        period_retention = sum(totals.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
-        totals_result = {'start': stats_start, 'end': stats_end,
-                         'confirm_filter': stats_confirm,
-                         'totals': totals, 'count': len(reports),
-                         'period_retention': period_retention}
+    # ── 工項總和查詢：只要日期有填就計算（不依賴 action）──────────────────
+    if stats_start and stats_end:
+        try:
+            q = Report.query.filter(
+                Report.user_id == current_user.id,
+                Report.report_date >= date.fromisoformat(stats_start),
+                Report.report_date <= date.fromisoformat(stats_end)
+            )
+            if stats_confirm == 'confirmed':
+                q = q.filter_by(is_confirmed=True)
+            elif stats_confirm == 'unconfirmed':
+                q = q.filter_by(is_confirmed=False)
+            _reports_s = q.all()
+            totals_s = {k: 0 for k, _ in REPORT_FIELDS}
+            for r in _reports_s:
+                for k, _ in REPORT_FIELDS:
+                    totals_s[k] += getattr(r, k, 0)
+            period_ret_s = sum(totals_s.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
+            totals_result = {'start': stats_start, 'end': stats_end,
+                             'confirm_filter': stats_confirm,
+                             'totals': totals_s, 'count': len(_reports_s),
+                             'period_retention': period_ret_s}
+        except ValueError:
+            pass
 
-    elif action == 'salary' and salary_start and salary_end:
-        prices = {}
-        for k, _ in REPORT_FIELDS:
-            try:
-                prices[k] = max(0.0, float(form.get(f'price_{k}', 0)))
-            except (ValueError, TypeError):
-                prices[k] = 0.0
+    # ── 薪資試算：只要日期有填就計算，單價唯讀來自 DEFAULT_PRICES ─────────
+    if salary_start and salary_end:
+        try:
+            prices = {k: DEFAULT_PRICES.get(k, 0.0) for k, _ in REPORT_FIELDS}
+            sd_ps  = date.fromisoformat(salary_start)
+            ed_ps  = date.fromisoformat(salary_end)
+            _reports_p = Report.query.filter(
+                Report.user_id == current_user.id,
+                Report.is_confirmed == True,
+                Report.report_date >= sd_ps,
+                Report.report_date <= ed_ps
+            ).all()
+            totals_p = {k: 0 for k, _ in REPORT_FIELDS}
+            for r in _reports_p:
+                for k, _ in REPORT_FIELDS:
+                    totals_p[k] += getattr(r, k, 0)
+            subtotals  = {k: totals_p[k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
+            grand_total = sum(subtotals.values())
 
-        deduct_ins = form.get('deduct_insurance') == '1'
+            year_start  = date(sd_ps.year, 1, 1)
+            pre_reports = Report.query.filter(
+                Report.user_id == current_user.id,
+                Report.is_confirmed == True,
+                Report.report_date >= year_start,
+                Report.report_date < sd_ps
+            ).all()
+            pre_totals = {f: sum(getattr(r, f, 0) for r in pre_reports) for f in RETENTION_FIELDS}
+            pre_calc   = sum(pre_totals.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
+            ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + current_user.retention_offset))
+            period_ret_raw  = sum(totals_p.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
+            period_retention = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
 
-        sd_ps = date.fromisoformat(salary_start)
-        reports = Report.query.filter(
-            Report.user_id == current_user.id,
-            Report.is_confirmed == True,
-            Report.report_date >= sd_ps,
-            Report.report_date <= date.fromisoformat(salary_end)
-        ).all()
-
-        totals = {k: 0 for k, _ in REPORT_FIELDS}
-        for r in reports:
-            for k, _ in REPORT_FIELDS:
-                totals[k] += getattr(r, k, 0)
-
-        subtotals = {k: totals[k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
-        grand_total = sum(subtotals.values())
-
-        # 保留金上限邏輯
-        year_start = date(sd_ps.year, 1, 1)
-        pre_reports = Report.query.filter(
-            Report.user_id == current_user.id,
-            Report.is_confirmed == True,
-            Report.report_date >= year_start,
-            Report.report_date < sd_ps
-        ).all()
-        pre_totals = {f: sum(getattr(r, f, 0) for r in pre_reports) for f in RETENTION_FIELDS}
-        pre_calc = sum(pre_totals.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
-        ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + current_user.retention_offset))
-        period_ret_raw = sum(totals.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
-        period_retention = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
-
-        ins_amount = current_user.insurance_deduction if deduct_ins else 0
-        not_enrolled = (current_user.insurance_deduction == 0 and not current_user.tax_exempt)
-        tax_rate = get_tax_rate()
-        tax_amount = round(grand_total * tax_rate / 100) if not_enrolled else 0
-        salary_result = {'start': salary_start, 'end': salary_end,
-                         'totals': totals, 'prices': prices,
-                         'subtotals': subtotals,
-                         'grand_total': grand_total,
-                         'period_retention': period_retention,
-                         'insurance_deduction': ins_amount,
-                         'tax_deduction': tax_amount,
-                         'tax_rate': tax_rate,
-                         'not_enrolled': not_enrolled,
-                         'final_salary': grand_total - period_retention - ins_amount - tax_amount,
-                         'deduct_insurance': deduct_ins,
-                         'count': len(reports)}
+            ins_amount   = current_user.insurance_deduction if deduct_ins_checked else 0
+            not_enrolled = (current_user.insurance_deduction == 0 and not current_user.tax_exempt)
+            tax_rate_val = get_tax_rate()
+            tax_amount   = round(grand_total * tax_rate_val / 100) if not_enrolled else 0
+            salary_result = {'start': salary_start, 'end': salary_end,
+                             'totals': totals_p, 'prices': prices,
+                             'subtotals': subtotals,
+                             'grand_total': grand_total,
+                             'period_retention': period_retention,
+                             'insurance_deduction': ins_amount,
+                             'tax_deduction': tax_amount,
+                             'tax_rate': tax_rate_val,
+                             'not_enrolled': not_enrolled,
+                             'final_salary': grand_total - period_retention - ins_amount - tax_amount,
+                             'deduct_insurance': deduct_ins_checked,
+                             'count': len(_reports_p)}
+        except ValueError:
+            pass
 
     return render_template('personal_stats.html',
                            report_fields=REPORT_FIELDS,
@@ -1983,6 +1979,7 @@ def personal_stats():
                            stats_start=stats_start, stats_end=stats_end,
                            stats_confirm=stats_confirm,
                            salary_start=salary_start, salary_end=salary_end,
+                           deduct_ins_checked=deduct_ins_checked,
                            my_insurance=current_user.insurance_deduction)
 
 
