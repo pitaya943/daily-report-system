@@ -2632,6 +2632,33 @@ def not_found(e):
 
 
 # ---------------------------------------------------------------------------
+# One-time Migration: encrypt existing plaintext bank accounts
+# (Remove this route after migration is confirmed complete)
+# ---------------------------------------------------------------------------
+
+@app.route('/admin/migrate-bank-encrypt')
+@admin_required
+def migrate_bank_encrypt():
+    if not _fernet:
+        return 'BANK_ENCRYPT_KEY 未設定，無法加密', 400
+    users = User.query.filter(User.bank_account.isnot(None)).all()
+    migrated = 0
+    skipped = 0
+    for u in users:
+        acct = u.bank_account
+        if not acct:
+            continue
+        try:
+            _fernet.decrypt(acct.encode())
+            skipped += 1  # 已是加密格式
+        except Exception:
+            u.bank_account = encrypt_bank(acct)  # 明文 → 加密
+            migrated += 1
+    db.session.commit()
+    return (f'遷移完成：加密 {migrated} 筆，已加密略過 {skipped} 筆'), 200
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
