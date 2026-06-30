@@ -175,6 +175,14 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # Column migration: expand bank_account to VARCHAR(200) for Fernet encryption
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text("ALTER TABLE users ALTER COLUMN bank_account TYPE VARCHAR(200)"))
+            conn.commit()
+    except Exception:
+        pass
     # Column migration: add fixed_salary to users if missing
     try:
         with db.engine.connect() as conn:
