@@ -29,9 +29,9 @@
           <div class="col-sm-6">
             <div class="border rounded p-2 h-100">
               <div class="text-muted small mb-1">銀行帳號</div>
-              {% if current_user.bank_account %}
+              {% if bank_accounts[current_user.id] %}
                 <span class="font-monospace fw-semibold">
-                  {{ current_user.bank_account[:3] }}-{{ current_user.bank_account[3:] }}
+                  {{ bank_accounts[current_user.id][:3] }}-{{ bank_accounts[current_user.id][3:] }}
                 </span>
               {% else %}
                 <span class="text-muted">未設定</span>
@@ -100,6 +100,7 @@
       <div class="card-body">
         <form method="POST" action="{{ url_for('settings_password') }}"
               onsubmit="return confirm('確定更新密碼？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <label class="form-label">目前密碼</label>
             <input type="password" name="old_password" class="form-control" required>
@@ -166,8 +167,8 @@
                 {% endif %}
               </td>
               <td style="font-size:.78rem;font-family:monospace">
-                {% if u.bank_account %}
-                  {{ u.bank_account[:3] }}-{{ u.bank_account[3:] }}
+                {% if bank_accounts[u.id] %}
+                  {{ bank_accounts[u.id][:3] }}-{{ bank_accounts[u.id][3:] }}
                 {% else %}
                   <span class="text-muted">無</span>
                 {% endif %}
@@ -209,12 +210,12 @@
                   <i class="bi bi-pencil"></i>
                 </button>
                 <button class="btn btn-outline-info btn-sm py-0 px-2 ms-1"
-                        onclick="openPayment({{ u.id }}, '{{ u.display_name|e }}', '{{ u.payment_method }}', '{{ u.bank_account or '' }}')"
+                        onclick="openPayment({{ u.id }}, '{{ u.display_name|e }}', '{{ u.payment_method }}', '{{ bank_accounts[u.id] }}')"
                         title="修改發薪方式">
                   <i class="bi bi-credit-card"></i>
                 </button>
                 <button class="btn btn-outline-primary btn-sm py-0 px-2 ms-1"
-                        onclick="openBankAccount({{ u.id }}, '{{ u.display_name|e }}', '{{ u.bank_account or '' }}')"
+                        onclick="openBankAccount({{ u.id }}, '{{ u.display_name|e }}', '{{ bank_accounts[u.id] }}')"
                         title="設定銀行帳號">
                   <i class="bi bi-bank2"></i>
                 </button>
@@ -255,6 +256,7 @@
                       action="{{ url_for('settings_reactivate_user', user_id=u.id) }}"
                       class="d-inline"
                       onsubmit="return confirm('確定重新啟用「{{ u.display_name|e }}」？')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button type="submit" class="btn btn-outline-success btn-sm py-0 px-2 ms-1"
                           title="重新啟用帳戶">
                     <i class="bi bi-arrow-counterclockwise"></i>
@@ -293,6 +295,7 @@
           設為 <strong>0</strong> 表示該工項不扣除保留金。未自訂時使用全域費率（目前：<strong>{{ retention_rate }} NTD/只</strong>）。
         </p>
         <form id="retRatesForm" method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <table class="table table-sm table-bordered mb-0">
             <thead class="table-secondary">
               <tr>
@@ -307,6 +310,7 @@
       <div class="modal-footer justify-content-between">
         <form id="retRatesResetForm" method="POST"
               onsubmit="return confirm('確定將此帳戶所有保留金費率重置為全域費率（{{ retention_rate }} NTD/只）？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="reset">
           <button type="submit" class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-arrow-counterclockwise me-1"></i>重置為全域費率
@@ -332,6 +336,7 @@
   <div class="card-body">
     <form method="POST" action="{{ url_for('settings_retention_rate') }}"
           onsubmit="return confirm('確定更新保留金費率？此變更影響後續所有保留金計算。')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="d-flex align-items-center gap-3">
         <div>
           <label class="form-label mb-1 small">每只抽取金額（適用直總/間接 8 個欄位）</label>
@@ -360,6 +365,7 @@
   <div class="card-body">
     <form method="POST" action="{{ url_for('settings_tax_rate') }}"
           onsubmit="return confirm('確定更新稅務支出費率？')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="d-flex align-items-center gap-3">
         <div>
           <label class="form-label mb-1 small">未在公司保勞健的員工，計薪時依計薪小計扣除此百分比</label>
@@ -388,6 +394,7 @@
   <div class="card-body">
     <form method="POST" action="{{ url_for('settings_item_prices') }}"
           onsubmit="return confirm('確定更新各工項單位計薪？此變更將影響後續所有薪資計算。')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2 mb-3">
         {% for key, label in report_fields %}
         <div class="col-sm-6 col-lg-4">
@@ -417,6 +424,7 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <form id="bankAccountForm" method="POST" onsubmit="return submitBankAccount()">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <p class="small mb-1">帳戶：<strong id="bankAccountUsername"></strong></p>
           <p class="text-muted small mb-3">
@@ -456,6 +464,7 @@
       </div>
       <form method="POST" action="{{ url_for('settings_create_user') }}"
             onsubmit="return validateCreate()">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <div class="mb-3">
             <label class="form-label fw-semibold">帳戶名稱（可使用中文）</label>
@@ -524,6 +533,7 @@
       </div>
       <form id="editNameForm" method="POST"
             onsubmit="return confirm('確定修改顯示名稱？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <div class="mb-2">
             <label class="form-label">顯示名稱（可使用中文）</label>
@@ -550,6 +560,7 @@
       </div>
       <form id="resetPwdForm" method="POST"
             onsubmit="return validateResetPwd() && confirm('確定重設「' + document.getElementById('resetPwdUsername').textContent + '」的密碼？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <p class="small mb-3">帳戶：<strong id="resetPwdUsername"></strong></p>
           <div class="mb-2">
@@ -582,6 +593,7 @@
       </div>
       <form id="deleteUserForm" method="POST"
             onsubmit="return confirm('最後確認：確定執行此刪除操作？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <p class="small">帳戶：<strong id="deleteUsername"></strong></p>
           <div class="mb-3">
@@ -620,6 +632,7 @@
       </div>
       <form id="paymentForm" method="POST"
             onsubmit="return submitPaymentForm()">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <p class="small mb-2">帳戶：<strong id="paymentUsername"></strong></p>
           <small id="paymentBankNotice" class="d-block mb-3"></small>
@@ -657,6 +670,7 @@
         <!-- 重置為 0 -->
         <form id="retentionResetForm" method="POST"
               onsubmit="return confirm('確定將此帳戶累積保留金重置為 0？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="reset">
           <button type="submit" class="btn btn-outline-danger btn-sm w-100 mb-3">
             <i class="bi bi-arrow-counterclockwise me-1"></i>重置為 0
@@ -666,6 +680,7 @@
         <!-- 設定為指定值 -->
         <form id="retentionSetForm" method="POST"
               onsubmit="return confirm('確定更新此帳戶累積保留金？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="set">
           <label class="form-label small">設定為指定金額（NTD）</label>
           <div class="input-group input-group-sm">
@@ -694,6 +709,7 @@
       </div>
       <form id="fixedSalaryForm" method="POST"
             onsubmit="return confirm('確定更新固定薪資？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <p class="small mb-2">帳戶：<strong id="fixedSalaryUsername"></strong></p>
           <p class="small text-muted mb-3">固定薪資於每期 <strong>10 號發薪</strong>時加入，預設為 0（不啟用）。</p>
@@ -723,6 +739,7 @@
       </div>
       <form id="insuranceForm" method="POST"
             onsubmit="return confirm('確定更新投保狀態？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <p class="small mb-3">帳戶：<strong id="insuranceUsername"></strong></p>
 

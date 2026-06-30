@@ -134,6 +134,7 @@
       </div>
       <form id="editForm" method="POST"
             onsubmit="return confirm('確定儲存修改？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <div id="editFields" class="row g-3"></div>
         </div>
@@ -148,6 +149,7 @@
 
 <!-- Delete form -->
 <form id="deleteForm" method="POST" style="display:none">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="confirm" value="1">
 </form>
 {% endblock %}

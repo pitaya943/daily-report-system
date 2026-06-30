@@ -14,7 +14,7 @@
       </div>
       <div class="card-body">
         <form method="POST" action="{{ url_for('salary') }}" id="salaryForm">
-
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <!-- Quick payroll date shortcuts -->
           <div class="mb-2 d-flex gap-2 flex-wrap">
             <button type="button" class="btn btn-outline-secondary btn-sm py-0"

@@ -11,6 +11,7 @@
       </div>
       <div class="card-body p-4">
         <form id="reportForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <!-- Date -->
           <div class="mb-4">
             <label class="form-label fw-semibold">回報日期</label>

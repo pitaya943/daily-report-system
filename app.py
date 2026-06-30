@@ -4,15 +4,23 @@ from datetime import datetime, date, timedelta
 from functools import wraps
 
 from flask import (Flask, render_template, request, redirect, url_for,
-                   flash, send_file, abort)
+                   flash, send_file, abort, session)
 from flask_login import (LoginManager, login_user, logout_user,
                          login_required, current_user)
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_wtf.csrf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from cryptography.fernet import Fernet, InvalidToken
 
 from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig, UserRetentionRate
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'daily-report-secret-2026-yc-local')
+_sk = os.environ.get('SECRET_KEY')
+if not _sk:
+    import logging as _logging
+    _logging.warning('SECRET_KEY env var not set — using hardcoded fallback (unsafe for production)')
+app.config['SECRET_KEY'] = _sk or 'daily-report-secret-2026-yc-local'
 
 _db_url = os.environ.get('DATABASE_URL', 'sqlite:///daily_report.db')
 # Supabase / Railway may return "postgres://" which SQLAlchemy 1.4+ rejects
@@ -29,6 +37,67 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 }
 
 db.init_app(app)
+
+# ---------------------------------------------------------------------------
+# Security: SEC-001 CSRF / SEC-003 Rate Limiting / SEC-005 Session /
+#           SEC-007 Bank Encryption / SEC-008 HTTP Headers
+# ---------------------------------------------------------------------------
+
+# SEC-005: Session security
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)
+app.config['SESSION_COOKIE_HTTPONLY']    = True
+app.config['SESSION_COOKIE_SAMESITE']   = 'Lax'
+app.config['SESSION_COOKIE_SECURE']     = not app.debug  # HTTP 本機開發不受影響
+
+# SEC-001: CSRF protection
+csrf = CSRFProtect(app)
+
+# SEC-003: Login rate limiting (memory backend, no Redis needed)
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri='memory://',
+)
+
+# SEC-007: Bank account encryption (Fernet symmetric key)
+_BANK_KEY_STR = os.environ.get('BANK_ENCRYPT_KEY', '')
+_fernet: Fernet | None = Fernet(_BANK_KEY_STR.encode()) if _BANK_KEY_STR else None
+
+
+def encrypt_bank(acct: str) -> str:
+    if not _fernet or not acct:
+        return acct
+    return _fernet.encrypt(acct.encode()).decode()
+
+
+def decrypt_bank(acct: str) -> str:
+    if not _fernet or not acct:
+        return acct
+    try:
+        return _fernet.decrypt(acct.encode()).decode()
+    except (InvalidToken, Exception):
+        return acct  # 過渡期：明文資料直接回傳
+
+
+# SEC-008: HTTP security headers
+@app.after_request
+def set_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options']         = 'SAMEORIGIN'
+    response.headers['X-XSS-Protection']        = '1; mode=block'
+    response.headers['Referrer-Policy']         = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy']      = 'geolocation=(), microphone=(), camera=()'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+        "font-src 'self' cdn.jsdelivr.net data:; "
+        "img-src 'self' data:; "
+        "connect-src 'self';"
+    )
+    return response
+
 
 def _init_db():
     try:
@@ -319,13 +388,30 @@ def get_tax_rate() -> float:
     return float(cfg.value) if cfg else 3.0
 
 
+_price_cache: dict = {}
+_price_cache_ts: float = 0.0
+_PRICE_CACHE_TTL = 300  # 5 分鐘
+
+
 def get_item_prices() -> dict:
-    """各工項單位計薪，優先讀取 SystemConfig（鍵：price_<field>），否則用 DEFAULT_PRICES。"""
+    """各工項單位計薪，優先讀取 SystemConfig（鍵：price_<field>），否則用 DEFAULT_PRICES。
+    結果快取 5 分鐘，避免每次 request 重複查詢 DB。"""
+    import time
+    global _price_cache, _price_cache_ts
+    if _price_cache and (time.monotonic() - _price_cache_ts) < _PRICE_CACHE_TTL:
+        return _price_cache
     prices = {}
     for k, _ in REPORT_FIELDS:
         cfg = db.session.get(SystemConfig, f'price_{k}')
         prices[k] = float(cfg.value) if cfg else DEFAULT_PRICES.get(k, 0.0)
-    return prices
+    _price_cache    = prices
+    _price_cache_ts = time.monotonic()
+    return _price_cache
+
+
+def _invalidate_price_cache():
+    global _price_cache
+    _price_cache = {}
 
 
 def calc_retention_from_totals(totals: dict) -> float:
@@ -454,6 +540,7 @@ def index():
 # ---------------------------------------------------------------------------
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit('10 per minute')
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
@@ -464,6 +551,7 @@ def login():
         user = db.session.get(User, int(user_id)) if user_id.isdigit() else None
         if user and user.is_active and check_password_hash(user.password_hash, password):
             login_user(user, remember=True)
+            session.permanent = True  # 確保 PERMANENT_SESSION_LIFETIME 生效
             return redirect(url_for('confirmation') if user.role == 'ADMIN' else url_for('report'))
         flash('密碼錯誤，請重試', 'danger')
     return render_template('login.html', active_users=active_users)
@@ -679,6 +767,9 @@ def settings():
         my_ytd = min(float(RETENTION_CAP),
                      max(0.0, calculated + current_user.retention_offset))
 
+    bank_accounts = {u.id: decrypt_bank(u.bank_account or '') for u in all_users}
+    bank_accounts[current_user.id] = decrypt_bank(current_user.bank_account or '')
+
     return render_template('settings.html', all_users=all_users,
                            retention_rate=global_rate,
                            tax_rate=get_tax_rate(),
@@ -688,7 +779,8 @@ def settings():
                            report_fields=REPORT_FIELDS,
                            item_prices=get_item_prices(),
                            my_ytd=my_ytd,
-                           my_ret_rates=my_ret_rates)
+                           my_ret_rates=my_ret_rates,
+                           bank_accounts=bank_accounts)
 
 
 @app.route('/settings/password', methods=['POST'])
@@ -750,7 +842,7 @@ def settings_create_user():
                      password_hash=generate_password_hash(password),
                      role=role, is_active=True,
                      payment_method=payment_method,
-                     bank_account=bank_account_raw if bank_account_raw else None)
+                     bank_account=encrypt_bank(bank_account_raw) if bank_account_raw else None)
             db.session.add(u)
             add_audit(current_user.id, 'ACCOUNT_CREATE',
                       f'建立帳戶「{display_name}」（角色：{role}）')
@@ -814,7 +906,7 @@ def settings_bank_account(user_id):
     if acct and not (acct.isdigit() and len(acct) == 14):
         flash('銀行帳號格式錯誤（需為 14 位數字：3碼分行代碼 + 11碼帳號主碼）', 'danger')
         return redirect(url_for('settings'))
-    target.bank_account = acct if acct else None
+    target.bank_account = encrypt_bank(acct) if acct else None
     target.updated_at = datetime.utcnow()
     if not target.bank_account and target.payment_method == 'TRANSFER':
         target.payment_method = 'CASH'
@@ -947,6 +1039,7 @@ def settings_item_prices():
         add_audit(current_user.id, 'SYSTEM_CONFIG',
                   f'更新各工項單位計薪（{updated} 個工項）')
         db.session.commit()
+        _invalidate_price_cache()
         flash('各工項單位計薪已儲存', 'success')
     return redirect(url_for('settings'))
 
@@ -1308,8 +1401,25 @@ def summary():
 @admin_required
 def confirmation():
     page = request.args.get('page', 1, type=int)
+
+    # 日期篩選：預設最近 30 天
+    default_start = (date.today() - timedelta(days=30)).isoformat()
+    default_end   = date.today().isoformat()
+    filter_start  = request.args.get('start_date', default_start)
+    filter_end    = request.args.get('end_date',   default_end)
+    try:
+        sd = date.fromisoformat(filter_start)
+        ed = date.fromisoformat(filter_end)
+    except ValueError:
+        sd, ed        = date.today() - timedelta(days=30), date.today()
+        filter_start  = sd.isoformat()
+        filter_end    = ed.isoformat()
+
     pending_pagination = (Report.query
-                          .filter(Report.is_confirmed == False, Report.is_rejected == False)
+                          .filter(Report.is_confirmed == False,
+                                  Report.is_rejected  == False,
+                                  Report.report_date  >= sd,
+                                  Report.report_date  <= ed)
                           .order_by(Report.report_date.asc(), Report.id.asc())
                           .paginate(page=page, per_page=20, error_out=False))
     pending_materials = (MaterialRequest.query.filter_by(status='PENDING')
@@ -1325,7 +1435,9 @@ def confirmation():
                            users_dict=users_dict,
                            materials_dict=materials_dict,
                            report_fields=REPORT_FIELDS,
-                           url_args=url_args)
+                           url_args=url_args,
+                           filter_start=filter_start,
+                           filter_end=filter_end)
 
 
 @app.route('/confirmation/report/<int:report_id>/confirm', methods=['POST'])
@@ -1573,7 +1685,7 @@ def salary():
                 data['ytd_retention'] = min(float(RETENTION_CAP),
                                             max(0.0, _ytd_calc + ret_offset))
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
-                data['bank_account']   = u.bank_account   if u else None
+                data['bank_account']   = decrypt_bank(u.bank_account) if u else None
 
                 # 勞健保：10 號發薪時扣（下期），已投保帳戶
                 # 勞健保與固定薪資僅在10號發薪時計入
@@ -2409,7 +2521,7 @@ def personal_stats():
     deduct_ins_checked = form.get('deduct_insurance') == '1'
 
     ytd_retention = get_ytd_retention(current_user.id)
-    my_ret_rates  = get_user_all_retention_rates(current_user.id)
+    my_ret_rates  = get_users_all_retention_rates([current_user.id])[current_user.id]
 
     # ── 工項總和查詢：只要日期有填就計算（不依賴 action）──────────────────
     if stats_start and stats_end:
