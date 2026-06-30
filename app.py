@@ -1451,7 +1451,7 @@ def salary():
     salary_results = None
     all_active_users = User.query.filter_by(is_active=True).order_by(User.display_name).all()
     item_prices = get_item_prices()
-    form_data = {'is_25th_payday': False}
+    form_data = {}
 
     if request.method == 'POST':
         action = request.form.get('action', 'calculate')
@@ -1460,11 +1460,7 @@ def salary():
 
         prices = item_prices  # 單價固定由 SystemConfig 讀取，USER/ADMIN 無法從表單修改
 
-        # 25號發薪才扣勞健保
-        is_25th_payday = request.form.get('is_25th_payday') == '1'
-
-        form_data = {'start_date': start_str, 'end_date': end_str,
-                     'is_25th_payday': is_25th_payday}
+        form_data = {'start_date': start_str, 'end_date': end_str}
 
         if start_str and end_str:
             try:
@@ -1549,11 +1545,10 @@ def salary():
                 data['bank_account']   = u.bank_account   if u else None
 
                 # 勞健保：10 號發薪時扣（下期），已投保帳戶
-                ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if not is_25th_payday else 0
+                ins = u.insurance_deduction if u and u.insurance_deduction > 0 else 0
                 data['insurance_deduction'] = ins
 
-                # 固定薪資：10 號發薪時加入
-                fixed = (u.fixed_salary if u else 0) if not is_25th_payday else 0
+                fixed = u.fixed_salary if u else 0
                 data['fixed_salary'] = fixed
 
                 # 稅務支出：未投保且未設免稅者
@@ -1588,7 +1583,6 @@ def salary():
                               'grand_fixed': grand_fixed,
                               'grand_tax': grand_tax,
                               'tax_rate': tax_rate,
-                              'is_25th_payday': is_25th_payday,
                               'transfer_total': transfer_total,
                               'cash_total': cash_total,
                               'cash_bills': cash_bills,
@@ -1667,14 +1661,14 @@ def _export_salary_excel(results):
         if data.get('fixed_salary', 0) > 0:
             for col in range(1, 5):
                 ws.cell(row=row, column=col).fill = PatternFill('solid', fgColor='E8F5E9')
-            ws.cell(row=row, column=1, value='固定薪資（10號發薪）').font = Font(color='2E7D32')
+            ws.cell(row=row, column=1, value='固定薪資').font = Font(color='2E7D32')
             ws.cell(row=row, column=4, value=round(data['fixed_salary'], 2)).font = Font(color='2E7D32')
             row += 1
 
         if data.get('insurance_deduction', 0) > 0:
             for col in range(1, 5):
                 ws.cell(row=row, column=col).fill = PatternFill('solid', fgColor='FDECEA')
-            ws.cell(row=row, column=1, value='勞健保扣除（10號發薪）').font = Font(color='C00000')
+            ws.cell(row=row, column=1, value='勞健保扣除').font = Font(color='C00000')
             ws.cell(row=row, column=4, value=-round(data['insurance_deduction'], 2)).font = Font(color='C00000')
             row += 1
 
@@ -1728,11 +1722,11 @@ def _export_salary_excel(results):
     ws.cell(row=row, column=4, value=-round(results['grand_period_retention'], 2)).font = Font(color='C00000')
     row += 1
     if results.get('grand_fixed', 0) > 0:
-        ws.cell(row=row, column=1, value='固定薪資合計（10號發薪）').font = Font(color='2E7D32')
+        ws.cell(row=row, column=1, value='固定薪資合計').font = Font(color='2E7D32')
         ws.cell(row=row, column=4, value=round(results['grand_fixed'], 2)).font = Font(color='2E7D32')
         row += 1
     if results.get('grand_insurance', 0) > 0:
-        ws.cell(row=row, column=1, value='勞健保扣除合計（10號發薪）').font = Font(color='C00000')
+        ws.cell(row=row, column=1, value='勞健保扣除合計').font = Font(color='C00000')
         ws.cell(row=row, column=4, value=-round(results['grand_insurance'], 2)).font = Font(color='C00000')
         row += 1
     if results.get('grand_tax', 0) > 0:
@@ -1861,9 +1855,9 @@ def _export_salary_pdf(results):
         fixed_s = data.get('fixed_salary', 0)
         ins_d   = data.get('insurance_deduction', 0)
         if fixed_s > 0:
-            tdata.append(['固定薪資（10號發薪）', '', '', f'+{fixed_s:,.0f}'])
+            tdata.append(['固定薪資', '', '', f'+{fixed_s:,.0f}'])
         if ins_d > 0:
-            tdata.append(['勞健保扣除（10號發薪）', '', '', f'-{ins_d:,.0f}'])
+            tdata.append(['勞健保扣除', '', '', f'-{ins_d:,.0f}'])
         tdata.append(['本期實領金額', '', '', f'{data["final_salary"]:,.0f}'])
 
         subtotal_row  = 1 + n_fields
@@ -1935,9 +1929,9 @@ def _export_salary_pdf(results):
         ['保留金合計（扣除）',   f'-{results["grand_period_retention"]:,.0f}'],
     ]
     if results.get('grand_fixed', 0) > 0:
-        sdata.append(['固定薪資合計（10號發薪）', f'+{results["grand_fixed"]:,.0f}'])
+        sdata.append(['固定薪資合計', f'+{results["grand_fixed"]:,.0f}'])
     if results.get('grand_insurance', 0) > 0:
-        sdata.append(['勞健保扣除合計（10號發薪）', f'-{results["grand_insurance"]:,.0f}'])
+        sdata.append(['勞健保扣除合計', f'-{results["grand_insurance"]:,.0f}'])
     if results.get('grand_tax', 0) > 0:
         sdata.append([f'稅務支出合計（{results.get("tax_rate",5)}%）', f'-{results["grand_tax"]:,.0f}'])
     sdata += [

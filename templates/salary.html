@@ -66,25 +66,20 @@
             </div>
           </div>
 
-          <!-- 25號發薪 toggle -->
-          <div class="mb-2">
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" name="is_25th_payday" value="1"
-                     id="is25thPayday" {% if form_data.get('is_25th_payday') %}checked{% endif %}>
-              <label class="form-check-label fw-semibold" for="is25thPayday">
-                <i class="bi bi-shield-check text-danger me-1"></i>本次為25號發薪（自動扣除勞健保）
-              </label>
-            </div>
-            <div class="form-text">勾選後計薪時自動扣除所有已投保帳戶的固定勞健保金額。10號發薪請不要勾選。</div>
-          </div>
-
-          <!-- 各帳戶投保狀態（唯讀顯示） -->
+          <!-- 各帳戶投保狀態與固定薪資（唯讀顯示） -->
           <div class="mb-3">
             <p class="small fw-semibold mb-1 text-secondary">
-              <i class="bi bi-people me-1"></i>各帳戶投保狀態：
+              <i class="bi bi-people me-1"></i>各帳戶薪資設定：
             </p>
             <div class="border rounded p-2 bg-light" style="font-size:.81rem">
               <table class="table table-sm table-borderless mb-0">
+                <thead>
+                  <tr class="text-muted" style="font-size:.75rem">
+                    <th class="py-0 fw-normal">帳戶</th>
+                    <th class="py-0 fw-normal text-end">固定薪資</th>
+                    <th class="py-0 fw-normal text-end">投保狀態</th>
+                  </tr>
+                </thead>
                 <tbody>
                 {% for u in all_active_users %}
                 <tr>
@@ -95,8 +90,15 @@
                     {% endif %}
                   </td>
                   <td class="py-0 text-end">
+                    {% if u.fixed_salary > 0 %}
+                      <span class="text-success fw-semibold">{{ u.fixed_salary | money }}</span>
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  </td>
+                  <td class="py-0 text-end">
                     {% if u.insurance_deduction > 0 %}
-                      <span class="badge bg-danger">投保 {{ u.insurance_deduction | money }} NTD</span>
+                      <span class="badge bg-danger">投保 {{ u.insurance_deduction | money }}</span>
                     {% elif u.tax_exempt %}
                       <span class="badge bg-secondary">未投保，免稅</span>
                     {% else %}
@@ -190,7 +192,7 @@
               {% if data.fixed_salary > 0 %}
               <tr class="fw-semibold" style="background:#e8f5e9">
                 <td colspan="3">
-                  <i class="bi bi-cash-coin me-1 text-success"></i>固定薪資（10號發薪）
+                  <i class="bi bi-cash-coin me-1 text-success"></i>固定薪資
                 </td>
                 <td class="text-end text-success">＋ {{ data.fixed_salary | money }} NTD</td>
               </tr>
@@ -198,7 +200,7 @@
               {% if data.insurance_deduction > 0 %}
               <tr class="fw-semibold" style="background:#fdecea">
                 <td colspan="3">
-                  <i class="bi bi-shield-check me-1 text-danger"></i>勞健保扣除（10號發薪）
+                  <i class="bi bi-shield-check me-1 text-danger"></i>勞健保扣除
                 </td>
                 <td class="text-end text-danger">－ {{ data.insurance_deduction | money }} NTD</td>
               </tr>
@@ -308,13 +310,13 @@
         {% if salary_results.grand_fixed > 0 %}
         <div class="alert mb-1 py-2 fw-semibold" style="background:#e8f5e9;border-color:#a5d6a7">
           <i class="bi bi-cash-coin me-1 text-success"></i>
-          固定薪資合計（10號發薪）：＋ {{ salary_results.grand_fixed | money }} NTD
+          固定薪資合計：＋ {{ salary_results.grand_fixed | money }} NTD
         </div>
         {% endif %}
         {% if salary_results.grand_insurance > 0 %}
         <div class="alert mb-1 py-2 fw-semibold" style="background:#fdecea;border-color:#ef9a9a">
           <i class="bi bi-shield-check me-1 text-danger"></i>
-          勞健保扣除合計（10號發薪）：－ {{ salary_results.grand_insurance | money }} NTD
+          勞健保扣除合計：－ {{ salary_results.grand_insurance | money }} NTD
         </div>
         {% endif %}
         {% if salary_results.grand_tax > 0 %}
