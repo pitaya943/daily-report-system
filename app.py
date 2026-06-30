@@ -2644,23 +2644,35 @@ def not_found(e):
 @app.route('/admin/migrate-bank-encrypt')
 @admin_required
 def migrate_bank_encrypt():
-    if not _fernet:
-        return 'BANK_ENCRYPT_KEY 未設定，無法加密', 400
-    users = User.query.filter(User.bank_account.isnot(None)).all()
-    migrated = 0
-    skipped = 0
-    for u in users:
-        acct = u.bank_account
-        if not acct:
-            continue
-        try:
-            _fernet.decrypt(acct.encode())
-            skipped += 1  # 已是加密格式
-        except Exception:
-            u.bank_account = encrypt_bank(acct)  # 明文 → 加密
-            migrated += 1
-    db.session.commit()
-    return (f'遷移完成：加密 {migrated} 筆，已加密略過 {skipped} 筆'), 200
+    import traceback
+    try:
+        fernet_status = f'_fernet={_fernet!r}'
+        if not _fernet:
+            return f'BANK_ENCRYPT_KEY 未設定或無效，無法加密。狀態: {fernet_status}', 400
+        users = User.query.filter(User.bank_account.isnot(None)).all()
+        migrated = 0
+        skipped = 0
+        errors = []
+        for u in users:
+            acct = u.bank_account
+            if not acct:
+                continue
+            try:
+                _fernet.decrypt(acct.encode())
+                skipped += 1
+            except Exception:
+                try:
+                    u.bank_account = encrypt_bank(acct)
+                    migrated += 1
+                except Exception as e2:
+                    errors.append(f'user {u.id}: {e2}')
+        db.session.commit()
+        msg = f'遷移完成：加密 {migrated} 筆，已加密略過 {skipped} 筆'
+        if errors:
+            msg += f'\n錯誤: {errors}'
+        return msg, 200
+    except Exception:
+        return f'Migration error:\n{traceback.format_exc()}', 500
 
 
 # ---------------------------------------------------------------------------
