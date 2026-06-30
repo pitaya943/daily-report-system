@@ -6,45 +6,67 @@
   <title>{% block title %}宇丞 — 員工日報系統{% endblock %}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-  <!-- Restore sidebar state instantly (before CSS transitions) -->
+  <!-- Restore sidebar state instantly (before CSS transitions fire) -->
   <script>
     if(localStorage.getItem('ycSidebarCollapsed')==='true')
       document.documentElement.classList.add('sidebar-collapsed-preload');
   </script>
   <style>
-    html.sidebar-collapsed-preload .sidebar { transform: translateX(-220px); }
-    html.sidebar-collapsed-preload .main-content { margin-left: 0 !important; }
+    /* ── preload: apply collapsed state before transitions activate ── */
+    html.sidebar-collapsed-preload .sidebar { width: 52px; }
+    html.sidebar-collapsed-preload .sidebar .sidebar-brand-text,
+    html.sidebar-collapsed-preload .sidebar .nav-text,
+    html.sidebar-collapsed-preload .sidebar .sidebar-section { display: none !important; }
+    html.sidebar-collapsed-preload .main-content { margin-left: 52px !important; }
+
     body { font-family: 'Microsoft JhengHei', '微軟正黑體', 'PingFang TC', sans-serif; background: #f0f2f5; }
 
+    /* ── sidebar ── */
     .sidebar {
       position: fixed; top: 0; left: 0; height: 100vh; width: 220px;
-      background: #1e2a3a; overflow-y: auto; z-index: 200;
+      background: #1e2a3a; overflow-x: hidden; overflow-y: auto; z-index: 200;
       display: flex; flex-direction: column;
-      transition: transform .22s ease;
+      transition: width .22s ease;
     }
-    body.sidebar-collapsed .sidebar { transform: translateX(-220px); }
-    body.sidebar-collapsed .main-content { margin-left: 0 !important; }
+    body.sidebar-collapsed .sidebar { width: 52px; }
+    body.sidebar-collapsed .sidebar .sidebar-brand-text,
+    body.sidebar-collapsed .sidebar .nav-text,
+    body.sidebar-collapsed .sidebar .sidebar-section { display: none !important; }
+
     .sidebar-brand {
-      padding: 1rem; background: #152232; color: #fff;
+      padding: .75rem .85rem; background: #152232; color: #fff;
       font-size: .95rem; font-weight: 700; letter-spacing: .05em;
       border-bottom: 1px solid #2d3f52; flex-shrink: 0;
+      display: flex; align-items: center; gap: .5rem; min-height: 52px;
     }
-    .sidebar-brand i { color: #4fc3f7; }
+    .sidebar-brand .brand-icon { color: #4fc3f7; font-size: 1.1rem; flex-shrink: 0; }
+    .sidebar-brand-text { white-space: nowrap; overflow: hidden; flex: 1; }
+    .sidebar-toggle {
+      flex-shrink: 0; background: none; border: none; color: #6c8299;
+      cursor: pointer; padding: 2px 4px; border-radius: 4px; line-height: 1;
+      transition: color .15s, background .15s;
+    }
+    .sidebar-toggle:hover { color: #fff; background: rgba(255,255,255,.12); }
+
     .sidebar-nav { flex: 1; padding: .5rem 0; }
     .sidebar-section {
       padding: .6rem 1rem .2rem; color: #6c8299; font-size: .7rem;
-      text-transform: uppercase; letter-spacing: .1em;
+      text-transform: uppercase; letter-spacing: .1em; white-space: nowrap;
     }
     .sidebar .nav-link {
-      color: #a9bcd0; padding: .55rem 1rem;
+      color: #a9bcd0; padding: .55rem .85rem;
       display: flex; align-items: center; gap: .55rem;
       font-size: .875rem; border-radius: 0; transition: all .15s;
+      white-space: nowrap; overflow: hidden;
     }
     .sidebar .nav-link:hover  { color: #fff; background: rgba(255,255,255,.08); }
     .sidebar .nav-link.active { color: #fff; background: #2563eb; }
-    .sidebar .nav-link i { font-size: 1rem; width: 1.2rem; text-align: center; }
+    .sidebar .nav-link i { font-size: 1rem; width: 1.2rem; text-align: center; flex-shrink: 0; }
+    body.sidebar-collapsed .sidebar .nav-link { justify-content: center; padding: .65rem 0; }
 
+    /* ── main content ── */
     .main-content { margin-left: 220px; min-height: 100vh; display: flex; flex-direction: column; transition: margin-left .22s ease; }
+    body.sidebar-collapsed .main-content { margin-left: 52px !important; }
     .topbar {
       background: #fff; border-bottom: 1px solid #dee2e6;
       padding: .65rem 1.5rem; display: flex; justify-content: space-between;
@@ -67,50 +89,63 @@
 <!-- Sidebar -->
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-brand">
-    <i class="bi bi-clipboard-data-fill me-2"></i>宇丞 — 員工日報系統
+    <i class="bi bi-clipboard-data-fill brand-icon"></i>
+    <span class="sidebar-brand-text">宇丞 — 員工日報系統</span>
+    <button class="sidebar-toggle ms-auto" onclick="toggleSidebar()" title="收合/展開側欄">
+      <i class="bi bi-layout-sidebar fs-5"></i>
+    </button>
   </div>
   <div class="sidebar-nav">
     <div class="sidebar-section">一般</div>
     <a href="{{ url_for('report') }}"
-       class="nav-link {% if request.endpoint == 'report' %}active{% endif %}">
-      <i class="bi bi-pencil-square"></i> 回報頁面
+       class="nav-link {% if request.endpoint == 'report' %}active{% endif %}"
+       title="回報頁面">
+      <i class="bi bi-pencil-square"></i><span class="nav-text"> 回報頁面</span>
     </a>
     <a href="{{ url_for('history') }}"
-       class="nav-link {% if request.endpoint == 'history' %}active{% endif %}">
-      <i class="bi bi-clock-history"></i> 歷史紀錄
+       class="nav-link {% if request.endpoint == 'history' %}active{% endif %}"
+       title="歷史紀錄">
+      <i class="bi bi-clock-history"></i><span class="nav-text"> 歷史紀錄</span>
     </a>
     <a href="{{ url_for('materials') }}"
-       class="nav-link {% if request.endpoint == 'materials' %}active{% endif %}">
-      <i class="bi bi-box-seam"></i> 剩餘材料
+       class="nav-link {% if request.endpoint == 'materials' %}active{% endif %}"
+       title="剩餘材料">
+      <i class="bi bi-box-seam"></i><span class="nav-text"> 剩餘材料</span>
     </a>
     <a href="{{ url_for('audit') }}"
-       class="nav-link {% if request.endpoint == 'audit' %}active{% endif %}">
-      <i class="bi bi-journal-text"></i> 變動紀錄
+       class="nav-link {% if request.endpoint == 'audit' %}active{% endif %}"
+       title="變動紀錄">
+      <i class="bi bi-journal-text"></i><span class="nav-text"> 變動紀錄</span>
     </a>
     <a href="{{ url_for('settings') }}"
-       class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}">
-      <i class="bi bi-gear"></i> 設定
+       class="nav-link {% if request.endpoint == 'settings' %}active{% endif %}"
+       title="設定">
+      <i class="bi bi-gear"></i><span class="nav-text"> 設定</span>
     </a>
 
     <div class="sidebar-section mt-2">個人</div>
     <a href="{{ url_for('personal_stats') }}"
-       class="nav-link {% if request.endpoint == 'personal_stats' %}active{% endif %}">
-      <i class="bi bi-bar-chart-line"></i> 個人統計
+       class="nav-link {% if request.endpoint == 'personal_stats' %}active{% endif %}"
+       title="個人統計">
+      <i class="bi bi-bar-chart-line"></i><span class="nav-text"> 個人統計</span>
     </a>
 
     {% if current_user.role == 'ADMIN' %}
     <div class="sidebar-section mt-2">管理</div>
     <a href="{{ url_for('summary') }}"
-       class="nav-link {% if request.endpoint == 'summary' %}active{% endif %}">
-      <i class="bi bi-table"></i> 統計報表
+       class="nav-link {% if request.endpoint == 'summary' %}active{% endif %}"
+       title="統計報表">
+      <i class="bi bi-table"></i><span class="nav-text"> 統計報表</span>
     </a>
     <a href="{{ url_for('confirmation') }}"
-       class="nav-link {% if request.endpoint == 'confirmation' %}active{% endif %}">
-      <i class="bi bi-check-circle"></i> 確認
+       class="nav-link {% if request.endpoint == 'confirmation' %}active{% endif %}"
+       title="確認">
+      <i class="bi bi-check-circle"></i><span class="nav-text"> 確認</span>
     </a>
     <a href="{{ url_for('salary') }}"
-       class="nav-link {% if request.endpoint == 'salary' %}active{% endif %}">
-      <i class="bi bi-currency-dollar"></i> 薪資計算
+       class="nav-link {% if request.endpoint == 'salary' %}active{% endif %}"
+       title="薪資計算">
+      <i class="bi bi-currency-dollar"></i><span class="nav-text"> 薪資計算</span>
     </a>
     {% endif %}
   </div>
@@ -119,13 +154,7 @@
 <!-- Main Content -->
 <div class="main-content">
   <div class="topbar">
-    <div class="d-flex align-items-center gap-2">
-      <button id="sidebarToggle" class="btn btn-sm btn-outline-secondary px-2"
-              onclick="toggleSidebar()" title="收合/展開側欄">
-        <i class="bi bi-layout-sidebar" id="sidebarToggleIcon"></i>
-      </button>
-      <h5 class="mb-0">{% block page_title %}{% endblock %}</h5>
-    </div>
+    <h5 class="mb-0">{% block page_title %}{% endblock %}</h5>
     <div class="d-flex align-items-center gap-3">
       <span class="text-muted" style="font-size:.875rem">
         <i class="bi bi-person-circle me-1"></i>{{ current_user.display_name }}
@@ -159,7 +188,6 @@
 <script>
 (function(){
   var STORAGE_KEY = 'ycSidebarCollapsed';
-  // Sync body class from preload html class (transitions already disabled at this point)
   if(document.documentElement.classList.contains('sidebar-collapsed-preload')){
     document.body.classList.add('sidebar-collapsed');
     document.documentElement.classList.remove('sidebar-collapsed-preload');
@@ -207,7 +235,6 @@
     });
     document.addEventListener('submit', function(e){
       if(e.defaultPrevented) return;
-      // 匯出 Excel/PDF 等檔案下載不顯示 loading（頁面不會跳轉）
       if(e.submitter && e.submitter.dataset.noLoading) return;
       showLoading();
     });

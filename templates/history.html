@@ -88,10 +88,17 @@
               {% endif %}
             </td>
             <td class="text-center">
+              {% if r.is_confirmed and current_user.role != 'ADMIN' %}
+              <button class="btn btn-outline-secondary btn-sm py-0 px-2"
+                      disabled title="已確認的回報無法修改">
+                <i class="bi bi-pencil"></i>
+              </button>
+              {% else %}
               <button class="btn btn-outline-primary btn-sm py-0 px-2"
                       onclick="openEdit({{ r.id }}, {{ r | report_json }})">
                 <i class="bi bi-pencil"></i>
               </button>
+              {% endif %}
               {% if not r.is_confirmed or current_user.role == 'ADMIN' %}
               <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
                       onclick="confirmDelete({{ r.id }}, '{{ r.report_date }}')">

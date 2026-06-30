@@ -101,6 +101,14 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # Column migration: add fixed_salary to users if missing
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text("ALTER TABLE users ADD COLUMN fixed_salary INTEGER NOT NULL DEFAULT 0"))
+            conn.commit()
+    except Exception:
+        pass
     # Seed / correct default SystemConfig entries
     try:
         for _key, _default in [('retention_rate', '20'), ('tax_rate', '3')]:
@@ -528,6 +536,10 @@ def history_edit(report_id):
     if current_user.role != 'ADMIN' and r.user_id != current_user.id:
         abort(403)
 
+    if r.is_confirmed and current_user.role != 'ADMIN':
+        flash('已確認的回報無法修改', 'danger')
+        return redirect(url_for('history'))
+
     new_vals = parse_report_values(request.form)
     diff = report_diff(r, new_vals)
     was_confirmed = r.is_confirmed
@@ -536,7 +548,7 @@ def history_edit(report_id):
         setattr(r, key, new_vals[key])
     r.updated_at = datetime.utcnow()
 
-    if was_confirmed:
+    if was_confirmed and current_user.role == 'ADMIN':
         r.is_confirmed = False
         r.confirmed_by = None
         r.confirmed_at = None
@@ -581,7 +593,8 @@ def history_delete(report_id):
 @app.route('/settings')
 @login_required
 def settings():
-    all_users = User.query.order_by(User.created_at).all() if current_user.role == 'ADMIN' else []
+    _all_users_raw = User.query.order_by(User.id).all() if current_user.role == 'ADMIN' else []
+    all_users = sorted(_all_users_raw, key=lambda u: (0 if u.role == 'ADMIN' else 1, u.id))
     uid_list = [u.id for u in all_users]
 
     # ── 3 queries total (was N×2 + 1) ────────────────────────────────
@@ -794,6 +807,27 @@ def settings_bank_account(user_id):
                   f'更新「{target.display_name}」銀行帳號')
         flash(f'「{target.display_name}」銀行帳號已更新', 'success')
     db.session.commit()
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/users/<int:user_id>/fixed-salary', methods=['POST'])
+@admin_required
+def settings_fixed_salary(user_id):
+    target = db.session.get(User, user_id)
+    if not target:
+        abort(404)
+    try:
+        amount = max(0, int(request.form.get('fixed_salary', 0)))
+    except (ValueError, TypeError):
+        flash('請輸入有效的整數', 'danger')
+        return redirect(url_for('settings'))
+    old = target.fixed_salary
+    target.fixed_salary = amount
+    target.updated_at = datetime.utcnow()
+    add_audit(current_user.id, 'ACCOUNT_UPDATE',
+              f'更新「{target.display_name}」固定薪資：{old} → {amount} NTD')
+    db.session.commit()
+    flash(f'「{target.display_name}」固定薪資已更新為 {amount:,} NTD', 'success')
     return redirect(url_for('settings'))
 
 
@@ -1514,19 +1548,24 @@ def salary():
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
                 data['bank_account']   = u.bank_account   if u else None
 
-                # 勞健保：只在 25 號發薪時扣，且帳戶需已投保
-                ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if is_25th_payday else 0
+                # 勞健保：10 號發薪時扣（下期），已投保帳戶
+                ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if not is_25th_payday else 0
                 data['insurance_deduction'] = ins
+
+                # 固定薪資：10 號發薪時加入
+                fixed = (u.fixed_salary if u else 0) if not is_25th_payday else 0
+                data['fixed_salary'] = fixed
 
                 # 稅務支出：未投保且未設免稅者
                 not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt) if u else True
                 data['tax_deduction'] = round(data['gross_salary'] * tax_rate / 100) if not_enrolled else 0
-                data['final_salary'] = data['net_salary'] - ins - data['tax_deduction']
+                data['final_salary'] = data['net_salary'] + fixed - ins - data['tax_deduction']
 
             grand_gross = sum(d['gross_salary'] for d in user_data.values())
             grand_period_retention = sum(d['period_retention'] for d in user_data.values())
             grand_ytd_retention = sum(d['ytd_retention'] for d in user_data.values())
             grand_insurance = sum(d['insurance_deduction'] for d in user_data.values())
+            grand_fixed = sum(d['fixed_salary'] for d in user_data.values())
             grand_tax = sum(d['tax_deduction'] for d in user_data.values())
             grand = sum(d['final_salary'] for d in user_data.values())
             transfer_total = sum(d['final_salary'] for d in user_data.values()
@@ -1546,6 +1585,7 @@ def salary():
                               'grand_period_retention': grand_period_retention,
                               'grand_ytd_retention': grand_ytd_retention,
                               'grand_insurance': grand_insurance,
+                              'grand_fixed': grand_fixed,
                               'grand_tax': grand_tax,
                               'tax_rate': tax_rate,
                               'is_25th_payday': is_25th_payday,
@@ -1624,10 +1664,17 @@ def _export_salary_excel(results):
         ws.cell(row=row, column=4, value=-round(data['period_retention'], 2)).font = Font(color='C00000')
         row += 1
 
+        if data.get('fixed_salary', 0) > 0:
+            for col in range(1, 5):
+                ws.cell(row=row, column=col).fill = PatternFill('solid', fgColor='E8F5E9')
+            ws.cell(row=row, column=1, value='固定薪資（10號發薪）').font = Font(color='2E7D32')
+            ws.cell(row=row, column=4, value=round(data['fixed_salary'], 2)).font = Font(color='2E7D32')
+            row += 1
+
         if data.get('insurance_deduction', 0) > 0:
             for col in range(1, 5):
                 ws.cell(row=row, column=col).fill = PatternFill('solid', fgColor='FDECEA')
-            ws.cell(row=row, column=1, value='勞健保扣除').font = Font(color='C00000')
+            ws.cell(row=row, column=1, value='勞健保扣除（10號發薪）').font = Font(color='C00000')
             ws.cell(row=row, column=4, value=-round(data['insurance_deduction'], 2)).font = Font(color='C00000')
             row += 1
 
@@ -1680,8 +1727,12 @@ def _export_salary_excel(results):
     ws.cell(row=row, column=1, value='保留金合計（扣除）').font = Font(color='C00000')
     ws.cell(row=row, column=4, value=-round(results['grand_period_retention'], 2)).font = Font(color='C00000')
     row += 1
+    if results.get('grand_fixed', 0) > 0:
+        ws.cell(row=row, column=1, value='固定薪資合計（10號發薪）').font = Font(color='2E7D32')
+        ws.cell(row=row, column=4, value=round(results['grand_fixed'], 2)).font = Font(color='2E7D32')
+        row += 1
     if results.get('grand_insurance', 0) > 0:
-        ws.cell(row=row, column=1, value='勞健保扣除合計').font = Font(color='C00000')
+        ws.cell(row=row, column=1, value='勞健保扣除合計（10號發薪）').font = Font(color='C00000')
         ws.cell(row=row, column=4, value=-round(results['grand_insurance'], 2)).font = Font(color='C00000')
         row += 1
     if results.get('grand_tax', 0) > 0:
@@ -1807,15 +1858,19 @@ def _export_salary_pdf(results):
         # 小結行
         tdata.append(['計薪小計（稅前）', '', '', f'{data["gross_salary"]:,.0f}'])
         tdata.append(['本期保留金（扣除）', '', '', f'-{data["period_retention"]:,.0f}'])
-        ins_d = data.get('insurance_deduction', 0)
+        fixed_s = data.get('fixed_salary', 0)
+        ins_d   = data.get('insurance_deduction', 0)
+        if fixed_s > 0:
+            tdata.append(['固定薪資（10號發薪）', '', '', f'+{fixed_s:,.0f}'])
         if ins_d > 0:
-            tdata.append(['勞健保扣除', '', '', f'-{ins_d:,.0f}'])
+            tdata.append(['勞健保扣除（10號發薪）', '', '', f'-{ins_d:,.0f}'])
         tdata.append(['本期實領金額', '', '', f'{data["final_salary"]:,.0f}'])
 
-        subtotal_row = 1 + n_fields
+        subtotal_row  = 1 + n_fields
         retention_row = subtotal_row + 1
-        extra = 1 if ins_d > 0 else 0
-        ins_row = retention_row + 1 if ins_d > 0 else None
+        extra = (1 if fixed_s > 0 else 0) + (1 if ins_d > 0 else 0)
+        fixed_row = retention_row + 1 if fixed_s > 0 else None
+        ins_row = (retention_row + (2 if fixed_s > 0 else 1)) if ins_d > 0 else None
         net_row = retention_row + 1 + extra
 
         ts_cmds = [
@@ -1832,6 +1887,11 @@ def _export_salary_pdf(results):
             ('TEXTCOLOR',  (0, net_row), (-1, net_row), C_DGREEN),
             ('FONTNAME',   (0, net_row), (-1, net_row), font_name),
         ]
+        if fixed_row:
+            ts_cmds += [
+                ('BACKGROUND', (0, fixed_row), (-1, fixed_row), colors.HexColor('#E8F5E9')),
+                ('TEXTCOLOR',  (0, fixed_row), (-1, fixed_row), colors.HexColor('#2E7D32')),
+            ]
         if ins_row:
             ts_cmds += [
                 ('BACKGROUND', (0, ins_row), (-1, ins_row), colors.HexColor('#FDECEA')),
@@ -1874,8 +1934,10 @@ def _export_salary_pdf(results):
         ['計薪小計（稅前）合計', f'{results["grand_gross"]:,.0f}'],
         ['保留金合計（扣除）',   f'-{results["grand_period_retention"]:,.0f}'],
     ]
+    if results.get('grand_fixed', 0) > 0:
+        sdata.append(['固定薪資合計（10號發薪）', f'+{results["grand_fixed"]:,.0f}'])
     if results.get('grand_insurance', 0) > 0:
-        sdata.append(['勞健保扣除合計', f'-{results["grand_insurance"]:,.0f}'])
+        sdata.append(['勞健保扣除合計（10號發薪）', f'-{results["grand_insurance"]:,.0f}'])
     if results.get('grand_tax', 0) > 0:
         sdata.append([f'稅務支出合計（{results.get("tax_rate",5)}%）', f'-{results["grand_tax"]:,.0f}'])
     sdata += [
@@ -2093,8 +2155,7 @@ def _export_salary_transfer_doc(results):
     if is_25th:
         raw = date(ed.year, ed.month, 25)
     else:
-        y, m = (ed.year + 1, 1) if ed.month == 12 else (ed.year, ed.month + 1)
-        raw = date(y, m, 10)
+        raw = date(ed.year, ed.month, 10)
     payday = _next_workday(raw)
 
     # ── TRANSFER entries ──────────────────────────────────────────────────────

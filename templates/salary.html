@@ -187,10 +187,18 @@
                 </td>
                 <td class="text-end text-warning">－ {{ data.period_retention | money }} NTD</td>
               </tr>
+              {% if data.fixed_salary > 0 %}
+              <tr class="fw-semibold" style="background:#e8f5e9">
+                <td colspan="3">
+                  <i class="bi bi-cash-coin me-1 text-success"></i>固定薪資（10號發薪）
+                </td>
+                <td class="text-end text-success">＋ {{ data.fixed_salary | money }} NTD</td>
+              </tr>
+              {% endif %}
               {% if data.insurance_deduction > 0 %}
               <tr class="fw-semibold" style="background:#fdecea">
                 <td colspan="3">
-                  <i class="bi bi-shield-check me-1 text-danger"></i>勞健保扣除
+                  <i class="bi bi-shield-check me-1 text-danger"></i>勞健保扣除（10號發薪）
                 </td>
                 <td class="text-end text-danger">－ {{ data.insurance_deduction | money }} NTD</td>
               </tr>
@@ -297,10 +305,16 @@
           <i class="bi bi-piggy-bank me-1 text-warning"></i>
           本期保留金合計（扣除）：－ {{ salary_results.grand_period_retention | money }} NTD
         </div>
+        {% if salary_results.grand_fixed > 0 %}
+        <div class="alert mb-1 py-2 fw-semibold" style="background:#e8f5e9;border-color:#a5d6a7">
+          <i class="bi bi-cash-coin me-1 text-success"></i>
+          固定薪資合計（10號發薪）：＋ {{ salary_results.grand_fixed | money }} NTD
+        </div>
+        {% endif %}
         {% if salary_results.grand_insurance > 0 %}
         <div class="alert mb-1 py-2 fw-semibold" style="background:#fdecea;border-color:#ef9a9a">
           <i class="bi bi-shield-check me-1 text-danger"></i>
-          勞健保扣除合計：－ {{ salary_results.grand_insurance | money }} NTD
+          勞健保扣除合計（10號發薪）：－ {{ salary_results.grand_insurance | money }} NTD
         </div>
         {% endif %}
         {% if salary_results.grand_tax > 0 %}

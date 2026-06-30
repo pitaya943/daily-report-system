@@ -20,6 +20,7 @@ class User(UserMixin, db.Model):
     tax_exempt          = db.Column(db.Boolean,   nullable=False, default=False)       # if True and not enrolled, skip tax deduction
     retention_offset    = db.Column(db.Integer,   nullable=False, default=0)           # ADMIN adjustment to YTD retention
     bank_account        = db.Column(db.String(14), nullable=True,  default=None)        # 14 digits: 3-digit branch + 11-digit account
+    fixed_salary        = db.Column(db.Integer,   nullable=False, default=0)           # fixed monthly salary paid on 10th payday
 
     @property
     def username(self):

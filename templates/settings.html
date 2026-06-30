@@ -136,6 +136,7 @@
           <thead>
             <tr>
               <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>銀行帳號</th><th>投保狀態</th>
+              <th class="text-end">固定薪資/月</th>
               <th class="text-end">今年累積保留金</th>
               <th>狀態</th><th>建立時間</th><th>操作</th>
             </tr>
@@ -181,6 +182,13 @@
                 {% endif %}
               </td>
               <td class="text-end" style="font-size:.82rem">
+                {% if u.fixed_salary > 0 %}
+                  <span class="text-success fw-semibold">{{ u.fixed_salary | money }}</span>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="text-end" style="font-size:.82rem">
                 {% set ytd = ytd_by_user.get(u.id, 0) %}
                 <span class="{% if ytd > 0 %}text-warning fw-semibold{% else %}text-muted{% endif %}">
                   {{ ytd | money }}
@@ -209,6 +217,11 @@
                         onclick="openBankAccount({{ u.id }}, '{{ u.display_name|e }}', '{{ u.bank_account or '' }}')"
                         title="設定銀行帳號">
                   <i class="bi bi-bank2"></i>
+                </button>
+                <button class="btn btn-outline-success btn-sm py-0 px-2 ms-1"
+                        onclick="openFixedSalary({{ u.id }}, '{{ u.display_name|e }}', {{ u.fixed_salary }})"
+                        title="設定固定薪資">
+                  <i class="bi bi-cash-coin"></i>
                 </button>
                 <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
                         onclick="openInsurance({{ u.id }}, '{{ u.display_name|e }}', {{ u.insurance_deduction }}, {{ 'true' if u.tax_exempt else 'false' }})"
@@ -606,7 +619,7 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <form id="paymentForm" method="POST"
-            onsubmit="return confirm('確定修改發薪方式？')">
+            onsubmit="return submitPaymentForm()">
         <div class="modal-body">
           <p class="small mb-2">帳戶：<strong id="paymentUsername"></strong></p>
           <small id="paymentBankNotice" class="d-block mb-3"></small>
@@ -667,6 +680,35 @@
           </div>
         </form>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Fixed Salary Modal -->
+<div class="modal fade" id="fixedSalaryModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title"><i class="bi bi-cash-coin me-2"></i>固定薪資設定</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="fixedSalaryForm" method="POST"
+            onsubmit="return confirm('確定更新固定薪資？')">
+        <div class="modal-body">
+          <p class="small mb-2">帳戶：<strong id="fixedSalaryUsername"></strong></p>
+          <p class="small text-muted mb-3">固定薪資於每期 <strong>10 號發薪</strong>時加入，預設為 0（不啟用）。</p>
+          <label class="form-label small mb-1">固定薪資（NTD / 月）</label>
+          <div class="input-group input-group-sm">
+            <input type="number" name="fixed_salary" id="fixedSalaryAmount"
+                   class="form-control" min="0" step="1" value="0">
+            <span class="input-group-text">NTD</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-success btn-sm">儲存</button>
+        </div>
+      </form>
     </div>
   </div>
 </div>
@@ -818,11 +860,21 @@ function openInsurance(id, name, amount, taxExempt) {
     document.getElementById('insTypeTaxed').checked = true;
   }
   toggleInsType();
-  new bootstrap.Modal(document.getElementById('insuranceModal')).show();
+  var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('insuranceModal'));
+  modal.show();
 }
 function toggleInsType() {
   const show = document.getElementById('insTypeInsured').checked;
   document.getElementById('insuranceAmountGroup').style.display = show ? '' : 'none';
+  // Disable the amount input when not shown so HTML5 validation skips it
+  document.getElementById('insuranceAmount').disabled = !show;
+}
+function openFixedSalary(id, name, amount) {
+  document.getElementById('fixedSalaryUsername').textContent = name;
+  document.getElementById('fixedSalaryForm').action = '/settings/users/' + id + '/fixed-salary';
+  document.getElementById('fixedSalaryAmount').value = amount;
+  var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('fixedSalaryModal'));
+  modal.show();
 }
 function openEditName(id, name) {
   document.getElementById('editNameForm').action = `/settings/users/${id}/display-name`;
@@ -839,7 +891,9 @@ function openDelete(id, name) {
   document.getElementById('deleteUsername').textContent = name;
   new bootstrap.Modal(document.getElementById('deleteUserModal')).show();
 }
+var _pmUserId = null, _pmBankAcct = null, _pmUserName = null;
 function openPayment(id, name, current, bankAcct) {
+  _pmUserId = id; _pmBankAcct = bankAcct; _pmUserName = name;
   document.getElementById('paymentForm').action = `/settings/users/${id}/payment-method`;
   document.getElementById('paymentUsername').textContent = name;
   document.getElementById('paymentSelect').value = current;
@@ -847,9 +901,18 @@ function openPayment(id, name, current, bankAcct) {
   if (bankAcct) {
     notice.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>銀行帳號已設定：' + bankAcct.substring(0,3) + '-' + bankAcct.substring(3) + '</span>';
   } else {
-    notice.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>尚未設定銀行帳號，選擇轉帳將被拒絕</span>';
+    notice.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>尚未設定銀行帳號，選擇轉帳將直接開啟帳號設定視窗</span>';
   }
-  new bootstrap.Modal(document.getElementById('paymentModal')).show();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('paymentModal')).show();
+}
+function submitPaymentForm() {
+  const method = document.getElementById('paymentSelect').value;
+  if (method === 'TRANSFER' && !_pmBankAcct) {
+    bootstrap.Modal.getInstance(document.getElementById('paymentModal')).hide();
+    setTimeout(function(){ openBankAccount(_pmUserId, _pmUserName, ''); }, 350);
+    return false;
+  }
+  return confirm('確定修改發薪方式？');
 }
 function openRetention(id, name, current) {
   const url = `/settings/users/${id}/set-retention`;
