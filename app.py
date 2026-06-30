@@ -61,8 +61,13 @@ limiter = Limiter(
 )
 
 # SEC-007: Bank account encryption (Fernet symmetric key)
-_BANK_KEY_STR = os.environ.get('BANK_ENCRYPT_KEY', '')
-_fernet: Fernet | None = Fernet(_BANK_KEY_STR.encode()) if _BANK_KEY_STR else None
+_BANK_KEY_STR = os.environ.get('BANK_ENCRYPT_KEY', '').strip()
+try:
+    _fernet = Fernet(_BANK_KEY_STR.encode()) if _BANK_KEY_STR else None
+except Exception:
+    import logging as _log_init
+    _log_init.warning('BANK_ENCRYPT_KEY invalid or malformed — bank encryption disabled')
+    _fernet = None
 
 
 def encrypt_bank(acct: str) -> str:
