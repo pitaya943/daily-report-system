@@ -1927,10 +1927,157 @@ def _export_salary_transfer_doc(results):
         flash('缺少 python-docx 套件，無法匯出薪轉單', 'danger')
         return redirect(url_for('salary'))
 
-    # ── helpers ──────────────────────────────────────────────────────────────
+    FONT_CJK = '標楷體'
+    FONT_LAT = 'Times New Roman'
+    GREY     = 'D9D9D9'
+
+    # ── font helpers ──────────────────────────────────────────────────────────
+    def _font(run, pt, bold=False, underline=False):
+        run.font.size      = Pt(pt)
+        run.font.bold      = bold
+        run.font.underline = underline
+        rPr    = run._r.get_or_add_rPr()
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            rFonts = OxmlElement('w:rFonts'); rPr.insert(0, rFonts)
+        rFonts.set(qn('w:ascii'),    FONT_LAT)
+        rFonts.set(qn('w:hAnsi'),   FONT_LAT)
+        rFonts.set(qn('w:eastAsia'), FONT_CJK)
+        rFonts.set(qn('w:cs'),      FONT_CJK)
+
+    def _font_kai(run, pt, bold=False, underline=False):
+        run.font.size      = Pt(pt)
+        run.font.bold      = bold
+        run.font.underline = underline
+        rPr    = run._r.get_or_add_rPr()
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            rFonts = OxmlElement('w:rFonts'); rPr.insert(0, rFonts)
+        for attr in ('w:ascii', 'w:hAnsi', 'w:eastAsia', 'w:cs'):
+            rFonts.set(qn(attr), FONT_CJK)
+
+    # ── cell/table helpers ────────────────────────────────────────────────────
+    def _shd(cell, hex_fill):
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:val'),   'clear')
+        shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'),  hex_fill)
+        tcPr.append(shd)
+
+    def _row_height(row, cm, exact=True):
+        trPr = row._tr.get_or_add_trPr()
+        h    = OxmlElement('w:trHeight')
+        h.set(qn('w:val'),   str(int(cm * 567)))
+        h.set(qn('w:hRule'), 'exact' if exact else 'atLeast')
+        trPr.append(h)
+
+    def _para_fmt(para, align=WD_ALIGN_PARAGRAPH.LEFT, before=0, after=0):
+        para.alignment = align
+        para.paragraph_format.space_before = Pt(before)
+        para.paragraph_format.space_after  = Pt(after)
+
+    def _cell_text(cell, text, pt, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT,
+                   underline=False, kai=False):
+        for extra in cell.paragraphs[1:]:
+            extra._p.getparent().remove(extra._p)
+        para = cell.paragraphs[0]
+        for r in para._p.findall(qn('w:r')):
+            para._p.remove(r)
+        _para_fmt(para, align)
+        run = para.add_run(text)
+        (_font_kai if kai else _font)(run, pt=pt, bold=bold, underline=underline)
+        return run
+
+    def _tbl_borders(table, top=True, bottom=True, outer_sz=12, inner_sz=4):
+        tbl   = table._tbl
+        tblPr = tbl.find(qn('w:tblPr'))
+        if tblPr is None:
+            tblPr = OxmlElement('w:tblPr'); tbl.insert(0, tblPr)
+        old = tblPr.find(qn('w:tblBorders'))
+        if old is not None:
+            tblPr.remove(old)
+        tblBdr = OxmlElement('w:tblBorders')
+        tblPr.append(tblBdr)
+        for side, draw in [('top', top), ('bottom', bottom),
+                            ('left', True), ('right', True),
+                            ('insideH', True), ('insideV', True)]:
+            e        = OxmlElement(f'w:{side}')
+            is_outer = side in ('top', 'bottom', 'left', 'right')
+            if draw:
+                e.set(qn('w:val'),   'single')
+                e.set(qn('w:sz'),    str(outer_sz if is_outer else inner_sz))
+                e.set(qn('w:color'), '000000')
+            else:
+                e.set(qn('w:val'),   'none')
+                e.set(qn('w:sz'),    '0')
+                e.set(qn('w:color'), 'auto')
+            tblBdr.append(e)
+
+    def _cell_btm_border(cell, sz=4):
+        tcPr  = cell._tc.get_or_add_tcPr()
+        tcBdr = tcPr.find(qn('w:tcBdr'))
+        if tcBdr is None:
+            tcBdr = OxmlElement('w:tcBdr'); tcPr.append(tcBdr)
+        btm = OxmlElement('w:bottom')
+        btm.set(qn('w:val'),   'single')
+        btm.set(qn('w:sz'),    str(sz))
+        btm.set(qn('w:color'), '000000')
+        tcBdr.append(btm)
+
+    def _set_table_widths(table, widths_cm):
+        tbl   = table._tbl
+        tblPr = tbl.find(qn('w:tblPr'))
+        if tblPr is None:
+            tblPr = OxmlElement('w:tblPr'); tbl.insert(0, tblPr)
+        tblLayout = OxmlElement('w:tblLayout')
+        tblLayout.set(qn('w:type'), 'fixed')
+        tblPr.append(tblLayout)
+        total = int(sum(w * 567 for w in widths_cm))
+        tblW  = tblPr.find(qn('w:tblW'))
+        if tblW is None:
+            tblW = OxmlElement('w:tblW'); tblPr.append(tblW)
+        tblW.set(qn('w:w'), str(total)); tblW.set(qn('w:type'), 'dxa')
+        old = tbl.find(qn('w:tblGrid'))
+        if old is not None:
+            tbl.remove(old)
+        tblGrid = OxmlElement('w:tblGrid')
+        tbl.insert(list(tbl).index(tblPr) + 1, tblGrid)
+        for w in widths_cm:
+            gc = OxmlElement('w:gridCol'); gc.set(qn('w:w'), str(int(w * 567))); tblGrid.append(gc)
+        for row in table.rows:
+            col = 0
+            for tc in row._tr.findall(qn('w:tc')):
+                if col >= len(widths_cm): break
+                tcPr = tc.find(qn('w:tcPr'))
+                if tcPr is None: tcPr = OxmlElement('w:tcPr'); tc.insert(0, tcPr)
+                gs   = tcPr.find(qn('w:gridSpan'))
+                span = int(gs.get(qn('w:val'), 1)) if gs is not None else 1
+                w_sum = sum(widths_cm[col:col + span]) if col + span <= len(widths_cm) else widths_cm[col]
+                tcW = tcPr.find(qn('w:tcW'))
+                if tcW is None: tcW = OxmlElement('w:tcW'); tcPr.append(tcW)
+                tcW.set(qn('w:w'), str(int(w_sum * 567))); tcW.set(qn('w:type'), 'dxa')
+                col += span
+
+    def _blank_run(para, value_str, width):
+        padded = value_str.center(width) if len(value_str) < width else value_str
+        run = para.add_run(padded)
+        _font(run, pt=12, underline=True)
+
+    def _add_tab(para, pos_cm):
+        pPr  = para._p.get_or_add_pPr()
+        tabs = pPr.find(qn('w:tabs'))
+        if tabs is None:
+            tabs = OxmlElement('w:tabs'); pPr.append(tabs)
+        tab = OxmlElement('w:tab')
+        tab.set(qn('w:val'), 'left')
+        tab.set(qn('w:pos'), str(int(pos_cm * 567)))
+        tabs.append(tab)
+
+    # ── business helpers ──────────────────────────────────────────────────────
     def _next_workday(d):
-        if d.weekday() == 5: return d + timedelta(days=2)   # Sat→Mon
-        if d.weekday() == 6: return d + timedelta(days=1)   # Sun→Mon
+        if d.weekday() == 5: return d + timedelta(days=2)
+        if d.weekday() == 6: return d + timedelta(days=1)
         return d
 
     def _roc(d):
@@ -1939,43 +2086,6 @@ def _export_salary_transfer_doc(results):
     def _fmt_acct(a):
         if not a or len(a) != 14: return a or '（未設定）'
         return f"{a[:4]}-{a[4:7]}-{a[7:]}"
-
-    def _fmt_amt(v):
-        return f"{int(round(v)):,}"
-
-    def _shd(cell, hex_fill):
-        tcPr = cell._tc.get_or_add_tcPr()
-        shd = OxmlElement('w:shd')
-        shd.set(qn('w:val'), 'clear')
-        shd.set(qn('w:color'), 'auto')
-        shd.set(qn('w:fill'), hex_fill)
-        tcPr.append(shd)
-
-    def _row_height(row, cm, exact=True):
-        trPr = row._tr.get_or_add_trPr()
-        h = OxmlElement('w:trHeight')
-        h.set(qn('w:val'), str(int(cm * 567)))
-        h.set(qn('w:hRule'), 'exact' if exact else 'atLeast')
-        trPr.append(h)
-
-    def _cell_text(cell, text, bold=False, pt=10, align=WD_ALIGN_PARAGRAPH.LEFT):
-        """Set cell text, clearing any existing runs first."""
-        para = cell.paragraphs[0]
-        para.alignment = align
-        para.paragraph_format.space_before = Pt(0)
-        para.paragraph_format.space_after = Pt(0)
-        for r in list(para.runs):
-            r._r.getparent().remove(r._r)
-        run = para.add_run(text)
-        run.font.size = Pt(pt)
-        run.font.bold = bold
-        return run
-
-    def _set_col_widths(table, widths_cm):
-        for row in table.rows:
-            for i, cell in enumerate(row.cells):
-                if i < len(widths_cm):
-                    cell.width = Cm(widths_cm[i])
 
     # ── payday date ───────────────────────────────────────────────────────────
     ed = date.fromisoformat(results['end_date'])
@@ -1987,14 +2097,14 @@ def _export_salary_transfer_doc(results):
         raw = date(y, m, 10)
     payday = _next_workday(raw)
 
-    # ── TRANSFER entries (sorted by sequence in user_data) ────────────────────
+    # ── TRANSFER entries ──────────────────────────────────────────────────────
     entries = [
         (_fmt_acct(d.get('bank_account', '')), int(round(d['final_salary'])))
         for d in results['user_data'].values()
         if d['payment_method'] == 'TRANSFER' and d['final_salary'] > 0
     ]
-    total_amt  = sum(a for _, a in entries)
-    total_n    = len(entries)
+    total_amt = sum(a for _, a in entries)
+    total_n   = len(entries)
 
     # ── company constants ─────────────────────────────────────────────────────
     CO_NAME = '宇丞工程有限公司'
@@ -2013,131 +2123,172 @@ def _export_salary_transfer_doc(results):
     sec.top_margin    = Cm(1.5)
     sec.bottom_margin = Cm(1.5)
 
-    normal = doc.styles['Normal']
-    normal.paragraph_format.space_before = Pt(0)
-    normal.paragraph_format.space_after  = Pt(2)
+    try:
+        st  = doc.styles['Normal']
+        rPr = st._element.get_or_add_rPr()
+        rF  = rPr.find(qn('w:rFonts'))
+        if rF is None:
+            rF = OxmlElement('w:rFonts'); rPr.insert(0, rF)
+        rF.set(qn('w:ascii'),    FONT_LAT)
+        rF.set(qn('w:hAnsi'),   FONT_LAT)
+        rF.set(qn('w:eastAsia'), FONT_CJK)
+        rF.set(qn('w:cs'),      FONT_CJK)
+        st.paragraph_format.space_before = Pt(0)
+        st.paragraph_format.space_after  = Pt(0)
+    except Exception:
+        pass
 
     # ── Title ─────────────────────────────────────────────────────────────────
     p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_after = Pt(0)
-    run = p.add_run('薪資轉帳送件單')
-    run.font.size = Pt(18)
-    run.font.bold = True
+    _para_fmt(p, WD_ALIGN_PARAGRAPH.CENTER, after=4)
+    _font(p.add_run('薪資轉帳送件單'), pt=20, bold=False)
 
-    # Date line (right-aligned)
+    # ── Date line ─────────────────────────────────────────────────────────────
     p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(4)
-    p.add_run(f"{_roc(payday)}（第 1 頁/共 1 頁）").font.size = Pt(10)
+    _para_fmt(p, WD_ALIGN_PARAGRAPH.RIGHT, after=2)
+    _font(p.add_run(f'{_roc(payday)}（第 1 頁/共 1 頁）'), pt=12)
 
-    # ── 委託人資訊 table ───────────────────────────────────────────────────────
-    t_info = doc.add_table(rows=2, cols=4)
-    t_info.style = 'Table Grid'
-    _set_col_widths(t_info, [2.8, 5.5, 3.0, 6.1])
-    GREY = 'D9D9D9'
-    rows_data = [
-        [('委託人名稱', True), (CO_NAME, False), ('轉帳帳號', True), (CO_ACCT, False)],
-        [('委託人 ID', True),  (CO_ID, False),   ('聯絡人/電話', True), (CO_TEL, False)],
-    ]
-    for ri, row_data in enumerate(rows_data):
-        for ci, (text, is_hdr) in enumerate(row_data):
-            cell = t_info.cell(ri, ci)
-            _cell_text(cell, text, bold=is_hdr, pt=10, align=WD_ALIGN_PARAGRAPH.CENTER)
-            if is_hdr:
-                _shd(cell, GREY)
+    # ── TABLE_1: info + summary + 此致 + 銀行 + 轉帳明細表 (4 cols) ────────────
+    T1_W = [3.0, 5.7, 3.0, 5.7]
+    t1   = doc.add_table(rows=4, cols=4)
 
-    # ── Summary paragraph ──────────────────────────────────────────────────────
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(8)
-    p.paragraph_format.space_after  = Pt(2)
-    p.add_run(
-        f'本次員工薪資轉帳共　{total_n}　筆，金額共計 {_fmt_amt(total_amt)} 元，'
-        f'請由上列「轉帳帳號」轉入明細表之各受領人帳戶，'
-        f'隨件附送檔案　　　份及電腦印列明細表　　　頁，請惠予辦理。'
-    ).font.size = Pt(10)
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(0)
-    p.add_run('此　　　致').font.size = Pt(10)
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(4)
-    p.add_run(f'{BANK}　台照').font.size = Pt(10)
+    for ci, text in enumerate(['委託人名稱', CO_NAME, '轉帳帳號', CO_ACCT]):
+        _cell_text(t1.cell(0, ci), text, pt=14, align=WD_ALIGN_PARAGRAPH.CENTER)
+    for ci, text in enumerate(['委託人 ID', CO_ID, '聯絡人/電話', CO_TEL]):
+        _cell_text(t1.cell(1, ci), text, pt=14, align=WD_ALIGN_PARAGRAPH.CENTER)
 
-    # ── 轉帳明細表 label ───────────────────────────────────────────────────────
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(2)
-    p.paragraph_format.space_after  = Pt(2)
-    run = p.add_run('轉帳明細表')
-    run.font.size = Pt(11)
-    run.font.bold = True
+    # Row 2: merged full-width — summary + 此致 + 板信商業銀行
+    t1.cell(2, 0).merge(t1.cell(2, 3))
+    cell = t1.cell(2, 0)
+    for extra in cell.paragraphs[1:]:
+        extra._p.getparent().remove(extra._p)
+    p0 = cell.paragraphs[0]
+    _para_fmt(p0, before=3, after=0)
+    n_str   = str(total_n)
+    amt_str = f'{total_amt:,}'
+    _font(p0.add_run('本次員工薪資轉帳共'), pt=12)
+    _blank_run(p0, n_str, 8)
+    _font(p0.add_run('筆，金額共計'), pt=12)
+    _blank_run(p0, amt_str, 9)
+    _font(p0.add_run('元，請由上列「轉帳帳號」轉入明細表之各受領人帳戶，隨件附送'), pt=12)
+    _font(p0.add_run('檔案'), pt=12, bold=True, underline=True)
+    _font(p0.add_run('＿＿份及電腦印列明細表_______頁，請惠予辦理。'), pt=12)
+    p1 = cell.add_paragraph()
+    _para_fmt(p1, before=2, after=0)
+    _font(p1.add_run('此　　　致'), pt=12)
+    p2 = cell.add_paragraph()
+    _para_fmt(p2, before=0, after=3)
+    _font(p2.add_run(BANK), pt=14)
+    _font(p2.add_run('　台照'), pt=12)
 
-    # ── Transfer detail table ──────────────────────────────────────────────────
-    # 6 cols: 序號|帳號|金額  ×2 (left=entries 1-15, right=entries 16-30)
+    # Row 3: 轉帳明細表 — gray bg
+    t1.cell(3, 0).merge(t1.cell(3, 3))
+    cell = t1.cell(3, 0)
+    _cell_text(cell, '轉帳明細表', pt=14, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _shd(cell, GREY)
+
+    _tbl_borders(t1, bottom=False)
+    _cell_btm_border(t1.cell(3, 0), sz=4)
+    _set_table_widths(t1, T1_W)
+
+    # ── TABLE_2: detail + signature rows (6 cols) ─────────────────────────────
     NROWS = 15
-    t2 = doc.add_table(rows=1 + NROWS + 1, cols=6)
-    t2.style = 'Table Grid'
-    COL_W = [1.0, 4.8, 2.6, 1.0, 4.8, 2.6]   # total 16.8 cm
-    _set_col_widths(t2, COL_W)
+    T2_W  = [1.2, 5.0, 2.5, 1.2, 5.0, 2.5]
+    t2    = doc.add_table(rows=1 + NROWS + 2, cols=6)
 
-    # Header row
-    for ci, hdr in enumerate(['序號', '帳號', '金額', '序號', '帳號', '金額']):
-        cell = t2.cell(0, ci)
-        _cell_text(cell, hdr, bold=True, pt=10, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _shd(cell, GREY)
-    _row_height(t2.rows[0], 0.75)
+    # Header (all white)
+    for ci, (lbl, pt) in enumerate(
+        zip(['序號', '帳號', '金額', '序號', '帳號', '金額'],
+            [10, 14, 14, 10, 14, 14])
+    ):
+        _cell_text(t2.cell(0, ci), lbl, pt=pt, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _row_height(t2.rows[0], 0.8)
 
     # Data rows
     for r in range(NROWS):
-        li = r           # left column entry index  (seq 1-15)
-        ri_ = r + NROWS  # right column entry index (seq 16-30)
+        li   = r
+        ri_  = r + NROWS
         cells = t2.row_cells(1 + r)
-        _row_height(t2.rows[1 + r], 0.72)
-
-        # Sequence numbers always show
-        _cell_text(cells[0], str(li + 1),  pt=9, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _cell_text(cells[3], str(ri_ + 1), pt=9, align=WD_ALIGN_PARAGRAPH.CENTER)
-
+        _row_height(t2.rows[1 + r], 0.8)
+        _cell_text(cells[0], str(li  + 1), pt=12, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _cell_text(cells[3], str(ri_ + 1), pt=12, align=WD_ALIGN_PARAGRAPH.CENTER)
         if li < len(entries):
             acct, amt = entries[li]
-            _cell_text(cells[1], acct,         pt=9)
-            _cell_text(cells[2], _fmt_amt(amt), pt=9, align=WD_ALIGN_PARAGRAPH.RIGHT)
+            _cell_text(cells[1], acct,           pt=13, kai=True)
+            _cell_text(cells[2], f'{amt:,.2f}',  pt=13, align=WD_ALIGN_PARAGRAPH.RIGHT, kai=True)
         if ri_ < len(entries):
             acct, amt = entries[ri_]
-            _cell_text(cells[4], acct,         pt=9)
-            _cell_text(cells[5], _fmt_amt(amt), pt=9, align=WD_ALIGN_PARAGRAPH.RIGHT)
+            _cell_text(cells[4], acct,           pt=13, kai=True)
+            _cell_text(cells[5], f'{amt:,.2f}',  pt=13, align=WD_ALIGN_PARAGRAPH.RIGHT, kai=True)
 
-    # Footer row: 3 merged cells for signatures
+    # Signature label row (gray)
     fr = NROWS + 1
     t2.cell(fr, 0).merge(t2.cell(fr, 1))
     t2.cell(fr, 2).merge(t2.cell(fr, 3))
     t2.cell(fr, 4).merge(t2.cell(fr, 5))
-    _row_height(t2.rows[fr], 2.5, exact=False)
-    for ci, label in [(0, '受託人簽收'), (2, '異動名單'), (4, '委託人(存戶)簽章')]:
-        _cell_text(t2.cell(fr, ci), label, bold=True, pt=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _row_height(t2.rows[fr], 0.8)
+    for ci, lbl in [(0, '受託人簽收'), (2, '異動名單'), (4, '委託人(存戶)簽章')]:
+        _cell_text(t2.cell(fr, ci), lbl, pt=12, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _shd(t2.cell(fr, ci), GREY)
+
+    # Blank signature row
+    fb = fr + 1
+    t2.cell(fb, 0).merge(t2.cell(fb, 1))
+    t2.cell(fb, 2).merge(t2.cell(fb, 3))
+    t2.cell(fb, 4).merge(t2.cell(fb, 5))
+    _row_height(t2.rows[fb], 2.0, exact=True)
+    for ci in (0, 2, 4):
+        _cell_text(t2.cell(fb, ci), '', pt=12)
+
+    _tbl_borders(t2, top=False)
+    _set_table_widths(t2, T2_W)
+
+    # Remove auto-paragraph between t1 and t2
+    body  = doc.element.body
+    elems = list(body)
+    mid   = elems[elems.index(t1._tbl) + 1]
+    if mid is not t2._tbl:
+        body.remove(mid)
 
     # ── Notes ─────────────────────────────────────────────────────────────────
+    INDENT = Cm(1.5)
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(8)
-    p.paragraph_format.space_after  = Pt(0)
-    p.add_run('備註：1.本送件單由委託人填具乙式兩份，乙份交受託人依約定辦理，乙份由受託人簽章後交委託人存查（含檔案、明細表等文件）。').font.size = Pt(9)
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(6)
-    p.add_run('　　　　　　2.若有人員異動時，請於異動名單欄註明員工姓名及帳號。').font.size = Pt(9)
+    p.paragraph_format.space_before      = Pt(6)
+    p.paragraph_format.space_after       = Pt(0)
+    p.paragraph_format.left_indent       = INDENT
+    p.paragraph_format.first_line_indent = -INDENT
+    _font(p.add_run('備註：1.本送件單由委託人填具乙式兩份，乙份交受託人依約定辦理，'
+                    '乙份由受託人簽章後交委託人存查'), pt=12)
+    _font(p.add_run('（含檔案、明細表等文件）'), pt=12, bold=True, underline=True)
+    _font(p.add_run('。'), pt=12)
 
-    # Bottom administrative line
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(0)
-    p.add_run('編號：SA2013　114.01.13\t\t主管：　　　　　　　　經辦：　　　　　　　　驗印：').font.size = Pt(9)
+    p.paragraph_format.space_before      = Pt(0)
+    p.paragraph_format.space_after       = Pt(6)
+    p.paragraph_format.left_indent       = INDENT
+    p.paragraph_format.first_line_indent = Pt(0)
+    _font(p.add_run('2.若有人員異動時，請於異動名單欄註明員工姓名及帳號。'), pt=12)
+
+    # ── Bottom admin lines ─────────────────────────────────────────────────────
+    TAB1, TAB2, TAB3 = 5.5, 10.5, 14.5
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after  = Pt(0)
-    p.add_run('保存期限：七年\t\t批號：').font.size = Pt(9)
+    _para_fmt(p)
+    _add_tab(p, TAB1); _add_tab(p, TAB2); _add_tab(p, TAB3)
+    _font(p.add_run('編號：SA2013　114.01.13'), pt=10)
+    p.add_run('\t')
+    _font(p.add_run('主管：　　　　　　　　'), pt=12)
+    p.add_run('\t')
+    _font(p.add_run('經辦：　　　　　　　　'), pt=12)
+    p.add_run('\t')
+    _font(p.add_run('驗印：'), pt=12)
+
+    p = doc.add_paragraph()
+    _para_fmt(p)
+    _add_tab(p, TAB1); _add_tab(p, TAB2)
+    _font(p.add_run('保存期限：七年'), pt=10)
+    p.add_run('\t')
+    p.add_run('\t')
+    _font(p.add_run('批號：'), pt=12)
 
     # ── export ────────────────────────────────────────────────────────────────
     buf = io.BytesIO()
