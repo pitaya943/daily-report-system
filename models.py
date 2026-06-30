@@ -29,6 +29,11 @@ class User(UserMixin, db.Model):
 
 class Report(db.Model):
     __tablename__ = 'reports'
+    __table_args__ = (
+        db.Index('ix_reports_user_date',       'user_id', 'report_date'),
+        db.Index('ix_reports_date_confirmed',  'report_date', 'is_confirmed'),
+        db.Index('ix_reports_user_confirmed',  'user_id', 'is_confirmed'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     report_date = db.Column(db.Date, nullable=False)
@@ -74,6 +79,10 @@ class Material(db.Model):
 
 class MaterialRequest(db.Model):
     __tablename__ = 'material_requests'
+    __table_args__ = (
+        db.Index('ix_mat_req_user_id', 'user_id'),
+        db.Index('ix_mat_req_status',  'status'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     material_id = db.Column(db.Integer, db.ForeignKey('materials.id'), nullable=False)
@@ -92,6 +101,11 @@ class SystemConfig(db.Model):
 
 class AuditLog(db.Model):
     __tablename__ = 'audit_logs'
+    __table_args__ = (
+        db.Index('ix_audit_logs_created_at',  'created_at'),
+        db.Index('ix_audit_logs_user_id',     'user_id'),
+        db.Index('ix_audit_logs_action_type', 'action_type'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     action_type = db.Column(db.String(50), nullable=False)

@@ -109,6 +109,25 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # DB indexes (idempotent — CREATE INDEX IF NOT EXISTS)
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text as _text
+            _idxs = [
+                "CREATE INDEX IF NOT EXISTS ix_reports_user_date ON reports (user_id, report_date)",
+                "CREATE INDEX IF NOT EXISTS ix_reports_date_confirmed ON reports (report_date, is_confirmed)",
+                "CREATE INDEX IF NOT EXISTS ix_reports_user_confirmed ON reports (user_id, is_confirmed)",
+                "CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs (created_at)",
+                "CREATE INDEX IF NOT EXISTS ix_audit_logs_user_id ON audit_logs (user_id)",
+                "CREATE INDEX IF NOT EXISTS ix_audit_logs_action_type ON audit_logs (action_type)",
+                "CREATE INDEX IF NOT EXISTS ix_mat_req_user_id ON material_requests (user_id)",
+                "CREATE INDEX IF NOT EXISTS ix_mat_req_status ON material_requests (status)",
+            ]
+            for _sql in _idxs:
+                conn.execute(_text(_sql))
+            conn.commit()
+    except Exception:
+        pass
     # Seed / correct default SystemConfig entries
     try:
         for _key, _default in [('retention_rate', '20'), ('tax_rate', '3')]:
