@@ -152,8 +152,8 @@ with app.app_context():
         fixed_salary=0,
         bank_account='10299999999999',
         retention_offset=0,
-        created_at=datetime(2025, 1, 1),
-        updated_at=datetime(2025, 1, 1),
+        created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 1),
     )
     db.session.add(root)
     db.session.flush()
@@ -190,7 +190,7 @@ with app.app_context():
     users = []
     for i, (ins, tex, pm, has_bank, fixed, active, offset) in enumerate(user_configs, start=1):
         bank = fmt_bank(i) if has_bank else None
-        created = datetime(2025, random.randint(1, 3), random.randint(1, 28))
+        created = datetime(2026, random.randint(1, 3), random.randint(1, 28))
         u = User(
             display_name=f'測試用戶{i}',
             password_hash=generate_password_hash(f'user{i:02d}pass'),
@@ -232,8 +232,8 @@ with app.app_context():
 
     # ── Reports（40 筆/人，分散 5/1~6/30）─────────────────────────────────
     print("▶ 建立回報紀錄（40 筆 × 20 人 = 800 筆）…")
-    start_d = date(2025, 5, 1)
-    end_d   = date(2025, 6, 30)
+    start_d = date(2026, 5, 1)
+    end_d   = date(2026, 6, 30)
 
     # root 也有一些回報
     root_dates = random_dates(start_d, end_d, 15)
@@ -253,7 +253,7 @@ with app.app_context():
     for u in users:
         if not u.is_active:
             # 停用帳戶也有一些舊回報
-            dates = random_dates(start_d, date(2025, 5, 31), 10)
+            dates = random_dates(start_d, date(2026, 5, 31), 10)
         else:
             dates = random_dates(start_d, end_d, 40)
 
@@ -261,7 +261,7 @@ with app.app_context():
             vals = rand_report_fields()
             # 按日期決定確認狀態
             roll = random.random()
-            if rd < date(2025, 6, 10):
+            if rd < date(2026, 6, 10):
                 confirmed  = roll < 0.85
                 rejected   = (not confirmed) and roll > 0.95
             else:
@@ -287,7 +287,7 @@ with app.app_context():
         for j, status in enumerate(statuses):
             mat = materials[random.randint(0, len(materials)-1)]
             qty = random.randint(1, 10)
-            created = datetime(2025, random.randint(5, 6), random.randint(1, 28))
+            created = datetime(2026, random.randint(5, 6), random.randint(1, 28))
             mr = MaterialRequest(
                 user_id=u.id,
                 material_id=mat.id,
@@ -325,12 +325,12 @@ with app.app_context():
         (root_id, 'PASSWORD_CHANGE', '重設「測試用戶6」密碼'),
         (root_id, 'PASSWORD_CHANGE', '重設「測試用戶14」密碼'),
         # 回報確認
-        (root_id, 'REPORT_CONFIRM', '確認「測試用戶1」2025-05-03 的回報 #15'),
-        (root_id, 'REPORT_CONFIRM', '確認「測試用戶2」2025-05-07 的回報 #28'),
-        (root_id, 'REPORT_CONFIRM', '批次確認 2025-05 共 45 筆回報'),
-        (root_id, 'REPORT_REJECT',  '駁回「測試用戶6」2025-05-12 的回報（數量異常）'),
-        (root_id, 'REPORT_REJECT',  '駁回「測試用戶9」2025-06-03 的回報（重複回報）'),
-        (root_id, 'REPORT_UNCONFIRM', '取消確認「測試用戶3」2025-05-20 的回報 #67'),
+        (root_id, 'REPORT_CONFIRM', '確認「測試用戶1」2026-05-03 的回報 #15'),
+        (root_id, 'REPORT_CONFIRM', '確認「測試用戶2」2026-05-07 的回報 #28'),
+        (root_id, 'REPORT_CONFIRM', '批次確認 2026-05 共 45 筆回報'),
+        (root_id, 'REPORT_REJECT',  '駁回「測試用戶6」2026-05-12 的回報（數量異常）'),
+        (root_id, 'REPORT_REJECT',  '駁回「測試用戶9」2026-06-03 的回報（重複回報）'),
+        (root_id, 'REPORT_UNCONFIRM', '取消確認「測試用戶3」2026-05-20 的回報 #67'),
         # 材料
         (root_id, 'MATERIAL_ADD', '新增材料「瓦斯管 13mm」'),
         (root_id, 'MATERIAL_ADD', '新增材料「開關閥 13-25mm」'),
@@ -346,10 +346,10 @@ with app.app_context():
         (root_id, 'RETENTION_RESET', '重設「測試用戶11」保留金（新年度）'),
         (root_id, 'RETENTION_SET', '設定「測試用戶12」保留金補償：-200'),
         # 用戶自己的操作
-        (users[0].id, 'REPORT_CREATE', '「測試用戶1」新增 2025-06-01 回報'),
-        (users[1].id, 'REPORT_CREATE', '「測試用戶2」新增 2025-06-02 回報'),
-        (users[2].id, 'REPORT_UPDATE', '「測試用戶3」修改 2025-05-15 回報'),
-        (users[5].id, 'REPORT_DELETE', '「測試用戶6」刪除 2025-05-10 回報（確認前）'),
+        (users[0].id, 'REPORT_CREATE', '「測試用戶1」新增 2026-06-01 回報'),
+        (users[1].id, 'REPORT_CREATE', '「測試用戶2」新增 2026-06-02 回報'),
+        (users[2].id, 'REPORT_UPDATE', '「測試用戶3」修改 2026-05-15 回報'),
+        (users[5].id, 'REPORT_DELETE', '「測試用戶6」刪除 2026-05-10 回報（確認前）'),
         (users[0].id, 'PASSWORD_CHANGE', '「測試用戶1」修改自身密碼'),
         (users[3].id, 'MATERIAL_REQUEST', '「測試用戶4」申請瓦斯管 25mm × 6'),
         (users[9].id, 'MATERIAL_REQUEST', '「測試用戶10」申請接頭 T型 20mm × 4'),
@@ -357,7 +357,7 @@ with app.app_context():
     ]
 
     # 在 5/1~6/30 隨機分配時間
-    base_dt = datetime(2025, 5, 1)
+    base_dt = datetime(2026, 5, 1)
     for i, (uid, atype, desc) in enumerate(audit_entries):
         dt = base_dt + timedelta(
             days=random.randint(0, 60),
