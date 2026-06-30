@@ -110,6 +110,12 @@ def _init_db():
             elif _key == 'tax_rate' and cfg.value == '5':
                 # 舊預設值 5% → 修正為 3%
                 cfg.value = '3'
+        # Seed default item prices into SystemConfig (idempotent)
+        for _field, _ in REPORT_FIELDS:
+            _pk = f'price_{_field}'
+            if not db.session.get(SystemConfig, _pk):
+                db.session.add(SystemConfig(key=_pk,
+                                            value=str(DEFAULT_PRICES.get(_field, 0.0))))
         db.session.commit()
     except Exception:
         pass
@@ -284,6 +290,15 @@ def get_tax_rate() -> float:
     """未在公司保勞健者適用的稅務支出比率（%），預設 3"""
     cfg = db.session.get(SystemConfig, 'tax_rate')
     return float(cfg.value) if cfg else 3.0
+
+
+def get_item_prices() -> dict:
+    """各工項單位計薪，優先讀取 SystemConfig（鍵：price_<field>），否則用 DEFAULT_PRICES。"""
+    prices = {}
+    for k, _ in REPORT_FIELDS:
+        cfg = db.session.get(SystemConfig, f'price_{k}')
+        prices[k] = float(cfg.value) if cfg else DEFAULT_PRICES.get(k, 0.0)
+    return prices
 
 
 def calc_retention_from_totals(totals: dict) -> float:
@@ -638,6 +653,8 @@ def settings():
                            ytd_by_user=ytd_by_user,
                            user_ret_rates=user_ret_rates,
                            retention_fields_labeled=RETENTION_FIELDS_LABELED,
+                           report_fields=REPORT_FIELDS,
+                           item_prices=get_item_prices(),
                            my_ytd=my_ytd,
                            my_ret_rates=my_ret_rates)
 
@@ -851,6 +868,33 @@ def settings_retention_rate():
               f'更新保留金費率：{rate} NTD/只')
     db.session.commit()
     flash(f'保留金費率已更新為 {rate} NTD/只', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/item-prices', methods=['POST'])
+@admin_required
+def settings_item_prices():
+    updated = 0
+    for k, _ in REPORT_FIELDS:
+        val_str = request.form.get(f'price_{k}', '').strip()
+        if val_str == '':
+            continue
+        try:
+            val = max(0.0, float(val_str))
+        except ValueError:
+            flash('無效數值，已略過部分欄位', 'warning')
+            continue
+        cfg = db.session.get(SystemConfig, f'price_{k}')
+        if cfg:
+            cfg.value = str(val)
+        else:
+            db.session.add(SystemConfig(key=f'price_{k}', value=str(val)))
+        updated += 1
+    if updated:
+        add_audit(current_user.id, 'SYSTEM_CONFIG',
+                  f'更新各工項單位計薪（{updated} 個工項）')
+        db.session.commit()
+        flash('各工項單位計薪已儲存', 'success')
     return redirect(url_for('settings'))
 
 
@@ -1372,26 +1416,21 @@ def audit():
 def salary():
     salary_results = None
     all_active_users = User.query.filter_by(is_active=True).order_by(User.display_name).all()
-    form_data = {'prices': {k: DEFAULT_PRICES.get(k, 0.0) for k, _ in REPORT_FIELDS},
-                 'is_25th_payday': False}
+    item_prices = get_item_prices()
+    form_data = {'is_25th_payday': False}
 
     if request.method == 'POST':
         action = request.form.get('action', 'calculate')
         start_str = request.form.get('start_date', '')
         end_str = request.form.get('end_date', '')
 
-        prices = {}
-        for key, _ in REPORT_FIELDS:
-            try:
-                prices[key] = max(0.0, float(request.form.get(f'price_{key}', 0)))
-            except (ValueError, TypeError):
-                prices[key] = 0.0
+        prices = item_prices  # 單價固定由 SystemConfig 讀取，USER/ADMIN 無法從表單修改
 
         # 25號發薪才扣勞健保
         is_25th_payday = request.form.get('is_25th_payday') == '1'
 
         form_data = {'start_date': start_str, 'end_date': end_str,
-                     'prices': prices, 'is_25th_payday': is_25th_payday}
+                     'is_25th_payday': is_25th_payday}
 
         if start_str and end_str:
             try:
@@ -1522,6 +1561,7 @@ def salary():
     return render_template('salary.html', report_fields=REPORT_FIELDS,
                            salary_results=salary_results, form_data=form_data,
                            all_active_users=all_active_users,
+                           item_prices=item_prices,
                            now_year=date.today().year)
 
 
@@ -1918,10 +1958,11 @@ def personal_stats():
         except ValueError:
             pass
 
-    # ── 薪資試算：只要日期有填就計算，單價唯讀來自 DEFAULT_PRICES ─────────
+    # ── 薪資試算：只要日期有填就計算，單價唯讀來自 SystemConfig ─────────
+    item_prices = get_item_prices()
     if salary_start and salary_end:
         try:
-            prices = {k: DEFAULT_PRICES.get(k, 0.0) for k, _ in REPORT_FIELDS}
+            prices = item_prices
             sd_ps  = date.fromisoformat(salary_start)
             ed_ps  = date.fromisoformat(salary_end)
             _reports_p = Report.query.filter(
@@ -1971,7 +2012,7 @@ def personal_stats():
 
     return render_template('personal_stats.html',
                            report_fields=REPORT_FIELDS,
-                           default_prices=DEFAULT_PRICES,
+                           default_prices=item_prices,
                            totals_result=totals_result,
                            salary_result=salary_result,
                            ytd_retention=ytd_retention,

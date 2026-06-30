@@ -367,6 +367,34 @@
   </div>
 </div>
 
+<!-- Item Prices Card -->
+<div class="card mt-3">
+  <div class="card-header bg-primary bg-opacity-10 border-primary">
+    <i class="bi bi-currency-dollar me-1"></i>各工項單位計薪設定（NTD/只）
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('settings_item_prices') }}"
+          onsubmit="return confirm('確定更新各工項單位計薪？此變更將影響後續所有薪資計算。')">
+      <div class="row g-2 mb-3">
+        {% for key, label in report_fields %}
+        <div class="col-sm-6 col-lg-4">
+          <label class="form-label small mb-1" title="{{ label }}">{{ label }}</label>
+          <div class="input-group input-group-sm">
+            <input type="number" name="price_{{ key }}" class="form-control"
+                   value="{{ item_prices.get(key, 0) | int }}"
+                   min="0" step="1" required>
+            <span class="input-group-text">NTD</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">
+        <i class="bi bi-check-lg me-1"></i>儲存單位計薪
+      </button>
+    </form>
+  </div>
+</div>
+
 <!-- Bank Account Modal -->
 <div class="modal fade" id="bankAccountModal" tabindex="-1">
   <div class="modal-dialog" style="max-width:375px">
