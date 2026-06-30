@@ -41,6 +41,13 @@
                     data-no-loading="1">
               <i class="bi bi-file-earmark-pdf me-1"></i>匯出 PDF
             </button>
+            {% if salary_results and salary_results.transfer_total > 0 %}
+            <button type="submit" name="action" value="export-transfer" class="btn btn-outline-primary btn-sm"
+                    data-no-loading="1"
+                    title="匯出板信薪資轉帳送件單（Word）">
+              <i class="bi bi-bank2 me-1"></i>匯出薪轉單
+            </button>
+            {% endif %}
             {% endif %}
           </div>
 

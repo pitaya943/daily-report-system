@@ -1512,6 +1512,7 @@ def salary():
                 data['ytd_retention'] = min(float(RETENTION_CAP),
                                             max(0.0, _ytd_calc + ret_offset))
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
+                data['bank_account']   = u.bank_account   if u else None
 
                 # 勞健保：只在 25 號發薪時扣，且帳戶需已投保
                 ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if is_25th_payday else 0
@@ -1557,6 +1558,8 @@ def salary():
                 return _export_salary_excel(salary_results)
             elif action == 'export-pdf':
                 return _export_salary_pdf(salary_results)
+            elif action == 'export-transfer':
+                return _export_salary_transfer_doc(salary_results)
 
     return render_template('salary.html', report_fields=REPORT_FIELDS,
                            salary_results=salary_results, form_data=form_data,
@@ -1910,6 +1913,243 @@ def _export_salary_pdf(results):
     fname = f'salary_{results["start_date"]}_{results["end_date"]}.pdf'
     return send_file(buf, mimetype='application/pdf',
                      as_attachment=True, download_name=fname)
+
+
+def _export_salary_transfer_doc(results):
+    """匯出板信薪資轉帳送件單（Word .docx）"""
+    try:
+        from docx import Document
+        from docx.shared import Pt, Cm
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+    except ImportError:
+        flash('缺少 python-docx 套件，無法匯出薪轉單', 'danger')
+        return redirect(url_for('salary'))
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+    def _next_workday(d):
+        if d.weekday() == 5: return d + timedelta(days=2)   # Sat→Mon
+        if d.weekday() == 6: return d + timedelta(days=1)   # Sun→Mon
+        return d
+
+    def _roc(d):
+        return f"{d.year - 1911} 年 {d.month} 月 {d.day} 日"
+
+    def _fmt_acct(a):
+        if not a or len(a) != 14: return a or '（未設定）'
+        return f"{a[:4]}-{a[4:7]}-{a[7:]}"
+
+    def _fmt_amt(v):
+        return f"{int(round(v)):,}"
+
+    def _shd(cell, hex_fill):
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement('w:shd')
+        shd.set(qn('w:val'), 'clear')
+        shd.set(qn('w:color'), 'auto')
+        shd.set(qn('w:fill'), hex_fill)
+        tcPr.append(shd)
+
+    def _row_height(row, cm, exact=True):
+        trPr = row._tr.get_or_add_trPr()
+        h = OxmlElement('w:trHeight')
+        h.set(qn('w:val'), str(int(cm * 567)))
+        h.set(qn('w:hRule'), 'exact' if exact else 'atLeast')
+        trPr.append(h)
+
+    def _cell_text(cell, text, bold=False, pt=10, align=WD_ALIGN_PARAGRAPH.LEFT):
+        """Set cell text, clearing any existing runs first."""
+        para = cell.paragraphs[0]
+        para.alignment = align
+        para.paragraph_format.space_before = Pt(0)
+        para.paragraph_format.space_after = Pt(0)
+        for r in list(para.runs):
+            r._r.getparent().remove(r._r)
+        run = para.add_run(text)
+        run.font.size = Pt(pt)
+        run.font.bold = bold
+        return run
+
+    def _set_col_widths(table, widths_cm):
+        for row in table.rows:
+            for i, cell in enumerate(row.cells):
+                if i < len(widths_cm):
+                    cell.width = Cm(widths_cm[i])
+
+    # ── payday date ───────────────────────────────────────────────────────────
+    ed = date.fromisoformat(results['end_date'])
+    is_25th = results.get('is_25th_payday', False)
+    if is_25th:
+        raw = date(ed.year, ed.month, 25)
+    else:
+        y, m = (ed.year + 1, 1) if ed.month == 12 else (ed.year, ed.month + 1)
+        raw = date(y, m, 10)
+    payday = _next_workday(raw)
+
+    # ── TRANSFER entries (sorted by sequence in user_data) ────────────────────
+    entries = [
+        (_fmt_acct(d.get('bank_account', '')), int(round(d['final_salary'])))
+        for d in results['user_data'].values()
+        if d['payment_method'] == 'TRANSFER' and d['final_salary'] > 0
+    ]
+    total_amt  = sum(a for _, a in entries)
+    total_n    = len(entries)
+
+    # ── company constants ─────────────────────────────────────────────────────
+    CO_NAME = '宇丞工程有限公司'
+    CO_ACCT = '02975000021056'
+    CO_ID   = '27893806'
+    CO_TEL  = '02-29497898'
+    BANK    = '板信商業銀行'
+
+    # ── document setup ────────────────────────────────────────────────────────
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width    = Cm(21.0)
+    sec.page_height   = Cm(29.7)
+    sec.left_margin   = Cm(1.8)
+    sec.right_margin  = Cm(1.8)
+    sec.top_margin    = Cm(1.5)
+    sec.bottom_margin = Cm(1.5)
+
+    normal = doc.styles['Normal']
+    normal.paragraph_format.space_before = Pt(0)
+    normal.paragraph_format.space_after  = Pt(2)
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_after = Pt(0)
+    run = p.add_run('薪資轉帳送件單')
+    run.font.size = Pt(18)
+    run.font.bold = True
+
+    # Date line (right-aligned)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(4)
+    p.add_run(f"{_roc(payday)}（第 1 頁/共 1 頁）").font.size = Pt(10)
+
+    # ── 委託人資訊 table ───────────────────────────────────────────────────────
+    t_info = doc.add_table(rows=2, cols=4)
+    t_info.style = 'Table Grid'
+    _set_col_widths(t_info, [2.8, 5.5, 3.0, 6.1])
+    GREY = 'D9D9D9'
+    rows_data = [
+        [('委託人名稱', True), (CO_NAME, False), ('轉帳帳號', True), (CO_ACCT, False)],
+        [('委託人 ID', True),  (CO_ID, False),   ('聯絡人/電話', True), (CO_TEL, False)],
+    ]
+    for ri, row_data in enumerate(rows_data):
+        for ci, (text, is_hdr) in enumerate(row_data):
+            cell = t_info.cell(ri, ci)
+            _cell_text(cell, text, bold=is_hdr, pt=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+            if is_hdr:
+                _shd(cell, GREY)
+
+    # ── Summary paragraph ──────────────────────────────────────────────────────
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_after  = Pt(2)
+    p.add_run(
+        f'本次員工薪資轉帳共　{total_n}　筆，金額共計 {_fmt_amt(total_amt)} 元，'
+        f'請由上列「轉帳帳號」轉入明細表之各受領人帳戶，'
+        f'隨件附送檔案　　　份及電腦印列明細表　　　頁，請惠予辦理。'
+    ).font.size = Pt(10)
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(0)
+    p.add_run('此　　　致').font.size = Pt(10)
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(4)
+    p.add_run(f'{BANK}　台照').font.size = Pt(10)
+
+    # ── 轉帳明細表 label ───────────────────────────────────────────────────────
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after  = Pt(2)
+    run = p.add_run('轉帳明細表')
+    run.font.size = Pt(11)
+    run.font.bold = True
+
+    # ── Transfer detail table ──────────────────────────────────────────────────
+    # 6 cols: 序號|帳號|金額  ×2 (left=entries 1-15, right=entries 16-30)
+    NROWS = 15
+    t2 = doc.add_table(rows=1 + NROWS + 1, cols=6)
+    t2.style = 'Table Grid'
+    COL_W = [1.0, 4.8, 2.6, 1.0, 4.8, 2.6]   # total 16.8 cm
+    _set_col_widths(t2, COL_W)
+
+    # Header row
+    for ci, hdr in enumerate(['序號', '帳號', '金額', '序號', '帳號', '金額']):
+        cell = t2.cell(0, ci)
+        _cell_text(cell, hdr, bold=True, pt=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _shd(cell, GREY)
+    _row_height(t2.rows[0], 0.75)
+
+    # Data rows
+    for r in range(NROWS):
+        li = r           # left column entry index  (seq 1-15)
+        ri_ = r + NROWS  # right column entry index (seq 16-30)
+        cells = t2.row_cells(1 + r)
+        _row_height(t2.rows[1 + r], 0.72)
+
+        # Sequence numbers always show
+        _cell_text(cells[0], str(li + 1),  pt=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _cell_text(cells[3], str(ri_ + 1), pt=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+        if li < len(entries):
+            acct, amt = entries[li]
+            _cell_text(cells[1], acct,         pt=9)
+            _cell_text(cells[2], _fmt_amt(amt), pt=9, align=WD_ALIGN_PARAGRAPH.RIGHT)
+        if ri_ < len(entries):
+            acct, amt = entries[ri_]
+            _cell_text(cells[4], acct,         pt=9)
+            _cell_text(cells[5], _fmt_amt(amt), pt=9, align=WD_ALIGN_PARAGRAPH.RIGHT)
+
+    # Footer row: 3 merged cells for signatures
+    fr = NROWS + 1
+    t2.cell(fr, 0).merge(t2.cell(fr, 1))
+    t2.cell(fr, 2).merge(t2.cell(fr, 3))
+    t2.cell(fr, 4).merge(t2.cell(fr, 5))
+    _row_height(t2.rows[fr], 2.5, exact=False)
+    for ci, label in [(0, '受託人簽收'), (2, '異動名單'), (4, '委託人(存戶)簽章')]:
+        _cell_text(t2.cell(fr, ci), label, bold=True, pt=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    # ── Notes ─────────────────────────────────────────────────────────────────
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_after  = Pt(0)
+    p.add_run('備註：1.本送件單由委託人填具乙式兩份，乙份交受託人依約定辦理，乙份由受託人簽章後交委託人存查（含檔案、明細表等文件）。').font.size = Pt(9)
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(6)
+    p.add_run('　　　　　　2.若有人員異動時，請於異動名單欄註明員工姓名及帳號。').font.size = Pt(9)
+
+    # Bottom administrative line
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(0)
+    p.add_run('編號：SA2013　114.01.13\t\t主管：　　　　　　　　經辦：　　　　　　　　驗印：').font.size = Pt(9)
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after  = Pt(0)
+    p.add_run('保存期限：七年\t\t批號：').font.size = Pt(9)
+
+    # ── export ────────────────────────────────────────────────────────────────
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    fname = f"薪轉單_{payday.strftime('%Y%m%d')}.docx"
+    return send_file(
+        buf,
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        as_attachment=True,
+        download_name=fname,
+    )
 
 
 # ---------------------------------------------------------------------------
