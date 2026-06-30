@@ -1129,8 +1129,16 @@ def settings_delete_user(user_id):
     dname = target.display_name
 
     if mode == 'cascade':
-        Report.query.filter_by(user_id=user_id).delete()
-        MaterialRequest.query.filter_by(user_id=user_id).delete()
+        # Nullify FK back-references (other users' records pointing to this user)
+        Report.query.filter(Report.confirmed_by == user_id).update(
+            {'confirmed_by': None}, synchronize_session=False)
+        MaterialRequest.query.filter(MaterialRequest.reviewed_by == user_id).update(
+            {'reviewed_by': None}, synchronize_session=False)
+        # Delete all records owned by this user
+        UserRetentionRate.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+        AuditLog.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+        Report.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+        MaterialRequest.query.filter_by(user_id=user_id).delete(synchronize_session=False)
         add_audit(current_user.id, 'ACCOUNT_DELETE',
                   f'刪除帳戶「{dname}」並連帶刪除所有回報與材料申請紀錄')
         db.session.delete(target)
@@ -1435,16 +1443,19 @@ def confirmation():
                                   Report.report_date  <= ed)
                           .order_by(Report.report_date.asc(), Report.id.asc())
                           .paginate(page=page, per_page=20, error_out=False))
-    pending_materials = (MaterialRequest.query.filter_by(status='PENDING')
-                         .order_by(MaterialRequest.created_at.asc()).all())
+    mat_page = request.args.get('mat_page', 1, type=int)
+    mat_pagination = (MaterialRequest.query.filter_by(status='PENDING')
+                      .order_by(MaterialRequest.created_at.asc())
+                      .paginate(page=mat_page, per_page=20, error_out=False))
     users_dict = {u.id: u for u in User.query.all()}
     materials_dict = {m.id: m for m in Material.query.all()}
-    url_args = {k: v for k, v in request.args.items() if k != 'page'}
+    url_args = {k: v for k, v in request.args.items() if k not in ('page', 'mat_page')}
 
     return render_template('confirmation.html',
                            pending_pagination=pending_pagination,
                            pending_reports=pending_pagination.items,
-                           pending_materials=pending_materials,
+                           mat_pagination=mat_pagination,
+                           pending_materials=mat_pagination.items,
                            users_dict=users_dict,
                            materials_dict=materials_dict,
                            report_fields=REPORT_FIELDS,
