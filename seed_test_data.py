@@ -1,7 +1,17 @@
 """
 seed_test_data.py
-執行：python seed_test_data.py
-清空本地 SQLite 資料庫並填入完整測試資料
+
+本地執行（SQLite）:
+  python seed_test_data.py
+
+連接生產 PostgreSQL（Supabase）:
+  $env:DATABASE_URL="postgresql://user:pass@host:5432/db"  # PowerShell
+  python seed_test_data.py
+
+透過 Railway CLI（在生產環境執行）:
+  railway run python seed_test_data.py
+
+⚠️  執行前確認：此腳本會刪除目標資料庫的所有資料！
 """
 import random
 import sys
@@ -11,6 +21,13 @@ from werkzeug.security import generate_password_hash
 
 # ── 確保可以 import app ──────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# 允許在 import app 前覆蓋 DATABASE_URL
+if os.environ.get('DATABASE_URL'):
+    _db_url = os.environ['DATABASE_URL'].replace('postgres://', 'postgresql://', 1)
+    print(f"📡 連接至 PostgreSQL: {_db_url[:40]}...")
+else:
+    print("💾 使用本地 SQLite")
 
 from app import app, db
 from models import (
@@ -79,11 +96,20 @@ def fmt_bank(i: int) -> str:
 
 with app.app_context():
     print("▶ 清空所有資料表…")
-    db.session.execute(db.text("PRAGMA foreign_keys = OFF"))
-    for Model in [AuditLog, MaterialRequest, Report,
-                  UserRetentionRate, Material, SystemConfig, User]:
-        db.session.query(Model).delete()
-    db.session.execute(db.text("PRAGMA foreign_keys = ON"))
+    is_pg = 'postgresql' in str(db.engine.url)
+    if is_pg:
+        # PostgreSQL: TRUNCATE ... CASCADE 最快且正確處理 FK
+        db.session.execute(db.text(
+            "TRUNCATE TABLE audit_logs, material_requests, reports, "
+            "user_retention_rates, materials, system_config, users RESTART IDENTITY CASCADE"
+        ))
+    else:
+        # SQLite: 逐表刪除（不支援 TRUNCATE）
+        db.session.execute(db.text("PRAGMA foreign_keys = OFF"))
+        for Model in [AuditLog, MaterialRequest, Report,
+                      UserRetentionRate, Material, SystemConfig, User]:
+            db.session.query(Model).delete()
+        db.session.execute(db.text("PRAGMA foreign_keys = ON"))
     db.session.commit()
 
     # ── SystemConfig ─────────────────────────────────────────────────────
