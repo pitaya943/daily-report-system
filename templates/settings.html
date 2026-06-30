@@ -50,7 +50,7 @@
         <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
           <thead>
             <tr>
-              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>投保狀態</th>
+              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>銀行帳號</th><th>投保狀態</th>
               <th class="text-end">今年累積保留金</th>
               <th>狀態</th><th>建立時間</th><th>操作</th>
             </tr>
@@ -77,6 +77,13 @@
                   <span class="badge bg-warning text-dark">領現</span>
                 {% else %}
                   <span class="badge bg-info text-dark">轉帳</span>
+                {% endif %}
+              </td>
+              <td style="font-size:.78rem;font-family:monospace">
+                {% if u.bank_account %}
+                  {{ u.bank_account[:3] }}-{{ u.bank_account[3:] }}
+                {% else %}
+                  <span class="text-muted">無</span>
                 {% endif %}
               </td>
               <td style="font-size:.80rem">
@@ -109,9 +116,14 @@
                   <i class="bi bi-pencil"></i>
                 </button>
                 <button class="btn btn-outline-info btn-sm py-0 px-2 ms-1"
-                        onclick="openPayment({{ u.id }}, '{{ u.display_name|e }}', '{{ u.payment_method }}')"
+                        onclick="openPayment({{ u.id }}, '{{ u.display_name|e }}', '{{ u.payment_method }}', '{{ u.bank_account or '' }}')"
                         title="修改發薪方式">
                   <i class="bi bi-credit-card"></i>
+                </button>
+                <button class="btn btn-outline-primary btn-sm py-0 px-2 ms-1"
+                        onclick="openBankAccount({{ u.id }}, '{{ u.display_name|e }}', '{{ u.bank_account or '' }}')"
+                        title="設定銀行帳號">
+                  <i class="bi bi-bank2"></i>
                 </button>
                 <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
                         onclick="openInsurance({{ u.id }}, '{{ u.display_name|e }}', {{ u.insurance_deduction }}, {{ 'true' if u.tax_exempt else 'false' }})"
@@ -270,6 +282,44 @@
   </div>
 </div>
 
+<!-- Bank Account Modal -->
+<div class="modal fade" id="bankAccountModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title"><i class="bi bi-bank2 me-2"></i>銀行帳號設定</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="bankAccountForm" method="POST" onsubmit="return submitBankAccount()">
+        <div class="modal-body">
+          <p class="small mb-1">帳戶：<strong id="bankAccountUsername"></strong></p>
+          <p class="text-muted small mb-3">
+            <i class="bi bi-info-circle me-1"></i>本公司僅接受板信薪轉（3碼分行代碼＋11碼帳號主碼，共14碼數字）
+          </p>
+          <div class="row g-2 mb-2">
+            <div class="col-4">
+              <label class="form-label small mb-1">分行代碼（3碼）</label>
+              <input type="text" id="bankBranch" class="form-control form-control-sm"
+                     maxlength="3" placeholder="108" inputmode="numeric">
+            </div>
+            <div class="col-8">
+              <label class="form-label small mb-1">帳號主碼（11碼）</label>
+              <input type="text" id="bankMain" class="form-control form-control-sm"
+                     maxlength="11" placeholder="00000000000" inputmode="numeric">
+            </div>
+          </div>
+          <input type="hidden" name="bank_account" id="bankAccountFull">
+          <p class="text-muted small mb-0">留空儲存可清除銀行帳號（若發薪方式為轉帳將自動改為領現）</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary btn-sm">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- Create User Modal -->
 <div class="modal fade" id="createUserModal" tabindex="-1">
   <div class="modal-dialog">
@@ -279,7 +329,7 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <form method="POST" action="{{ url_for('settings_create_user') }}"
-            onsubmit="return validateCreatePwd() && confirm('確定建立此帳戶？')">
+            onsubmit="return validateCreate()">
         <div class="modal-body">
           <div class="mb-3">
             <label class="form-label fw-semibold">帳戶名稱（可使用中文）</label>
@@ -305,10 +355,28 @@
           </div>
           <div class="mb-3">
             <label class="form-label">發薪方式</label>
-            <select name="payment_method" class="form-select">
+            <select name="payment_method" id="createPaymentMethod" class="form-select"
+                    onchange="toggleCreateBankAccount()">
+              <option value="CASH" selected>領現</option>
               <option value="TRANSFER">轉帳</option>
-              <option value="CASH">領現</option>
             </select>
+          </div>
+          <div id="createBankAccountSection" class="mb-3" style="display:none">
+            <label class="form-label">銀行帳號 <span class="text-danger">*</span></label>
+            <p class="text-muted small mb-1">
+              <i class="bi bi-info-circle me-1"></i>本公司僅接受板信薪轉（3碼分行代碼＋11碼帳號主碼）
+            </p>
+            <div class="row g-2">
+              <div class="col-4">
+                <input type="text" id="createBankBranch" class="form-control"
+                       maxlength="3" placeholder="分行代碼" inputmode="numeric">
+              </div>
+              <div class="col-8">
+                <input type="text" id="createBankMain" class="form-control"
+                       maxlength="11" placeholder="帳號主碼（11碼）" inputmode="numeric">
+              </div>
+            </div>
+            <input type="hidden" name="bank_account" id="createBankAccountFull">
           </div>
         </div>
         <div class="modal-footer">
@@ -427,12 +495,13 @@
       <form id="paymentForm" method="POST"
             onsubmit="return confirm('確定修改發薪方式？')">
         <div class="modal-body">
-          <p class="small mb-3">帳戶：<strong id="paymentUsername"></strong></p>
+          <p class="small mb-2">帳戶：<strong id="paymentUsername"></strong></p>
+          <small id="paymentBankNotice" class="d-block mb-3"></small>
           <div class="mb-2">
             <label class="form-label">發薪方式</label>
             <select name="payment_method" id="paymentSelect" class="form-select">
-              <option value="TRANSFER">轉帳</option>
               <option value="CASH">領現</option>
+              <option value="TRANSFER">轉帳</option>
             </select>
           </div>
         </div>
@@ -557,11 +626,47 @@ function validateResetPwd() {
   if (pw !== cpw) { alert('兩次輸入的密碼不相符，請重新輸入'); return false; }
   return true;
 }
-function validateCreatePwd() {
+function toggleCreateBankAccount() {
+  const isTransfer = document.getElementById('createPaymentMethod').value === 'TRANSFER';
+  document.getElementById('createBankAccountSection').style.display = isTransfer ? '' : 'none';
+}
+function validateCreate() {
   var pw = document.getElementById('createPwdNew').value;
   var cpw = document.getElementById('createPwdConfirm').value;
   if (pw !== cpw) { alert('兩次輸入的密碼不相符，請重新輸入'); return false; }
-  return true;
+  const isTransfer = document.getElementById('createPaymentMethod').value === 'TRANSFER';
+  if (isTransfer) {
+    const branch = document.getElementById('createBankBranch').value.trim();
+    const main = document.getElementById('createBankMain').value.trim();
+    if (!/^[0-9]{3}$/.test(branch)) { alert('分行代碼需為 3 位數字'); return false; }
+    if (!/^[0-9]{11}$/.test(main)) { alert('帳號主碼需為 11 位數字'); return false; }
+    document.getElementById('createBankAccountFull').value = branch + main;
+  }
+  return confirm('確定建立此帳戶？');
+}
+function openBankAccount(id, name, current) {
+  document.getElementById('bankAccountForm').action = '/settings/users/' + id + '/bank-account';
+  document.getElementById('bankAccountUsername').textContent = name;
+  if (current && current.length === 14) {
+    document.getElementById('bankBranch').value = current.substring(0, 3);
+    document.getElementById('bankMain').value = current.substring(3);
+  } else {
+    document.getElementById('bankBranch').value = '';
+    document.getElementById('bankMain').value = '';
+  }
+  new bootstrap.Modal(document.getElementById('bankAccountModal')).show();
+}
+function submitBankAccount() {
+  const branch = document.getElementById('bankBranch').value.trim();
+  const main = document.getElementById('bankMain').value.trim();
+  if (branch === '' && main === '') {
+    document.getElementById('bankAccountFull').value = '';
+    return confirm('確定清除此帳戶的銀行帳號？（若發薪方式為轉帳將自動改為領現）');
+  }
+  if (!/^[0-9]{3}$/.test(branch)) { alert('分行代碼需為 3 位數字'); return false; }
+  if (!/^[0-9]{11}$/.test(main)) { alert('帳號主碼需為 11 位數字'); return false; }
+  document.getElementById('bankAccountFull').value = branch + main;
+  return confirm('確定更新銀行帳號？');
 }
 function openRetRates(userId, name) {
   const url = '/settings/users/' + userId + '/retention-rates';
@@ -617,10 +722,16 @@ function openDelete(id, name) {
   document.getElementById('deleteUsername').textContent = name;
   new bootstrap.Modal(document.getElementById('deleteUserModal')).show();
 }
-function openPayment(id, name, current) {
+function openPayment(id, name, current, bankAcct) {
   document.getElementById('paymentForm').action = `/settings/users/${id}/payment-method`;
   document.getElementById('paymentUsername').textContent = name;
   document.getElementById('paymentSelect').value = current;
+  const notice = document.getElementById('paymentBankNotice');
+  if (bankAcct) {
+    notice.innerHTML = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>銀行帳號已設定：' + bankAcct.substring(0,3) + '-' + bankAcct.substring(3) + '</span>';
+  } else {
+    notice.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>尚未設定銀行帳號，選擇轉帳將被拒絕</span>';
+  }
   new bootstrap.Modal(document.getElementById('paymentModal')).show();
 }
 function openRetention(id, name, current) {

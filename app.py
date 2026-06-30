@@ -93,6 +93,14 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # Column migration: add bank_account to users if missing
+    try:
+        with db.engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text("ALTER TABLE users ADD COLUMN bank_account VARCHAR(14)"))
+            conn.commit()
+    except Exception:
+        pass
     # Seed / correct default SystemConfig entries
     try:
         for _key, _default in [('retention_rate', '20'), ('tax_rate', '3')]:
@@ -652,18 +660,29 @@ def settings_create_user():
     elif User.query.filter_by(display_name=display_name).first():
         flash(f'名稱「{display_name}」已存在', 'danger')
     else:
-        payment_method = request.form.get('payment_method', 'TRANSFER')
+        payment_method = request.form.get('payment_method', 'CASH')
         if payment_method not in ('CASH', 'TRANSFER'):
-            payment_method = 'TRANSFER'
-        u = User(display_name=display_name,
-                 password_hash=generate_password_hash(password),
-                 role=role, is_active=True,
-                 payment_method=payment_method)
-        db.session.add(u)
-        add_audit(current_user.id, 'ACCOUNT_CREATE',
-                  f'建立帳戶「{display_name}」（角色：{role}）')
-        db.session.commit()
-        flash(f'帳戶「{display_name}」已建立', 'success')
+            payment_method = 'CASH'
+        bank_account_raw = request.form.get('bank_account', '').strip().replace('-', '').replace(' ', '')
+        ba_ok = True
+        if payment_method == 'TRANSFER':
+            if not bank_account_raw:
+                flash('選擇轉帳發薪時必須填入銀行帳號', 'danger')
+                ba_ok = False
+            elif not (bank_account_raw.isdigit() and len(bank_account_raw) == 14):
+                flash('銀行帳號格式錯誤（需為 14 位數字：3碼分行代碼 + 11碼帳號主碼）', 'danger')
+                ba_ok = False
+        if ba_ok:
+            u = User(display_name=display_name,
+                     password_hash=generate_password_hash(password),
+                     role=role, is_active=True,
+                     payment_method=payment_method,
+                     bank_account=bank_account_raw if bank_account_raw else None)
+            db.session.add(u)
+            add_audit(current_user.id, 'ACCOUNT_CREATE',
+                      f'建立帳戶「{display_name}」（角色：{role}）')
+            db.session.commit()
+            flash(f'帳戶「{display_name}」已建立', 'success')
     return redirect(url_for('settings'))
 
 
@@ -695,9 +714,12 @@ def settings_payment_method(user_id):
     target = db.session.get(User, user_id)
     if not target:
         abort(404)
-    method = request.form.get('payment_method', 'TRANSFER')
+    method = request.form.get('payment_method', 'CASH')
     if method not in ('CASH', 'TRANSFER'):
-        method = 'TRANSFER'
+        method = 'CASH'
+    if method == 'TRANSFER' and not target.bank_account:
+        flash(f'「{target.display_name}」尚未設定銀行帳號，無法切換為轉帳，請先設定銀行帳號', 'danger')
+        return redirect(url_for('settings'))
     old = target.payment_method
     target.payment_method = method
     target.updated_at = datetime.utcnow()
@@ -706,6 +728,31 @@ def settings_payment_method(user_id):
               f'更新「{target.display_name}」發薪方式：{old} → {method}')
     db.session.commit()
     flash(f'「{target.display_name}」發薪方式已更新為「{label}」', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/users/<int:user_id>/bank-account', methods=['POST'])
+@admin_required
+def settings_bank_account(user_id):
+    target = db.session.get(User, user_id)
+    if not target:
+        abort(404)
+    acct = request.form.get('bank_account', '').strip().replace('-', '').replace(' ', '')
+    if acct and not (acct.isdigit() and len(acct) == 14):
+        flash('銀行帳號格式錯誤（需為 14 位數字：3碼分行代碼 + 11碼帳號主碼）', 'danger')
+        return redirect(url_for('settings'))
+    target.bank_account = acct if acct else None
+    target.updated_at = datetime.utcnow()
+    if not target.bank_account and target.payment_method == 'TRANSFER':
+        target.payment_method = 'CASH'
+        add_audit(current_user.id, 'ACCOUNT_UPDATE',
+                  f'清除「{target.display_name}」銀行帳號，發薪方式自動改為領現')
+        flash(f'「{target.display_name}」銀行帳號已清除，發薪方式已自動改為領現', 'warning')
+    else:
+        add_audit(current_user.id, 'ACCOUNT_UPDATE',
+                  f'更新「{target.display_name}」銀行帳號')
+        flash(f'「{target.display_name}」銀行帳號已更新', 'success')
+    db.session.commit()
     return redirect(url_for('settings'))
 
 
