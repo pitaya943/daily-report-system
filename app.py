@@ -610,12 +610,36 @@ def settings():
                                     max(0.0, calculated + u.retention_offset))
     # ─────────────────────────────────────────────────────────────────
 
+    # ── USER：計算自己的保留金 ──────────────────────────────────────────────
+    my_ytd = 0.0
+    my_ret_rates = {}
+    if current_user.role != 'ADMIN':
+        year_start = date(date.today().year, 1, 1)
+        my_reports = (Report.query
+                      .filter(Report.user_id == current_user.id,
+                              Report.is_confirmed == True,
+                              Report.report_date >= year_start,
+                              Report.report_date <= date.today())
+                      .all())
+        my_totals = {f: 0 for f in RETENTION_FIELDS}
+        for r in my_reports:
+            for f in RETENTION_FIELDS:
+                my_totals[f] += getattr(r, f, 0)
+        my_rates = get_user_all_retention_rates(current_user.id)
+        my_ret_rates = my_rates
+        calculated = sum(my_totals.get(f, 0) * float(my_rates.get(f, global_rate))
+                         for f in RETENTION_FIELDS)
+        my_ytd = min(float(RETENTION_CAP),
+                     max(0.0, calculated + current_user.retention_offset))
+
     return render_template('settings.html', all_users=all_users,
                            retention_rate=global_rate,
                            tax_rate=get_tax_rate(),
                            ytd_by_user=ytd_by_user,
                            user_ret_rates=user_ret_rates,
-                           retention_fields_labeled=RETENTION_FIELDS_LABELED)
+                           retention_fields_labeled=RETENTION_FIELDS_LABELED,
+                           my_ytd=my_ytd,
+                           my_ret_rates=my_ret_rates)
 
 
 @app.route('/settings/password', methods=['POST'])

@@ -6,6 +6,91 @@
 <div class="row g-4">
 
   {% if current_user.role != 'ADMIN' %}
+  <!-- USER：帳戶資訊（唯讀） -->
+  <div class="col-md-7">
+    <div class="card h-100">
+      <div class="card-header bg-info text-white">
+        <i class="bi bi-person-badge me-1"></i>帳戶資訊
+      </div>
+      <div class="card-body" style="font-size:.9rem">
+
+        <!-- 領薪方式 + 銀行帳號 -->
+        <div class="row g-2 mb-3">
+          <div class="col-sm-6">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted small mb-1">領薪方式</div>
+              {% if current_user.payment_method == 'CASH' %}
+                <span class="badge bg-warning text-dark fs-6">領現</span>
+              {% else %}
+                <span class="badge bg-info text-dark fs-6">轉帳</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-sm-6">
+            <div class="border rounded p-2 h-100">
+              <div class="text-muted small mb-1">銀行帳號</div>
+              {% if current_user.bank_account %}
+                <span class="font-monospace fw-semibold">
+                  {{ current_user.bank_account[:3] }}-{{ current_user.bank_account[3:] }}
+                </span>
+              {% else %}
+                <span class="text-muted">未設定</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <!-- 投保 / 稅務狀態 -->
+        <div class="border rounded p-2 mb-3">
+          <div class="text-muted small mb-1">投保 / 稅務狀態</div>
+          {% if current_user.insurance_deduction > 0 %}
+            <i class="bi bi-shield-check text-danger me-1"></i>
+            公司投保，每期扣除
+            <strong>{{ current_user.insurance_deduction | money }} NTD</strong>
+          {% elif current_user.tax_exempt %}
+            <i class="bi bi-shield text-secondary me-1"></i>
+            未投保，<strong>免稅務支出</strong>
+          {% else %}
+            <i class="bi bi-receipt text-warning me-1"></i>
+            未投保，計薪小計扣除 <strong>{{ tax_rate }}%</strong> 稅務支出
+          {% endif %}
+        </div>
+
+        <!-- 今年度累積保留金 -->
+        <div class="border rounded p-2 mb-3">
+          <div class="text-muted small mb-1">今年度累積保留金</div>
+          <span class="{% if my_ytd > 0 %}text-warning fw-bold{% else %}text-muted{% endif %} fs-5">
+            {{ my_ytd | int | money }} NTD
+          </span>
+          <small class="text-muted ms-1">（上限 {{ '{:,}'.format(60000) }} NTD）</small>
+        </div>
+
+        <!-- 各工項保留金費率 -->
+        <div class="border rounded p-2">
+          <div class="text-muted small mb-2">保留金扣除費率（各工項）</div>
+          <table class="table table-sm table-borderless mb-0" style="font-size:.82rem">
+            <tbody>
+              {% for field, label in retention_fields_labeled %}
+              <tr>
+                <td class="py-0 text-muted">{{ label }}</td>
+                <td class="py-0 text-end">
+                  {% set r = my_ret_rates.get(field, retention_rate) %}
+                  {% if r == 0 %}
+                    <span class="text-muted">不扣除</span>
+                  {% else %}
+                    <span class="fw-semibold">{{ r }} NTD/只</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <!-- USER：修改自己的密碼 -->
   <div class="col-md-5">
     <div class="card h-100">
@@ -284,7 +369,7 @@
 
 <!-- Bank Account Modal -->
 <div class="modal fade" id="bankAccountModal" tabindex="-1">
-  <div class="modal-dialog modal-sm">
+  <div class="modal-dialog" style="max-width:375px">
     <div class="modal-content">
       <div class="modal-header bg-primary text-white">
         <h5 class="modal-title"><i class="bi bi-bank2 me-2"></i>銀行帳號設定</h5>
@@ -637,10 +722,13 @@ function validateCreate() {
   const isTransfer = document.getElementById('createPaymentMethod').value === 'TRANSFER';
   if (isTransfer) {
     const branch = document.getElementById('createBankBranch').value.trim();
-    const main = document.getElementById('createBankMain').value.trim();
+    const rawMain = document.getElementById('createBankMain').value.trim();
     if (!/^[0-9]{3}$/.test(branch)) { alert('分行代碼需為 3 位數字'); return false; }
-    if (!/^[0-9]{11}$/.test(main)) { alert('帳號主碼需為 11 位數字'); return false; }
+    if (!/^[0-9]{1,11}$/.test(rawMain)) { alert('帳號主碼需為 1~11 位數字'); return false; }
+    const main = rawMain.padStart(11, '0');
+    document.getElementById('createBankMain').value = main;
     document.getElementById('createBankAccountFull').value = branch + main;
+    return confirm('確定建立此帳戶？\n\n銀行帳號：' + branch + '-' + main);
   }
   return confirm('確定建立此帳戶？');
 }
@@ -658,15 +746,16 @@ function openBankAccount(id, name, current) {
 }
 function submitBankAccount() {
   const branch = document.getElementById('bankBranch').value.trim();
-  const main = document.getElementById('bankMain').value.trim();
-  if (branch === '' && main === '') {
+  const rawMain = document.getElementById('bankMain').value.trim();
+  if (branch === '' && rawMain === '') {
     document.getElementById('bankAccountFull').value = '';
     return confirm('確定清除此帳戶的銀行帳號？（若發薪方式為轉帳將自動改為領現）');
   }
   if (!/^[0-9]{3}$/.test(branch)) { alert('分行代碼需為 3 位數字'); return false; }
-  if (!/^[0-9]{11}$/.test(main)) { alert('帳號主碼需為 11 位數字'); return false; }
+  if (!/^[0-9]{1,11}$/.test(rawMain)) { alert('帳號主碼需為 1~11 位數字'); return false; }
+  const main = rawMain.padStart(11, '0');
   document.getElementById('bankAccountFull').value = branch + main;
-  return confirm('確定更新銀行帳號？');
+  return confirm('確定儲存以下銀行帳號？\n\n分行代碼：' + branch + '\n帳號主碼：' + main + '\n完整帳號：' + branch + '-' + main);
 }
 function openRetRates(userId, name) {
   const url = '/settings/users/' + userId + '/retention-rates';
