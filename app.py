@@ -3110,7 +3110,7 @@ def _report_excel(report_type, label, start_date, end_date,
             if not cells:
                 continue
             w = max((len(str(c.value or '')) for c in cells), default=4)
-            ws.column_dimensions[cells[0].column_letter].width = min(w + 4, 40)
+            ws.column_dimensions[cells[0].column_letter].width = max(8, min(round(w / 0.7), 60))
 
     wb = openpyxl.Workbook()
     udict = {u.id: u.display_name for u in users}
@@ -3197,6 +3197,25 @@ def _report_excel(report_type, label, start_date, end_date,
         ws4 = wb.create_sheet('薪資彙總')
         set_hdr(ws4, 1, ['帳戶', '發薪方式', '工作收入', '保留金(期間)', '勞健保', '稅務支出', '固定薪資', '實領金額'])
         tax_v = get_tax_rate()
+
+        # 預先查詢本期之前（年初至 start_date-1）的已確認回報，用於 YTD 保留金上限計算
+        year_start = date(start_date.year, 1, 1)
+        pre_period_end = start_date - timedelta(days=1)
+        _pre_reports = []
+        if pre_period_end >= year_start:
+            _pre_reports = Report.query.filter(
+                Report.is_confirmed == True,
+                Report.report_date >= year_start,
+                Report.report_date <= pre_period_end
+            ).all()
+        pre_totals_by_user: dict = {}
+        for _r in _pre_reports:
+            _uid = _r.user_id
+            if _uid not in pre_totals_by_user:
+                pre_totals_by_user[_uid] = {f: 0 for f in RETENTION_FIELDS}
+            for f in RETENTION_FIELDS:
+                pre_totals_by_user[_uid][f] += getattr(_r, f, 0)
+
         sal_ri = 2
         total_net = 0
         for u in users:
@@ -3205,8 +3224,11 @@ def _report_excel(report_type, label, start_date, end_date,
             if gross == 0 and u.fixed_salary == 0:
                 continue
             u_rates = get_user_all_retention_rates(u.id)
+            pre_totals = pre_totals_by_user.get(u.id, {f: 0 for f in RETENTION_FIELDS})
+            pre_calc = sum(pre_totals.get(f, 0) * u_rates[f] for f in RETENTION_FIELDS)
+            ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + u.retention_offset))
             ret_raw = sum(tots.get(f, 0) * u_rates[f] for f in RETENTION_FIELDS)
-            retention = max(0.0, min(ret_raw, RETENTION_CAP))
+            retention = max(0.0, min(ret_raw, RETENTION_CAP - ytd_before))
             insurance = u.insurance_deduction
             not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt)
             tax = round(gross * tax_v / 100) if not_enrolled else 0
