@@ -13,7 +13,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from cryptography.fernet import Fernet, InvalidToken
 
-from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig, UserRetentionRate, LedgerEntry
+from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig, UserRetentionRate, LedgerEntry, ReportArchive
 
 app = Flask(__name__)
 _sk = os.environ.get('SECRET_KEY')
@@ -2985,6 +2985,478 @@ def ledger_export():
     fname = f'流水帳_{date.today().strftime("%Y%m%d")}.xlsx'
     return send_file(buf, as_attachment=True, download_name=fname,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# ---------------------------------------------------------------------------
+# Auto Report — 日報 / 月報生成、R2 儲存、管理員查閱
+# ---------------------------------------------------------------------------
+
+def _report_get_font():
+    """取得可用的 CJK 字型名稱（reportlab）。"""
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+        font = 'STSong-Light'
+    except Exception:
+        font = 'Helvetica'
+    for fp in ['C:/Windows/Fonts/msjh.ttc', '/System/Library/Fonts/PingFang.ttc']:
+        if os.path.exists(fp):
+            try:
+                pdfmetrics.registerFont(TTFont('CJK_RPT', fp))
+                font = 'CJK_RPT'
+                break
+            except Exception:
+                pass
+    return font
+
+
+def _report_excel(report_type, label, start_date, end_date,
+                  users, reports, ledger_entries, materials, prices):
+    """生成多 Sheet Excel，回傳 BytesIO。"""
+    import openpyxl
+    from openpyxl.styles import Font as XFont, PatternFill, Alignment
+
+    HDR_FILL = PatternFill('solid', fgColor='4472C4')
+    HDR_FONT = XFont(bold=True, color='FFFFFF')
+    BOLD     = XFont(bold=True)
+    ALT_FILL = PatternFill('solid', fgColor='EBF3FB')
+    GRN_FILL = PatternFill('solid', fgColor='E2EFDA')
+    RED_FONT = XFont(bold=True, color='C00000')
+    GRN_FONT = XFont(bold=True, color='375623')
+
+    def set_hdr(ws, row, cols):
+        for ci, v in enumerate(cols, 1):
+            c = ws.cell(row=row, column=ci, value=v)
+            c.fill = HDR_FILL; c.font = HDR_FONT
+            c.alignment = Alignment(horizontal='center')
+
+    def auto_w(ws):
+        for col in ws.columns:
+            w = max((len(str(c.value or '')) for c in col), default=4)
+            ws.column_dimensions[col[0].column_letter].width = min(w + 4, 40)
+
+    wb = openpyxl.Workbook()
+    udict = {u.id: u.display_name for u in users}
+
+    # ── Sheet 1: 工項彙總 ───────────────────────────────────────────────
+    ws1 = wb.active
+    ws1.title = '工項彙總'
+    span = chr(65 + len(REPORT_FIELDS) + 1)
+    ws1.merge_cells(f'A1:{span}1')
+    ws1['A1'] = f'{"日報" if report_type == "DAILY" else "月報"}　{label}　期間：{start_date} ～ {end_date}'
+    ws1['A1'].font = XFont(bold=True, size=13)
+    ws1['A1'].alignment = Alignment(horizontal='center')
+
+    set_hdr(ws1, 2, ['帳戶'] + [lbl for _, lbl in REPORT_FIELDS] + ['合計'])
+
+    user_totals = {}
+    for r in reports:
+        uid = r.user_id
+        if uid not in user_totals:
+            user_totals[uid] = {k: 0 for k, _ in REPORT_FIELDS}
+        for k, _ in REPORT_FIELDS:
+            user_totals[uid][k] += getattr(r, k, 0) or 0
+
+    grand = {k: 0 for k, _ in REPORT_FIELDS}
+    ri = 3
+    for uid, tots in user_totals.items():
+        row_sum = sum(tots.values())
+        row_vals = [udict.get(uid, f'UID {uid}')] + [tots[k] for k, _ in REPORT_FIELDS] + [row_sum]
+        for ci, v in enumerate(row_vals, 1):
+            c = ws1.cell(ri, ci, v)
+            if ri % 2 == 0: c.fill = ALT_FILL
+            if ci > 1: c.alignment = Alignment(horizontal='center')
+        for k, _ in REPORT_FIELDS:
+            grand[k] += tots[k]
+        ri += 1
+    total_row = ['總計'] + [grand[k] for k, _ in REPORT_FIELDS] + [sum(grand.values())]
+    for ci, v in enumerate(total_row, 1):
+        c = ws1.cell(ri, ci, v); c.font = BOLD; c.fill = GRN_FILL
+    auto_w(ws1)
+
+    # ── Sheet 2: 流水帳 ─────────────────────────────────────────────────
+    ws2 = wb.create_sheet('流水帳')
+    set_hdr(ws2, 1, ['日期', '說明', '類型', '類別', '金額(NTD)', '備註', '建立者'])
+    inc_total = exp_total = 0
+    for ri2, e in enumerate(ledger_entries, 2):
+        ws2.cell(ri2, 1, str(e.entry_date))
+        ws2.cell(ri2, 2, e.description)
+        ws2.cell(ri2, 3, '收入' if e.entry_type == 'INCOME' else '支出')
+        ws2.cell(ri2, 4, e.category or '')
+        ac = ws2.cell(ri2, 5, e.amount)
+        ac.alignment = Alignment(horizontal='right')
+        if e.entry_type == 'INCOME':
+            ac.font = GRN_FONT; inc_total += e.amount
+        else:
+            ac.font = RED_FONT; exp_total += e.amount
+        ws2.cell(ri2, 6, e.note or '')
+        ws2.cell(ri2, 7, udict.get(e.created_by, '?'))
+        if ri2 % 2 == 0:
+            for ci in range(1, 8): ws2.cell(ri2, ci).fill = ALT_FILL
+    sr = len(ledger_entries) + 2
+    ws2.cell(sr, 1, '合計').font = BOLD
+    ws2.cell(sr, 3, f'收入:{inc_total:,}  支出:{exp_total:,}  淨餘:{inc_total - exp_total:,}').font = BOLD
+    for ci in range(1, 8): ws2.cell(sr, ci).fill = GRN_FILL
+    auto_w(ws2)
+
+    # ── Sheet 3: 材料庫存 ────────────────────────────────────────────────
+    ws3 = wb.create_sheet('材料庫存')
+    set_hdr(ws3, 1, ['#', '材料名稱', '單位', '剩餘數量'])
+    for ri3, m in enumerate(materials, 2):
+        ws3.cell(ri3, 1, ri3 - 1)
+        ws3.cell(ri3, 2, m.name)
+        ws3.cell(ri3, 3, m.unit)
+        qc = ws3.cell(ri3, 4, m.remaining_quantity)
+        qc.alignment = Alignment(horizontal='center')
+        if m.remaining_quantity == 0: qc.font = RED_FONT
+        if ri3 % 2 == 0:
+            for ci in range(1, 5): ws3.cell(ri3, ci).fill = ALT_FILL
+    auto_w(ws3)
+
+    # ── Sheet 4: 薪資彙總（月報專屬）────────────────────────────────────
+    if report_type == 'MONTHLY':
+        ws4 = wb.create_sheet('薪資彙總')
+        set_hdr(ws4, 1, ['帳戶', '發薪方式', '工作收入', '保留金(期間)', '勞健保', '稅務支出', '固定薪資', '實領金額'])
+        tax_v = get_tax_rate()
+        sal_ri = 2
+        total_net = 0
+        for u in users:
+            tots = user_totals.get(u.id, {k: 0 for k, _ in REPORT_FIELDS})
+            gross = sum(tots.get(k, 0) * prices.get(k, 0) for k, _ in REPORT_FIELDS)
+            if gross == 0 and u.fixed_salary == 0:
+                continue
+            u_rates = get_user_all_retention_rates(u.id)
+            ret_raw = sum(tots.get(f, 0) * u_rates[f] for f in RETENTION_FIELDS)
+            retention = max(0.0, min(ret_raw, RETENTION_CAP))
+            insurance = u.insurance_deduction
+            not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt)
+            tax = round(gross * tax_v / 100) if not_enrolled else 0
+            net = int(gross - retention - insurance - tax + u.fixed_salary)
+            total_net += net
+            row_vals = [u.display_name, '領現' if u.payment_method == 'CASH' else '轉帳',
+                        int(gross), int(retention), insurance, tax, u.fixed_salary, net]
+            for ci, v in enumerate(row_vals, 1):
+                c = ws4.cell(sal_ri, ci, v)
+                if ci >= 3: c.alignment = Alignment(horizontal='right')
+                if sal_ri % 2 == 0: c.fill = ALT_FILL
+            sal_ri += 1
+        ws4.cell(sal_ri, 1, '薪資支出合計').font = BOLD
+        tc = ws4.cell(sal_ri, 8, total_net)
+        tc.font = BOLD; tc.alignment = Alignment(horizontal='right')
+        for ci in range(1, 9): ws4.cell(sal_ri, ci).fill = GRN_FILL
+        auto_w(ws4)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _report_pdf(report_type, label, start_date, end_date,
+                users, reports, ledger_entries, materials, prices):
+    """生成多頁 PDF，回傳 BytesIO。"""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import ParagraphStyle
+
+    fn = _report_get_font()
+
+    def sty(name, **kw):
+        kw.setdefault('fontName', fn)
+        kw.setdefault('fontSize', 9)
+        kw.setdefault('leading', 14)
+        return ParagraphStyle(name, **kw)
+
+    C_HDR  = rl_colors.HexColor('#4472C4')
+    C_ALT  = rl_colors.HexColor('#EBF3FB')
+    C_GRN  = rl_colors.HexColor('#E2EFDA')
+    C_RED  = rl_colors.HexColor('#C00000')
+    C_DGRN = rl_colors.HexColor('#375623')
+    WHITE  = rl_colors.white
+
+    def mk_table(data, col_widths=None):
+        t = Table(data, colWidths=col_widths, repeatRows=1)
+        n = len(data)
+        style_cmds = [
+            ('FONTNAME',    (0, 0), (-1, -1), fn),
+            ('FONTSIZE',    (0, 0), (-1, -1), 8),
+            ('BACKGROUND',  (0, 0), (-1, 0),  C_HDR),
+            ('TEXTCOLOR',   (0, 0), (-1, 0),  WHITE),
+            ('FONTNAME',    (0, 0), (-1, 0),  fn),
+            ('FONTSIZE',    (0, 0), (-1, 0),  9),
+            ('ALIGN',       (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN',      (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID',        (0, 0), (-1, -1), 0.4, rl_colors.grey),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, C_ALT]),
+            ('BACKGROUND',  (0, n-1), (-1, n-1), C_GRN),
+            ('FONTNAME',    (0, n-1), (-1, n-1), fn),
+        ]
+        t.setStyle(TableStyle(style_cmds))
+        return t
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=24, rightMargin=24,
+                            topMargin=24, bottomMargin=24)
+    story = []
+    title_sty = sty('T', fontSize=14, alignment=1, spaceAfter=10, fontName=fn)
+    h2_sty    = sty('H2', fontSize=11, spaceBefore=10, spaceAfter=4, fontName=fn)
+    udict = {u.id: u.display_name for u in users}
+
+    # ── 工項彙總 ─────────────────────────────────────────────────────────
+    story.append(Paragraph(
+        f'{"日報" if report_type == "DAILY" else "月報"}　{label}　{start_date} ～ {end_date}',
+        title_sty))
+    story.append(Paragraph('工項彙總', h2_sty))
+
+    user_totals = {}
+    for r in reports:
+        uid = r.user_id
+        if uid not in user_totals:
+            user_totals[uid] = {k: 0 for k, _ in REPORT_FIELDS}
+        for k, _ in REPORT_FIELDS:
+            user_totals[uid][k] += getattr(r, k, 0) or 0
+
+    grand = {k: 0 for k, _ in REPORT_FIELDS}
+    hdr = ['帳戶'] + [lbl for _, lbl in REPORT_FIELDS] + ['合計']
+    rows = [hdr]
+    for uid, tots in user_totals.items():
+        rows.append([udict.get(uid, f'UID{uid}')] +
+                    [tots[k] for k, _ in REPORT_FIELDS] +
+                    [sum(tots.values())])
+        for k, _ in REPORT_FIELDS:
+            grand[k] += tots[k]
+    rows.append(['總計'] + [grand[k] for k, _ in REPORT_FIELDS] + [sum(grand.values())])
+    story.append(mk_table(rows))
+
+    # ── 流水帳 ───────────────────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph('流水帳', h2_sty))
+    inc_t = exp_t = 0
+    l_rows = [['日期', '說明', '類型', '類別', '金額(NTD)', '備註', '建立者']]
+    for e in ledger_entries:
+        t_lbl = '收入' if e.entry_type == 'INCOME' else '支出'
+        l_rows.append([str(e.entry_date), e.description, t_lbl,
+                       e.category or '', f'{e.amount:,}', e.note or '',
+                       udict.get(e.created_by, '?')])
+        if e.entry_type == 'INCOME': inc_t += e.amount
+        else: exp_t += e.amount
+    l_rows.append(['合計', '', f'收入:{inc_t:,}  支出:{exp_t:,}  淨餘:{inc_t - exp_t:,}',
+                   '', '', '', ''])
+    story.append(mk_table(l_rows, col_widths=[65, 130, 38, 52, 65, 130, 60]))
+
+    # ── 材料庫存 ─────────────────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph('材料庫存', h2_sty))
+    m_rows = [['#', '材料名稱', '單位', '剩餘數量']]
+    for i, m in enumerate(materials, 1):
+        m_rows.append([i, m.name, m.unit, m.remaining_quantity])
+    m_rows.append(['', f'共 {len(materials)} 項材料', '', ''])
+    story.append(mk_table(m_rows, col_widths=[30, 200, 60, 80]))
+
+    # ── 薪資彙總（月報）───────────────────────────────────────────────────
+    if report_type == 'MONTHLY':
+        story.append(PageBreak())
+        story.append(Paragraph('薪資彙總', h2_sty))
+        tax_v = get_tax_rate()
+        s_rows = [['帳戶', '發薪方式', '工作收入', '保留金', '勞健保', '稅務支出', '固定薪資', '實領金額']]
+        total_net = 0
+        for u in users:
+            tots = user_totals.get(u.id, {k: 0 for k, _ in REPORT_FIELDS})
+            gross = sum(tots.get(k, 0) * prices.get(k, 0) for k, _ in REPORT_FIELDS)
+            if gross == 0 and u.fixed_salary == 0:
+                continue
+            u_rates = get_user_all_retention_rates(u.id)
+            ret_raw = sum(tots.get(f, 0) * u_rates[f] for f in RETENTION_FIELDS)
+            retention = max(0.0, min(ret_raw, RETENTION_CAP))
+            insurance = u.insurance_deduction
+            not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt)
+            tax = round(gross * tax_v / 100) if not_enrolled else 0
+            net = int(gross - retention - insurance - tax + u.fixed_salary)
+            total_net += net
+            s_rows.append([u.display_name,
+                           '領現' if u.payment_method == 'CASH' else '轉帳',
+                           f'{int(gross):,}', f'{int(retention):,}',
+                           f'{insurance:,}', f'{tax:,}',
+                           f'{u.fixed_salary:,}', f'{net:,}'])
+        s_rows.append(['薪資支出合計', '', '', '', '', '', '', f'{total_net:,}'])
+        story.append(mk_table(s_rows))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf
+
+
+def _run_auto_report(report_type: str, target_date):
+    """生成日報或月報並上傳至 R2，記錄於 ReportArchive。"""
+    try:
+        # 避免重複生成
+        existing = ReportArchive.query.filter_by(
+            report_type=report_type, report_date=target_date).first()
+        if existing:
+            app.logger.info(f'Report {report_type} {target_date} already exists, skipping')
+            return
+
+        if report_type == 'DAILY':
+            start_date = end_date = target_date
+            label = target_date.strftime('%Y-%m-%d')
+        else:
+            start_date = target_date.replace(day=1)
+            end_date   = target_date
+            label      = target_date.strftime('%Y-%m')
+
+        users    = User.query.order_by(User.id).all()
+        reports  = (Report.query
+                    .filter(Report.report_date >= start_date,
+                            Report.report_date <= end_date,
+                            Report.is_confirmed == True)
+                    .all())
+        ledger   = (LedgerEntry.query
+                    .filter(LedgerEntry.entry_date >= start_date,
+                            LedgerEntry.entry_date <= end_date)
+                    .order_by(LedgerEntry.entry_date.asc()).all())
+        materials = Material.query.order_by(Material.sort_order.asc()).all()
+        prices    = get_item_prices()
+
+        excel_buf = _report_excel(report_type, label, start_date, end_date,
+                                  users, reports, ledger, materials, prices)
+        pdf_buf   = _report_pdf(report_type, label, start_date, end_date,
+                                users, reports, ledger, materials, prices)
+
+        r2_excel = r2_pdf = None
+        if _r2_client:
+            prefix = 'reports/daily' if report_type == 'DAILY' else 'reports/monthly'
+            r2_excel = f'{prefix}/{label}.xlsx'
+            r2_pdf   = f'{prefix}/{label}.pdf'
+            _r2_upload(excel_buf, r2_excel,
+                       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            _r2_upload(pdf_buf, r2_pdf, 'application/pdf')
+        else:
+            app.logger.warning('R2 not configured — report generated but not uploaded')
+
+        archive = ReportArchive(
+            report_type=report_type,
+            report_date=target_date,
+            period_start=start_date,
+            period_end=end_date,
+            r2_key_excel=r2_excel,
+            r2_key_pdf=r2_pdf,
+        )
+        db.session.add(archive)
+
+        admin = User.query.filter_by(role='ADMIN').first()
+        if admin:
+            add_audit(admin.id, 'AUTO_REPORT',
+                      f'自動生成{"日報" if report_type == "DAILY" else "月報"} {label}')
+        db.session.commit()
+        app.logger.info(f'Auto report {report_type} {label} generated OK')
+    except Exception as exc:
+        app.logger.error(f'Auto report {report_type} {target_date} failed: {exc}')
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+
+
+# ── 排程器（每天 23:59 日報；每月末 23:59 月報）────────────────────────
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    _scheduler = BackgroundScheduler(timezone='Asia/Taipei')
+
+    def _daily_job():
+        with app.app_context():
+            _run_auto_report('DAILY', date.today())
+
+    def _monthly_job():
+        with app.app_context():
+            _run_auto_report('MONTHLY', date.today())
+
+    _scheduler.add_job(_daily_job,   CronTrigger(hour=23, minute=59, second=0,
+                                                  timezone='Asia/Taipei'))
+    _scheduler.add_job(_monthly_job, CronTrigger(day='last', hour=23, minute=59, second=30,
+                                                  timezone='Asia/Taipei'))
+    if not _scheduler.running:
+        _scheduler.start()
+except Exception as _e_sched:
+    import logging as _log_sched
+    _log_sched.warning(f'APScheduler init failed: {_e_sched}')
+
+
+# ── 管理員路由：報表檔案庫 ──────────────────────────────────────────────
+
+@app.route('/reports/archives')
+@login_required
+@admin_required
+def report_archives():
+    page = request.args.get('page', 1, type=int)
+    f_type = request.args.get('report_type', '')
+    q = ReportArchive.query
+    if f_type in ('DAILY', 'MONTHLY'):
+        q = q.filter(ReportArchive.report_type == f_type)
+    pagination = q.order_by(ReportArchive.report_date.desc(),
+                             ReportArchive.id.desc()).paginate(
+        page=page, per_page=30, error_out=False)
+    url_args = {k: v for k, v in request.args.items() if k != 'page'}
+    return render_template('report_archives.html',
+                           pagination=pagination,
+                           entries=pagination.items,
+                           f_type=f_type,
+                           url_args=url_args)
+
+
+@app.route('/reports/archives/<int:archive_id>/<fmt>')
+@login_required
+@admin_required
+def report_archive_download(archive_id, fmt):
+    if fmt not in ('excel', 'pdf'):
+        abort(404)
+    arc = ReportArchive.query.get_or_404(archive_id)
+    r2_key = arc.r2_key_excel if fmt == 'excel' else arc.r2_key_pdf
+    if not r2_key:
+        flash('此報表無對應檔案（可能 R2 未設定）', 'warning')
+        return redirect(url_for('report_archives'))
+    if not _r2_client:
+        flash('R2 儲存未設定', 'danger')
+        return redirect(url_for('report_archives'))
+    url = _r2_presigned_url(r2_key, expiry=1800)
+    if not url:
+        flash('無法產生下載連結', 'danger')
+        return redirect(url_for('report_archives'))
+    return redirect(url)
+
+
+@app.route('/admin/manual-report', methods=['POST'])
+@login_required
+@admin_required
+def manual_report():
+    """手動觸發報表生成（測試用）。"""
+    rtype = request.form.get('report_type', 'DAILY')
+    rdate_str = request.form.get('report_date', '')
+    if rtype not in ('DAILY', 'MONTHLY'):
+        flash('無效的報表類型', 'danger')
+        return redirect(url_for('report_archives'))
+    try:
+        rdate = date.fromisoformat(rdate_str) if rdate_str else date.today()
+    except ValueError:
+        flash('日期格式錯誤', 'danger')
+        return redirect(url_for('report_archives'))
+
+    # 若已存在則先刪除（允許重新生成）
+    existing = ReportArchive.query.filter_by(report_type=rtype, report_date=rdate).first()
+    if existing:
+        if existing.r2_key_excel: _r2_delete(existing.r2_key_excel)
+        if existing.r2_key_pdf:   _r2_delete(existing.r2_key_pdf)
+        db.session.delete(existing)
+        db.session.commit()
+
+    _run_auto_report(rtype, rdate)
+    flash(f'{"日報" if rtype == "DAILY" else "月報"} {rdate} 已重新生成', 'success')
+    return redirect(url_for('report_archives'))
 
 
 # ---------------------------------------------------------------------------

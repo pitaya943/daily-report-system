@@ -122,6 +122,22 @@ class UserRetentionRate(db.Model):
     rate = db.Column(db.Integer, nullable=False, default=0)
 
 
+class ReportArchive(db.Model):
+    __tablename__ = 'report_archives'
+    __table_args__ = (
+        db.Index('ix_report_archive_date', 'report_date'),
+        db.Index('ix_report_archive_type', 'report_type'),
+    )
+    id           = db.Column(db.Integer, primary_key=True)
+    report_type  = db.Column(db.String(10), nullable=False)   # 'DAILY' / 'MONTHLY'
+    report_date  = db.Column(db.Date, nullable=False)
+    period_start = db.Column(db.Date, nullable=False)
+    period_end   = db.Column(db.Date, nullable=False)
+    r2_key_excel = db.Column(db.String(300), nullable=True)
+    r2_key_pdf   = db.Column(db.String(300), nullable=True)
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class LedgerEntry(db.Model):
     __tablename__ = 'ledger_entries'
     __table_args__ = (

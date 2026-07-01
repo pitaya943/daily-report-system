@@ -152,6 +152,11 @@
        title="流水帳">
       <i class="bi bi-journal-text"></i><span class="nav-text"> 流水帳</span>
     </a>
+    <a href="{{ url_for('report_archives') }}"
+       class="nav-link {% if request.endpoint in ('report_archives','report_archive_download','manual_report') %}active{% endif %}"
+       title="日報/月報">
+      <i class="bi bi-archive"></i><span class="nav-text"> 日報/月報</span>
+    </a>
     {% endif %}
   </div>
 </nav>
@@ -235,7 +240,7 @@
       if(!a) return;
       var href = a.getAttribute('href') || '';
       if(href.startsWith('#') || href.startsWith('javascript') ||
-         a.dataset.bsToggle || a.target === '_blank') return;
+         a.dataset.bsToggle || a.target === '_blank' || a.dataset.noLoading) return;
       showLoading();
     });
     document.addEventListener('submit', function(e){

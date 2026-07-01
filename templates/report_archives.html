@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+{% from '_pagination.html' import paginate %}
+{% block title %}報表檔案庫{% endblock %}
+{% block page_title %}<i class="bi bi-archive me-2"></i>日報 / 月報 檔案庫{% endblock %}
+
+{% block content %}
+
+<!-- 說明卡 -->
+<div class="alert alert-info py-2 mb-3">
+  <i class="bi bi-info-circle me-1"></i>
+  系統每日 <strong>23:59</strong> 自動生成日報；每月最後一天 <strong>23:59</strong> 自動生成月報，並上傳至 Cloudflare R2。
+  亦可手動觸發生成（會覆蓋同日期的舊報表）。
+</div>
+
+<!-- 篩選 + 手動生成 -->
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body py-2">
+        <form method="GET" action="{{ url_for('report_archives') }}" class="d-flex gap-2 align-items-center flex-wrap">
+          <label class="fw-semibold small mb-0">篩選類型</label>
+          <select name="report_type" class="form-select form-select-sm" style="width:120px">
+            <option value="" {% if not f_type %}selected{% endif %}>全部</option>
+            <option value="DAILY"   {% if f_type == 'DAILY' %}selected{% endif %}>日報</option>
+            <option value="MONTHLY" {% if f_type == 'MONTHLY' %}selected{% endif %}>月報</option>
+          </select>
+          <button type="submit" class="btn btn-primary btn-sm">
+            <i class="bi bi-search me-1"></i>篩選
+          </button>
+          <a href="{{ url_for('report_archives') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-x-circle me-1"></i>重置
+          </a>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body py-2">
+        <form method="POST" action="{{ url_for('manual_report') }}" class="d-flex gap-2 align-items-center flex-wrap">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="fw-semibold small mb-0">手動生成</label>
+          <select name="report_type" class="form-select form-select-sm" style="width:100px">
+            <option value="DAILY">日報</option>
+            <option value="MONTHLY">月報</option>
+          </select>
+          <input type="date" name="report_date" class="form-control form-control-sm" style="width:140px"
+                 value="{{ today_str }}">
+          <button type="submit" class="btn btn-warning btn-sm"
+                  onclick="return confirm('確定手動生成？若同日期已有報表將會覆蓋。')">
+            <i class="bi bi-lightning me-1"></i>立即生成
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 報表列表 -->
+<div class="card">
+  <div class="card-header">
+    <i class="bi bi-archive me-1"></i>報表記錄
+    <span class="badge bg-secondary ms-1">{{ pagination.total }}</span>
+  </div>
+  <div class="card-body p-0">
+    {% if pagination.total > 0 %}
+    {{ paginate(pagination, 'report_archives', url_args) }}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" style="font-size:.87rem">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>類型</th>
+            <th>報表日期</th>
+            <th>涵蓋期間</th>
+            <th>生成時間</th>
+            <th class="text-center">Excel</th>
+            <th class="text-center">PDF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for arc in entries %}
+          <tr>
+            <td class="text-muted">{{ arc.id }}</td>
+            <td>
+              {% if arc.report_type == 'DAILY' %}
+                <span class="badge bg-primary">日報</span>
+              {% else %}
+                <span class="badge bg-purple" style="background:#6f42c1">月報</span>
+              {% endif %}
+            </td>
+            <td class="text-nowrap fw-semibold">{{ arc.report_date }}</td>
+            <td class="text-muted small text-nowrap">{{ arc.period_start }} ～ {{ arc.period_end }}</td>
+            <td class="text-muted small text-nowrap">{{ arc.generated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="text-center">
+              {% if arc.r2_key_excel %}
+                <a href="{{ url_for('report_archive_download', archive_id=arc.id, fmt='excel') }}"
+                   class="btn btn-outline-success btn-sm py-0 px-2" data-no-loading title="下載 Excel">
+                  <i class="bi bi-file-earmark-excel me-1"></i>下載
+                </a>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td class="text-center">
+              {% if arc.r2_key_pdf %}
+                <a href="{{ url_for('report_archive_download', archive_id=arc.id, fmt='pdf') }}"
+                   class="btn btn-outline-danger btn-sm py-0 px-2" data-no-loading title="下載 PDF">
+                  <i class="bi bi-file-earmark-pdf me-1"></i>下載
+                </a>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ paginate(pagination, 'report_archives', url_args) }}
+    {% else %}
+    <p class="text-center text-muted py-4 mb-0">
+      <i class="bi bi-inbox me-1"></i>尚無報表記錄，系統將於今晚 23:59 自動生成
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+{% block scripts %}
+<script>
+document.querySelector('input[name="report_date"]').value = new Date().toISOString().slice(0, 10);
+</script>
+{% endblock %}
+{% endblock %}
