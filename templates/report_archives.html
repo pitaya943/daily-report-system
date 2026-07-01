@@ -44,10 +44,9 @@
             <option value="DAILY">日報</option>
             <option value="MONTHLY">月報</option>
           </select>
-          <input type="date" name="report_date" class="form-control form-control-sm" style="width:140px"
-                 value="{{ today_str }}">
-          <button type="submit" class="btn btn-warning btn-sm"
-                  onclick="return confirm('確定手動生成？若同日期已有報表將會覆蓋。')">
+          <input type="date" name="report_date" id="manual_report_date"
+                 class="form-control form-control-sm" style="width:140px">
+          <button type="submit" class="btn btn-warning btn-sm">
             <i class="bi bi-lightning me-1"></i>立即生成
           </button>
         </form>
@@ -128,7 +127,7 @@
 
 {% block scripts %}
 <script>
-document.querySelector('input[name="report_date"]').value = new Date().toISOString().slice(0, 10);
+document.getElementById('manual_report_date').value = new Date().toISOString().slice(0, 10);
 </script>
 {% endblock %}
 {% endblock %}

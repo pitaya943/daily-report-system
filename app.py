@@ -3290,13 +3290,16 @@ def _report_pdf(report_type, label, start_date, end_date,
     return buf
 
 
-def _run_auto_report(report_type: str, target_date):
-    """生成日報或月報並上傳至 R2，記錄於 ReportArchive。"""
+def _run_auto_report(report_type: str, target_date, allow_duplicate: bool = False):
+    """生成日報或月報並上傳至 R2，記錄於 ReportArchive。
+    allow_duplicate=True 時允許同日期重複生成（R2 檔名加計數後綴）。
+    """
     try:
-        # 避免重複生成
-        existing = ReportArchive.query.filter_by(
-            report_type=report_type, report_date=target_date).first()
-        if existing:
+        existing_count = ReportArchive.query.filter_by(
+            report_type=report_type, report_date=target_date).count()
+
+        # 自動排程：已有記錄則跳過
+        if existing_count > 0 and not allow_duplicate:
             app.logger.info(f'Report {report_type} {target_date} already exists, skipping')
             return
 
@@ -3329,8 +3332,10 @@ def _run_auto_report(report_type: str, target_date):
         r2_excel = r2_pdf = None
         if _r2_client:
             prefix = 'reports/daily' if report_type == 'DAILY' else 'reports/monthly'
-            r2_excel = f'{prefix}/{label}.xlsx'
-            r2_pdf   = f'{prefix}/{label}.pdf'
+            # 計數後綴：第 1 份無後綴，第 2 份起加 _2、_3…
+            suffix = f'_{existing_count + 1}' if existing_count > 0 else ''
+            r2_excel = f'{prefix}/{label}{suffix}.xlsx'
+            r2_pdf   = f'{prefix}/{label}{suffix}.pdf'
             _r2_upload(excel_buf, r2_excel,
                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             _r2_upload(pdf_buf, r2_pdf, 'application/pdf')
@@ -3349,10 +3354,11 @@ def _run_auto_report(report_type: str, target_date):
 
         admin = User.query.filter_by(role='ADMIN').first()
         if admin:
+            suffix_label = f'（第 {existing_count + 1} 份）' if existing_count > 0 else ''
             add_audit(admin.id, 'AUTO_REPORT',
-                      f'自動生成{"日報" if report_type == "DAILY" else "月報"} {label}')
+                      f'生成{"日報" if report_type == "DAILY" else "月報"} {label}{suffix_label}')
         db.session.commit()
-        app.logger.info(f'Auto report {report_type} {label} generated OK')
+        app.logger.info(f'Auto report {report_type} {label} (copy #{existing_count + 1}) generated OK')
     except Exception as exc:
         app.logger.error(f'Auto report {report_type} {target_date} failed: {exc}')
         try:
@@ -3446,16 +3452,10 @@ def manual_report():
         flash('日期格式錯誤', 'danger')
         return redirect(url_for('report_archives'))
 
-    # 若已存在則先刪除（允許重新生成）
-    existing = ReportArchive.query.filter_by(report_type=rtype, report_date=rdate).first()
-    if existing:
-        if existing.r2_key_excel: _r2_delete(existing.r2_key_excel)
-        if existing.r2_key_pdf:   _r2_delete(existing.r2_key_pdf)
-        db.session.delete(existing)
-        db.session.commit()
-
-    _run_auto_report(rtype, rdate)
-    flash(f'{"日報" if rtype == "DAILY" else "月報"} {rdate} 已重新生成', 'success')
+    _run_auto_report(rtype, rdate, allow_duplicate=True)
+    count = ReportArchive.query.filter_by(report_type=rtype, report_date=rdate).count()
+    type_name = '日報' if rtype == 'DAILY' else '月報'
+    flash(f'{type_name} {rdate} 已生成（此日期共 {count} 份）', 'success')
     return redirect(url_for('report_archives'))
 
 
