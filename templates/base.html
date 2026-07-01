@@ -240,12 +240,13 @@
       if(!a) return;
       var href = a.getAttribute('href') || '';
       if(href.startsWith('#') || href.startsWith('javascript') ||
-         a.dataset.bsToggle || a.target === '_blank' || a.dataset.noLoading) return;
+         a.dataset.bsToggle || a.target === '_blank' ||
+         a.hasAttribute('data-no-loading')) return;
       showLoading();
     });
     document.addEventListener('submit', function(e){
       if(e.defaultPrevented) return;
-      if(e.submitter && e.submitter.dataset.noLoading) return;
+      if(e.submitter && e.submitter.hasAttribute('data-no-loading')) return;
       showLoading();
     });
   });

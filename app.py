@@ -328,6 +328,15 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # Column migration: add generated_by to report_archives if missing
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text(
+                "ALTER TABLE report_archives ADD COLUMN generated_by INTEGER REFERENCES users(id)"
+            ))
+            conn.commit()
+    except Exception:
+        pass
 
 with app.app_context():
     _init_db()
@@ -3367,7 +3376,8 @@ def _report_pdf(report_type, label, start_date, end_date,
     return buf
 
 
-def _run_auto_report(report_type: str, target_date, source: str = 'auto') -> tuple:
+def _run_auto_report(report_type: str, target_date, source: str = 'auto',
+                     generated_by: int = None) -> tuple:
     """生成日報或月報並上傳至 R2，記錄於 ReportArchive。
     source='auto'   → 自動排程，檔名加 _auto，當天已有 auto 紀錄則跳過。
     source='manual' → 手動生成，檔名加計數後綴（第 1 份無後綴，第 2 份加 _2…）。
@@ -3400,11 +3410,12 @@ def _run_auto_report(report_type: str, target_date, source: str = 'auto') -> tup
                 report_type=report_type, report_date=target_date, source='manual').count()
             r2_suffix = f'_{manual_count + 1}' if manual_count > 0 else ''
 
-        # Collect data — 與統計報表頁相同，不過濾 is_confirmed
+        # Collect data — 僅含已確認回報（is_confirmed=True）
         users     = User.query.order_by(User.id).all()
         reports   = (Report.query
                      .filter(Report.report_date >= start_date,
-                             Report.report_date <= end_date)
+                             Report.report_date <= end_date,
+                             Report.is_confirmed == True)
                      .all())
         ledger    = (LedgerEntry.query
                      .filter(LedgerEntry.entry_date >= start_date,
@@ -3433,6 +3444,7 @@ def _run_auto_report(report_type: str, target_date, source: str = 'auto') -> tup
             r2_key_excel = r2_excel,
             r2_key_pdf   = None,
             source       = source,
+            generated_by = generated_by,
         )
         db.session.add(archive)
 
@@ -3501,12 +3513,14 @@ def report_archives():
     pagination = q.order_by(ReportArchive.report_date.desc(),
                              ReportArchive.id.desc()).paginate(
         page=page, per_page=30, error_out=False)
-    url_args = {k: v for k, v in request.args.items() if k != 'page'}
+    url_args   = {k: v for k, v in request.args.items() if k != 'page'}
+    users_dict = {u.id: u.display_name for u in User.query.all()}
     return render_template('report_archives.html',
                            pagination=pagination,
                            entries=pagination.items,
                            f_type=f_type,
-                           url_args=url_args)
+                           url_args=url_args,
+                           users_dict=users_dict)
 
 
 @app.route('/reports/archives/<int:archive_id>/<fmt>')
@@ -3530,6 +3544,26 @@ def report_archive_download(archive_id, fmt):
     return redirect(url)
 
 
+@app.route('/reports/archives/<int:archive_id>/delete', methods=['POST'])
+@login_required
+@admin_required
+def report_archive_delete(archive_id):
+    """刪除報表記錄並從 R2 移除檔案。"""
+    arc = ReportArchive.query.get_or_404(archive_id)
+    rtype = arc.report_type
+    rdate = arc.report_date
+    if arc.r2_key_excel and _r2_client:
+        _r2_delete(arc.r2_key_excel)
+    if arc.r2_key_pdf and _r2_client:
+        _r2_delete(arc.r2_key_pdf)
+    db.session.delete(arc)
+    add_audit(current_user.id, 'REPORT_DELETE',
+              f'刪除{"日報" if rtype == "DAILY" else "月報"} #{archive_id} {rdate}')
+    db.session.commit()
+    flash(f'報表 #{archive_id}（{rdate}）已刪除', 'success')
+    return redirect(url_for('report_archives'))
+
+
 @app.route('/admin/manual-report', methods=['POST'])
 @login_required
 @admin_required
@@ -3546,7 +3580,7 @@ def manual_report():
         flash('日期格式錯誤', 'danger')
         return redirect(url_for('report_archives'))
 
-    success, err = _run_auto_report(rtype, rdate, source='manual')
+    success, err = _run_auto_report(rtype, rdate, source='manual', generated_by=current_user.id)
     type_name = '日報' if rtype == 'DAILY' else '月報'
     if success:
         flash(f'{type_name} {rdate} 已成功生成並上傳至 R2', 'success')

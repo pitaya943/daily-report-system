@@ -136,6 +136,7 @@ class ReportArchive(db.Model):
     r2_key_excel = db.Column(db.String(300), nullable=True)
     r2_key_pdf   = db.Column(db.String(300), nullable=True)
     source       = db.Column(db.String(10), nullable=False, default='auto')  # 'auto' / 'manual'
+    generated_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # NULL = 自動排程
     generated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
