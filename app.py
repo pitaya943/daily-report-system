@@ -13,7 +13,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from cryptography.fernet import Fernet, InvalidToken
 
-from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig, UserRetentionRate
+from models import db, User, Report, Material, MaterialRequest, AuditLog, SystemConfig, UserRetentionRate, LedgerEntry
 
 app = Flask(__name__)
 _sk = os.environ.get('SECRET_KEY')
@@ -83,6 +83,61 @@ def decrypt_bank(acct: str) -> str:
         return _fernet.decrypt(acct.encode()).decode()
     except (InvalidToken, Exception):
         return acct  # 過渡期：明文資料直接回傳
+
+
+# Cloudflare R2 (S3-compatible object storage for ledger receipts)
+_R2_ACCOUNT_ID        = os.environ.get('R2_ACCOUNT_ID', '').strip()
+_R2_ACCESS_KEY_ID     = os.environ.get('R2_ACCESS_KEY_ID', '').strip()
+_R2_SECRET_ACCESS_KEY = os.environ.get('R2_SECRET_ACCESS_KEY', '').strip()
+_R2_BUCKET            = os.environ.get('R2_BUCKET_NAME', '').strip()
+
+_r2_client = None
+if _R2_ACCOUNT_ID and _R2_ACCESS_KEY_ID and _R2_SECRET_ACCESS_KEY and _R2_BUCKET:
+    try:
+        import boto3
+        _r2_client = boto3.client(
+            's3',
+            endpoint_url=f'https://{_R2_ACCOUNT_ID}.r2.cloudflarestorage.com',
+            aws_access_key_id=_R2_ACCESS_KEY_ID,
+            aws_secret_access_key=_R2_SECRET_ACCESS_KEY,
+            region_name='auto',
+        )
+    except Exception:
+        import logging as _log_r2
+        _log_r2.warning('R2 client init failed — receipt upload disabled')
+
+ALLOWED_RECEIPT_TYPES = {'application/pdf', 'image/jpeg', 'image/png', 'image/webp'}
+MAX_RECEIPT_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _r2_upload(file_obj, object_key: str, content_type: str = 'application/octet-stream') -> bool:
+    if not _r2_client:
+        return False
+    _r2_client.upload_fileobj(
+        file_obj,
+        _R2_BUCKET,
+        object_key,
+        ExtraArgs={'ContentType': content_type},
+    )
+    return True
+
+
+def _r2_delete(object_key: str):
+    if _r2_client and object_key:
+        try:
+            _r2_client.delete_object(Bucket=_R2_BUCKET, Key=object_key)
+        except Exception:
+            pass
+
+
+def _r2_presigned_url(object_key: str, expiry: int = 3600) -> str:
+    if not _r2_client or not object_key:
+        return ''
+    return _r2_client.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': _R2_BUCKET, 'Key': object_key},
+        ExpiresIn=expiry,
+    )
 
 
 # SEC-008: HTTP security headers
@@ -243,6 +298,9 @@ def _init_db():
         "CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id, created_at)",
         # 帳戶保留金費率批次載入
         "CREATE INDEX IF NOT EXISTS idx_urt_user ON user_retention_rates(user_id)",
+        # 流水帳
+        "CREATE INDEX IF NOT EXISTS ix_ledger_date ON ledger_entries(entry_date)",
+        "CREATE INDEX IF NOT EXISTS ix_ledger_type ON ledger_entries(entry_type)",
     ]
     from sqlalchemy import text as _text
     for _sql in _indexes:
@@ -2639,6 +2697,292 @@ def personal_stats():
                            my_insurance=current_user.insurance_deduction,
                            my_tax_exempt=current_user.tax_exempt,
                            tax_rate=get_tax_rate())
+
+
+# ---------------------------------------------------------------------------
+# Ledger (公司流水帳 + 憑證上傳) — ADMIN only
+# ---------------------------------------------------------------------------
+
+LEDGER_CATEGORIES = ['材料費', '人工費', '雜支', '設備費', '運費', '其他']
+
+
+@app.route('/ledger')
+@login_required
+@admin_required
+def ledger():
+    page        = request.args.get('page', 1, type=int)
+    f_start     = request.args.get('start_date', '')
+    f_end       = request.args.get('end_date', '')
+    f_type      = request.args.get('entry_type', '')
+    f_category  = request.args.get('category', '')
+
+    q = LedgerEntry.query
+    if f_start:
+        try:
+            q = q.filter(LedgerEntry.entry_date >= date.fromisoformat(f_start))
+        except ValueError:
+            pass
+    if f_end:
+        try:
+            q = q.filter(LedgerEntry.entry_date <= date.fromisoformat(f_end))
+        except ValueError:
+            pass
+    if f_type in ('INCOME', 'EXPENSE'):
+        q = q.filter(LedgerEntry.entry_type == f_type)
+    if f_category:
+        q = q.filter(LedgerEntry.category == f_category)
+
+    pagination  = q.order_by(LedgerEntry.entry_date.desc(), LedgerEntry.id.desc()).paginate(
+        page=page, per_page=20, error_out=False)
+    entries     = pagination.items
+
+    total_income  = db.session.query(db.func.sum(LedgerEntry.amount)).filter(
+        LedgerEntry.entry_type == 'INCOME').scalar() or 0
+    total_expense = db.session.query(db.func.sum(LedgerEntry.amount)).filter(
+        LedgerEntry.entry_type == 'EXPENSE').scalar() or 0
+
+    url_args = {k: v for k, v in request.args.items() if k != 'page'}
+    return render_template('ledger.html',
+                           pagination=pagination, entries=entries,
+                           total_income=total_income, total_expense=total_expense,
+                           categories=LEDGER_CATEGORIES,
+                           f_start=f_start, f_end=f_end,
+                           f_type=f_type, f_category=f_category,
+                           url_args=url_args,
+                           r2_enabled=bool(_r2_client))
+
+
+@app.route('/ledger/add', methods=['POST'])
+@login_required
+@admin_required
+def ledger_add():
+    entry_date  = request.form.get('entry_date', '').strip()
+    description = request.form.get('description', '').strip()
+    amount_str  = request.form.get('amount', '').strip()
+    entry_type  = request.form.get('entry_type', '').strip()
+    category    = request.form.get('category', '').strip()
+    note        = request.form.get('note', '').strip()
+
+    if not entry_date or not description or not amount_str or entry_type not in ('INCOME', 'EXPENSE'):
+        flash('必填欄位不完整', 'danger')
+        return redirect(url_for('ledger'))
+    try:
+        amount = int(amount_str)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        flash('金額必須為正整數', 'danger')
+        return redirect(url_for('ledger'))
+
+    receipt_key  = None
+    receipt_name = None
+    receipt_file = request.files.get('receipt')
+    if receipt_file and receipt_file.filename:
+        if receipt_file.content_type not in ALLOWED_RECEIPT_TYPES:
+            flash('憑證格式不支援（僅接受 PDF / JPG / PNG / WebP）', 'danger')
+            return redirect(url_for('ledger'))
+        data = receipt_file.read()
+        if len(data) > MAX_RECEIPT_BYTES:
+            flash('憑證檔案超過 10MB 上限', 'danger')
+            return redirect(url_for('ledger'))
+        if not _r2_client:
+            flash('R2 儲存未設定，無法上傳憑證，請聯繫管理員', 'warning')
+        else:
+            import uuid
+            ext = receipt_file.filename.rsplit('.', 1)[-1].lower() if '.' in receipt_file.filename else 'bin'
+            receipt_key = f'receipts/{entry_date}/{uuid.uuid4().hex}.{ext}'
+            receipt_name = receipt_file.filename
+            ct = receipt_file.content_type
+            try:
+                _r2_upload(io.BytesIO(data), receipt_key, ct)
+            except Exception as e:
+                app.logger.error(f'R2 upload failed: {e}')
+                flash('憑證上傳失敗，記錄仍已儲存（無附件）', 'warning')
+                receipt_key = None
+                receipt_name = None
+
+    entry = LedgerEntry(
+        entry_date=date.fromisoformat(entry_date),
+        description=description,
+        amount=amount,
+        entry_type=entry_type,
+        category=category or None,
+        note=note or None,
+        receipt_key=receipt_key,
+        receipt_name=receipt_name,
+        created_by=current_user.id,
+    )
+    db.session.add(entry)
+    db.session.commit()
+    add_audit(current_user.id, 'LEDGER_ADD', f'新增流水帳「{description}」{entry_type} {amount}元')
+    flash('記錄已新增', 'success')
+    return redirect(url_for('ledger'))
+
+
+@app.route('/ledger/<int:entry_id>/edit', methods=['POST'])
+@login_required
+@admin_required
+def ledger_edit(entry_id):
+    entry = LedgerEntry.query.get_or_404(entry_id)
+
+    entry_date  = request.form.get('entry_date', '').strip()
+    description = request.form.get('description', '').strip()
+    amount_str  = request.form.get('amount', '').strip()
+    entry_type  = request.form.get('entry_type', '').strip()
+    category    = request.form.get('category', '').strip()
+    note        = request.form.get('note', '').strip()
+
+    if not entry_date or not description or not amount_str or entry_type not in ('INCOME', 'EXPENSE'):
+        flash('必填欄位不完整', 'danger')
+        return redirect(url_for('ledger'))
+    try:
+        amount = int(amount_str)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        flash('金額必須為正整數', 'danger')
+        return redirect(url_for('ledger'))
+
+    receipt_file = request.files.get('receipt')
+    if receipt_file and receipt_file.filename:
+        if receipt_file.content_type not in ALLOWED_RECEIPT_TYPES:
+            flash('憑證格式不支援', 'danger')
+            return redirect(url_for('ledger'))
+        data = receipt_file.read()
+        if len(data) > MAX_RECEIPT_BYTES:
+            flash('憑證檔案超過 10MB 上限', 'danger')
+            return redirect(url_for('ledger'))
+        if _r2_client:
+            old_key = entry.receipt_key
+            import uuid
+            ext = receipt_file.filename.rsplit('.', 1)[-1].lower() if '.' in receipt_file.filename else 'bin'
+            new_key = f'receipts/{entry_date}/{uuid.uuid4().hex}.{ext}'
+            try:
+                _r2_upload(io.BytesIO(data), new_key, receipt_file.content_type)
+                if old_key:
+                    _r2_delete(old_key)
+                entry.receipt_key  = new_key
+                entry.receipt_name = receipt_file.filename
+            except Exception as e:
+                app.logger.error(f'R2 upload failed during edit: {e}')
+                flash('新憑證上傳失敗，保留原附件', 'warning')
+        else:
+            flash('R2 儲存未設定，無法更換憑證', 'warning')
+
+    entry.entry_date  = date.fromisoformat(entry_date)
+    entry.description = description
+    entry.amount      = amount
+    entry.entry_type  = entry_type
+    entry.category    = category or None
+    entry.note        = note or None
+    entry.updated_at  = datetime.utcnow()
+    db.session.commit()
+    add_audit(current_user.id, 'LEDGER_EDIT', f'編輯流水帳 #{entry_id}「{description}」')
+    flash('記錄已更新', 'success')
+    return redirect(url_for('ledger'))
+
+
+@app.route('/ledger/<int:entry_id>/delete', methods=['POST'])
+@login_required
+@admin_required
+def ledger_delete(entry_id):
+    entry = LedgerEntry.query.get_or_404(entry_id)
+    if entry.receipt_key:
+        _r2_delete(entry.receipt_key)
+    desc = entry.description
+    db.session.delete(entry)
+    db.session.commit()
+    add_audit(current_user.id, 'LEDGER_DELETE', f'刪除流水帳 #{entry_id}「{desc}」')
+    flash('記錄已刪除', 'success')
+    return redirect(url_for('ledger'))
+
+
+@app.route('/ledger/<int:entry_id>/receipt')
+@login_required
+@admin_required
+def ledger_receipt(entry_id):
+    entry = LedgerEntry.query.get_or_404(entry_id)
+    if not entry.receipt_key:
+        flash('此記錄無附件', 'warning')
+        return redirect(url_for('ledger'))
+    if not _r2_client:
+        flash('R2 儲存未設定', 'danger')
+        return redirect(url_for('ledger'))
+    url = _r2_presigned_url(entry.receipt_key, expiry=3600)
+    if not url:
+        flash('無法產生下載連結', 'danger')
+        return redirect(url_for('ledger'))
+    return redirect(url)
+
+
+@app.route('/ledger/export')
+@login_required
+@admin_required
+def ledger_export():
+    f_start    = request.args.get('start_date', '')
+    f_end      = request.args.get('end_date', '')
+    f_type     = request.args.get('entry_type', '')
+    f_category = request.args.get('category', '')
+
+    q = LedgerEntry.query
+    if f_start:
+        try:
+            q = q.filter(LedgerEntry.entry_date >= date.fromisoformat(f_start))
+        except ValueError:
+            pass
+    if f_end:
+        try:
+            q = q.filter(LedgerEntry.entry_date <= date.fromisoformat(f_end))
+        except ValueError:
+            pass
+    if f_type in ('INCOME', 'EXPENSE'):
+        q = q.filter(LedgerEntry.entry_type == f_type)
+    if f_category:
+        q = q.filter(LedgerEntry.category == f_category)
+
+    entries = q.order_by(LedgerEntry.entry_date.asc(), LedgerEntry.id.asc()).all()
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '流水帳'
+
+    headers = ['日期', '說明', '類型', '類別', '金額(NTD)', '備註', '有附件']
+    ws.append(headers)
+    hdr_font = Font(bold=True)
+    hdr_fill = PatternFill('solid', fgColor='D9E1F2')
+    for cell in ws[1]:
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = Alignment(horizontal='center')
+
+    type_label = {'INCOME': '收入', 'EXPENSE': '支出'}
+    for e in entries:
+        ws.append([
+            e.entry_date.strftime('%Y-%m-%d'),
+            e.description,
+            type_label.get(e.entry_type, e.entry_type),
+            e.category or '',
+            e.amount,
+            e.note or '',
+            '是' if e.receipt_key else '否',
+        ])
+
+    ws.column_dimensions['A'].width = 12
+    ws.column_dimensions['B'].width = 30
+    ws.column_dimensions['C'].width = 8
+    ws.column_dimensions['D'].width = 12
+    ws.column_dimensions['E'].width = 12
+    ws.column_dimensions['F'].width = 30
+    ws.column_dimensions['G'].width = 8
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f'流水帳_{date.today().strftime("%Y%m%d")}.xlsx'
+    return send_file(buf, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 # ---------------------------------------------------------------------------

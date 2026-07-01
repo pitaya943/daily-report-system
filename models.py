@@ -120,3 +120,23 @@ class UserRetentionRate(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     field = db.Column(db.String(50), nullable=False)
     rate = db.Column(db.Integer, nullable=False, default=0)
+
+
+class LedgerEntry(db.Model):
+    __tablename__ = 'ledger_entries'
+    __table_args__ = (
+        db.Index('ix_ledger_date', 'entry_date'),
+        db.Index('ix_ledger_type', 'entry_type'),
+    )
+    id           = db.Column(db.Integer, primary_key=True)
+    entry_date   = db.Column(db.Date, nullable=False)
+    description  = db.Column(db.String(200), nullable=False)
+    amount       = db.Column(db.Integer, nullable=False)       # NTD，正=收入，負=支出
+    entry_type   = db.Column(db.String(10), nullable=False)    # 'INCOME' / 'EXPENSE'
+    category     = db.Column(db.String(50), nullable=True)
+    note         = db.Column(db.Text, nullable=True)
+    receipt_key  = db.Column(db.String(300), nullable=True)    # R2 object key (path in bucket)
+    receipt_name = db.Column(db.String(200), nullable=True)    # original filename
+    created_by   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at   = db.Column(db.DateTime, default=datetime.utcnow)

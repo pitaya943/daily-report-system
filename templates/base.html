@@ -147,6 +147,11 @@
        title="薪資計算">
       <i class="bi bi-currency-dollar"></i><span class="nav-text"> 薪資計算</span>
     </a>
+    <a href="{{ url_for('ledger') }}"
+       class="nav-link {% if request.endpoint in ('ledger','ledger_add','ledger_edit','ledger_delete','ledger_receipt','ledger_export') %}active{% endif %}"
+       title="流水帳">
+      <i class="bi bi-journal-text"></i><span class="nav-text"> 流水帳</span>
+    </a>
     {% endif %}
   </div>
 </nav>

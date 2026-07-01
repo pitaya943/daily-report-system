@@ -1,0 +1,347 @@
+{% extends 'base.html' %}
+{% from '_pagination.html' import paginate %}
+{% block title %}流水帳{% endblock %}
+{% block page_title %}<i class="bi bi-journal-text me-2"></i>公司流水帳{% endblock %}
+
+{% block content %}
+
+<!-- Summary Cards -->
+<div class="row g-3 mb-3">
+  <div class="col-sm-4">
+    <div class="card border-success">
+      <div class="card-body py-2">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <div class="text-muted small">總收入</div>
+            <div class="fw-bold text-success fs-5">NT$ {{ '{:,}'.format(total_income) }}</div>
+          </div>
+          <i class="bi bi-arrow-up-circle-fill text-success fs-3 opacity-50"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card border-danger">
+      <div class="card-body py-2">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <div class="text-muted small">總支出</div>
+            <div class="fw-bold text-danger fs-5">NT$ {{ '{:,}'.format(total_expense) }}</div>
+          </div>
+          <i class="bi bi-arrow-down-circle-fill text-danger fs-3 opacity-50"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="card border-primary">
+      <div class="card-body py-2">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <div class="text-muted small">淨餘</div>
+            {% set net = total_income - total_expense %}
+            <div class="fw-bold fs-5 {{ 'text-success' if net >= 0 else 'text-danger' }}">
+              NT$ {{ '{:,}'.format(net) }}
+            </div>
+          </div>
+          <i class="bi bi-wallet2 text-primary fs-3 opacity-50"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toolbar: filter + add + export -->
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="GET" action="{{ url_for('ledger') }}" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label mb-0 small fw-semibold">起始日期</label>
+        <input type="date" name="start_date" class="form-control form-control-sm" value="{{ f_start }}">
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-0 small fw-semibold">結束日期</label>
+        <input type="date" name="end_date" class="form-control form-control-sm" value="{{ f_end }}">
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-0 small fw-semibold">類型</label>
+        <select name="entry_type" class="form-select form-select-sm">
+          <option value="" {% if not f_type %}selected{% endif %}>全部</option>
+          <option value="INCOME" {% if f_type == 'INCOME' %}selected{% endif %}>收入</option>
+          <option value="EXPENSE" {% if f_type == 'EXPENSE' %}selected{% endif %}>支出</option>
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label mb-0 small fw-semibold">類別</label>
+        <select name="category" class="form-select form-select-sm">
+          <option value="" {% if not f_category %}selected{% endif %}>全部</option>
+          {% for cat in categories %}
+          <option value="{{ cat }}" {% if f_category == cat %}selected{% endif %}>{{ cat }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto d-flex gap-1">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-search me-1"></i>篩選
+        </button>
+        <a href="{{ url_for('ledger') }}" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-x-circle me-1"></i>重置
+        </a>
+        <a href="{{ url_for('ledger_export', **url_args) }}" class="btn btn-outline-success btn-sm">
+          <i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add button -->
+<div class="mb-2 d-flex justify-content-end">
+  <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addModal">
+    <i class="bi bi-plus-lg me-1"></i>新增記錄
+  </button>
+</div>
+
+<!-- Ledger table -->
+<div class="card">
+  <div class="card-header">
+    <i class="bi bi-journal-text me-1"></i>流水帳記錄
+    <span class="badge bg-secondary ms-1">{{ pagination.total }}</span>
+  </div>
+  <div class="card-body p-0">
+    {% if pagination.total > 0 %}
+    {{ paginate(pagination, 'ledger', url_args) }}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>日期</th>
+            <th>說明</th>
+            <th>類型</th>
+            <th>類別</th>
+            <th class="text-end">金額(NTD)</th>
+            <th>備註</th>
+            <th class="text-center">附件</th>
+            <th class="text-center">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+          <tr>
+            <td class="text-muted">{{ e.id }}</td>
+            <td class="text-nowrap">{{ e.entry_date }}</td>
+            <td>{{ e.description }}</td>
+            <td>
+              {% if e.entry_type == 'INCOME' %}
+                <span class="badge bg-success">收入</span>
+              {% else %}
+                <span class="badge bg-danger">支出</span>
+              {% endif %}
+            </td>
+            <td>{{ e.category or '' }}</td>
+            <td class="text-end fw-semibold {{ 'text-success' if e.entry_type == 'INCOME' else 'text-danger' }}">
+              {{ '{:,}'.format(e.amount) }}
+            </td>
+            <td class="text-muted" style="max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"
+                title="{{ e.note or '' }}">{{ e.note or '' }}</td>
+            <td class="text-center">
+              {% if e.receipt_key %}
+                <a href="{{ url_for('ledger_receipt', entry_id=e.id) }}"
+                   class="btn btn-outline-info btn-sm py-0 px-1" target="_blank" title="{{ e.receipt_name or '查看附件' }}">
+                  <i class="bi bi-paperclip"></i>
+                </a>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td class="text-center text-nowrap">
+              <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1"
+                      onclick="openEditModal({{ e.id }}, {{ e.entry_date | string | tojson }}, {{ e.description | tojson }},
+                               {{ e.entry_type | tojson }}, {{ (e.category or '') | tojson }}, {{ e.amount }},
+                               {{ (e.note or '') | tojson }}, {{ 'true' if e.receipt_name else 'false' }},
+                               {{ (e.receipt_name or '') | tojson }})"
+                      title="編輯">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form method="POST" action="{{ url_for('ledger_delete', entry_id=e.id) }}" style="display:inline"
+                    onsubmit="return confirm('確定刪除「{{ e.description }}」記錄？{% if e.receipt_key %}附件也將一併從 R2 刪除。{% endif %}')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1 ms-1" title="刪除">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ paginate(pagination, 'ledger', url_args) }}
+    {% else %}
+    <p class="text-center text-muted py-4 mb-0">
+      <i class="bi bi-inbox me-1"></i>無符合條件的記錄
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Add Modal -->
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>新增流水帳記錄</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('ledger_add') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold">日期 <span class="text-danger">*</span></label>
+              <input type="date" name="entry_date" id="add_entry_date" class="form-control" required>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold">類型 <span class="text-danger">*</span></label>
+              <select name="entry_type" class="form-select" required>
+                <option value="EXPENSE" selected>支出</option>
+                <option value="INCOME">收入</option>
+              </select>
+            </div>
+            <div class="col-sm-8">
+              <label class="form-label fw-semibold">說明 <span class="text-danger">*</span></label>
+              <input type="text" name="description" class="form-control" required
+                     maxlength="200" placeholder="例：購買材料、薪資發放">
+            </div>
+            <div class="col-sm-4">
+              <label class="form-label fw-semibold">金額 (NTD) <span class="text-danger">*</span></label>
+              <input type="number" name="amount" class="form-control" required min="1" placeholder="例：1500">
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold">類別</label>
+              <select name="category" class="form-select">
+                <option value="">（不指定）</option>
+                {% for cat in categories %}
+                <option value="{{ cat }}">{{ cat }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold">上傳憑證
+                {% if not r2_enabled %}
+                  <span class="badge bg-warning text-dark ms-1">R2 未設定</span>
+                {% endif %}
+              </label>
+              <input type="file" name="receipt" class="form-control"
+                     accept=".pdf,.jpg,.jpeg,.png,.webp"
+                     {% if not r2_enabled %}disabled{% endif %}>
+              <div class="form-text">支援 PDF / JPG / PNG / WebP，上限 10MB</div>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold">備註</label>
+              <textarea name="note" class="form-control" rows="2" maxlength="500" placeholder="（選填）"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-success"><i class="bi bi-check-lg me-1"></i>儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>編輯記錄</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" id="editForm" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold">日期 <span class="text-danger">*</span></label>
+              <input type="date" name="entry_date" id="edit_entry_date" class="form-control" required>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold">類型 <span class="text-danger">*</span></label>
+              <select name="entry_type" id="edit_entry_type" class="form-select" required>
+                <option value="EXPENSE">支出</option>
+                <option value="INCOME">收入</option>
+              </select>
+            </div>
+            <div class="col-sm-8">
+              <label class="form-label fw-semibold">說明 <span class="text-danger">*</span></label>
+              <input type="text" name="description" id="edit_description" class="form-control" required maxlength="200">
+            </div>
+            <div class="col-sm-4">
+              <label class="form-label fw-semibold">金額 (NTD) <span class="text-danger">*</span></label>
+              <input type="number" name="amount" id="edit_amount" class="form-control" required min="1">
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold">類別</label>
+              <select name="category" id="edit_category" class="form-select">
+                <option value="">（不指定）</option>
+                {% for cat in categories %}
+                <option value="{{ cat }}">{{ cat }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label fw-semibold">更換憑證
+                {% if not r2_enabled %}
+                  <span class="badge bg-warning text-dark ms-1">R2 未設定</span>
+                {% endif %}
+              </label>
+              <input type="file" name="receipt" id="edit_receipt" class="form-control"
+                     accept=".pdf,.jpg,.jpeg,.png,.webp"
+                     {% if not r2_enabled %}disabled{% endif %}>
+              <div class="form-text" id="edit_receipt_hint"></div>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold">備註</label>
+              <textarea name="note" id="edit_note" class="form-control" rows="2" maxlength="500"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>更新</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% block scripts %}
+<script>
+const TODAY = new Date().toISOString().slice(0, 10);
+document.getElementById('add_entry_date').value = TODAY;
+
+function openEditModal(id, entryDate, description, entryType, category, amount, note, hasReceipt, receiptName) {
+  document.getElementById('editForm').action = '/ledger/' + id + '/edit';
+  document.getElementById('edit_entry_date').value  = entryDate;
+  document.getElementById('edit_description').value = description;
+  document.getElementById('edit_amount').value       = amount;
+  document.getElementById('edit_note').value         = note;
+
+  const typeEl = document.getElementById('edit_entry_type');
+  typeEl.value = entryType;
+
+  const catEl = document.getElementById('edit_category');
+  catEl.value = category;
+
+  const hint = document.getElementById('edit_receipt_hint');
+  hint.textContent = hasReceipt ? '目前附件：' + receiptName + '（選擇新檔案將取代原附件）' : '（無附件）';
+
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+</script>
+{% endblock %}
+{% endblock %}
