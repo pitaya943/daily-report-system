@@ -158,10 +158,8 @@
             </td>
             <td class="text-muted small">{{ users_dict.get(e.created_by, '?') }}</td>
             <td class="text-center text-nowrap">
-              {# 用 data-entry 傳 JSON，避免 tojson 的雙引號破壞 onclick 屬性 #}
               <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1 btn-edit-ledger"
-                      data-entry="{{ {'id': e.id, 'entry_date': e.entry_date|string, 'description': e.description, 'entry_type': e.entry_type, 'category': e.category or '', 'amount': e.amount, 'note': e.note or '', 'has_receipt': e.receipt_key is not none, 'receipt_name': e.receipt_name or ''} | tojson | e }}"
-                      title="編輯">
+                      data-id="{{ e.id }}" title="編輯">
                 <i class="bi bi-pencil"></i>
               </button>
               <form method="POST" action="{{ url_for('ledger_delete', entry_id=e.id) }}" style="display:inline"
@@ -339,11 +337,29 @@ function bindCounter(textareaId, counterId) {
 bindCounter('add_note', 'add_note_count');
 bindCounter('edit_note', 'edit_note_count');
 
-// 編輯 Modal：透過 data-entry JSON 傳資料，避免 tojson 雙引號破壞 onclick 屬性
+// 資料存在 JS 物件，按鈕只存 data-id（避免 HTML 屬性編碼問題）
+const LEDGER_DATA = {
+  {% for e in entries %}
+  {{ e.id }}: {{ {
+    'entry_date':  e.entry_date | string,
+    'description': e.description,
+    'entry_type':  e.entry_type,
+    'category':    e.category or '',
+    'amount':      e.amount,
+    'note':        e.note or '',
+    'has_receipt': e.receipt_key is not none,
+    'receipt_name': e.receipt_name or ''
+  } | tojson }}{% if not loop.last %},{% endif %}
+  {% endfor %}
+};
+
 document.querySelectorAll('.btn-edit-ledger').forEach(function(btn) {
   btn.addEventListener('click', function() {
-    const e = JSON.parse(this.dataset.entry);
-    document.getElementById('editForm').action = '/ledger/' + e.id + '/edit';
+    const id = parseInt(this.dataset.id, 10);
+    const e  = LEDGER_DATA[id];
+    if (!e) return;
+
+    document.getElementById('editForm').action        = '/ledger/' + id + '/edit';
     document.getElementById('edit_entry_date').value  = e.entry_date;
     document.getElementById('edit_description').value = e.description;
     document.getElementById('edit_amount').value      = e.amount;
@@ -351,12 +367,10 @@ document.querySelectorAll('.btn-edit-ledger').forEach(function(btn) {
     document.getElementById('edit_entry_type').value  = e.entry_type;
     document.getElementById('edit_category').value    = e.category;
 
-    const hint = document.getElementById('edit_receipt_hint');
-    hint.textContent = e.has_receipt
+    document.getElementById('edit_receipt_hint').textContent = e.has_receipt
       ? '目前附件：' + e.receipt_name + '（選擇新檔案將取代原附件）'
       : '（無附件）';
 
-    // 更新字數計數
     document.getElementById('edit_note_count').textContent = e.note.length;
 
     new bootstrap.Modal(document.getElementById('editModal')).show();
