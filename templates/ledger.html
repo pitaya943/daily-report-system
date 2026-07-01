@@ -147,7 +147,9 @@
               {{ '{:,}'.format(e.amount) }}
             </td>
             <td class="text-nowrap small">
-              {% if e.payer_id %}
+              {% if e.entry_type == 'INCOME' %}
+                <span class="text-muted">-</span>
+              {% elif e.payer_id %}
                 <span class="badge bg-warning text-dark">{{ users_dict.get(e.payer_id, '?') }}</span>
               {% else %}
                 <span class="text-muted">公司</span>
@@ -220,7 +222,7 @@
             </div>
             <div class="col-sm-6">
               <label class="form-label fw-semibold">類型 <span class="text-danger">*</span></label>
-              <select name="entry_type" class="form-select" required>
+              <select name="entry_type" id="add_entry_type" class="form-select" required>
                 <option value="EXPENSE" selected>支出</option>
                 <option value="INCOME">收入</option>
               </select>
@@ -244,9 +246,9 @@
                 {% endfor %}
               </select>
             </div>
-            <div class="col-sm-6">
+            <div class="col-sm-6" id="add_payer_wrap">
               <label class="form-label fw-semibold">支出者</label>
-              <select name="payer_id" class="form-select">
+              <select name="payer_id" id="add_payer_id" class="form-select">
                 <option value="">公司（預設）</option>
                 {% for u in admin_users %}
                 <option value="{{ u.id }}">{{ u.display_name }}</option>
@@ -322,7 +324,7 @@
                 {% endfor %}
               </select>
             </div>
-            <div class="col-sm-6">
+            <div class="col-sm-6" id="edit_payer_wrap">
               <label class="form-label fw-semibold">支出者</label>
               <select name="payer_id" id="edit_payer_id" class="form-select">
                 <option value="">公司（預設）</option>
@@ -361,6 +363,22 @@
 {% block scripts %}
 <script>
 document.getElementById('add_entry_date').value = new Date().toISOString().slice(0, 10);
+
+// 支出者欄位隨類型顯示/隱藏
+function syncPayerVis(typeSelId, wrapId, payerSelId) {
+  var sel  = document.getElementById(typeSelId);
+  var wrap = document.getElementById(wrapId);
+  var psel = document.getElementById(payerSelId);
+  if (!sel || !wrap) return;
+  function update() {
+    var isExpense = sel.value === 'EXPENSE';
+    wrap.style.display = isExpense ? '' : 'none';
+    if (!isExpense && psel) psel.value = '';
+  }
+  sel.addEventListener('change', update);
+  update();
+}
+syncPayerVis('add_entry_type', 'add_payer_wrap', 'add_payer_id');
 
 // 字數計數器
 function bindCounter(textareaId, counterId) {
@@ -411,6 +429,15 @@ document.querySelectorAll('.btn-edit-ledger').forEach(function(btn) {
       : '（無附件）';
 
     document.getElementById('edit_note_count').textContent = e.note.length;
+
+    // 依類型即時顯示/隱藏支出者
+    var editTypeEl = document.getElementById('edit_entry_type');
+    var editWrap   = document.getElementById('edit_payer_wrap');
+    if (editWrap) editWrap.style.display = (e.entry_type === 'EXPENSE') ? '' : 'none';
+    editTypeEl.onchange = function() {
+      if (editWrap) editWrap.style.display = (this.value === 'EXPENSE') ? '' : 'none';
+      if (this.value !== 'EXPENSE') document.getElementById('edit_payer_id').value = '';
+    };
 
     new bootstrap.Modal(document.getElementById('editModal')).show();
   });

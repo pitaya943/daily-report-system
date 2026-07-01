@@ -385,6 +385,15 @@ login_manager.login_message = '請先登入'
 login_manager.login_message_category = 'warning'
 
 
+@app.template_filter('tw_time')
+def tw_time_filter(dt):
+    """將 UTC datetime 轉換為 UTC+8（台灣時間）顯示。"""
+    if dt is None:
+        return ''
+    from datetime import timedelta
+    return (dt + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
@@ -2786,7 +2795,8 @@ def ledger_add():
     category     = request.form.get('category', '').strip()
     note         = request.form.get('note', '').strip()[:100]
     payer_id_str = request.form.get('payer_id', '').strip()
-    payer_id     = int(payer_id_str) if payer_id_str.isdigit() else None
+    # 收入不設支出者
+    payer_id     = (int(payer_id_str) if payer_id_str.isdigit() else None) if entry_type == 'EXPENSE' else None
 
     if not entry_date or not description or not amount_str or entry_type not in ('INCOME', 'EXPENSE'):
         flash('必填欄位不完整', 'danger')
@@ -2858,7 +2868,8 @@ def ledger_edit(entry_id):
     category     = request.form.get('category', '').strip()
     note         = request.form.get('note', '').strip()[:100]
     payer_id_str = request.form.get('payer_id', '').strip()
-    payer_id     = int(payer_id_str) if payer_id_str.isdigit() else None
+    # 收入不設支出者
+    payer_id     = (int(payer_id_str) if payer_id_str.isdigit() else None) if entry_type == 'EXPENSE' else None
 
     if not entry_date or not description or not amount_str or entry_type not in ('INCOME', 'EXPENSE'):
         flash('必填欄位不完整', 'danger')
@@ -3009,7 +3020,7 @@ def ledger_export():
     type_label  = {'INCOME': '收入', 'EXPENSE': '支出'}
     users_dict  = {u.id: u.display_name for u in User.query.all()}
     for e in entries:
-        payer_name = users_dict.get(e.payer_id, '?') if e.payer_id else '公司'
+        payer_name = '-' if e.entry_type == 'INCOME' else (users_dict.get(e.payer_id, '?') if e.payer_id else '公司')
         ws.append([
             e.entry_date.strftime('%Y-%m-%d'),
             e.description,
@@ -3146,7 +3157,7 @@ def _report_excel(report_type, label, start_date, end_date,
             ac.font = GRN_FONT; inc_total += e.amount
         else:
             ac.font = RED_FONT; exp_total += e.amount
-        payer_name = udict.get(e.payer_id, '?') if e.payer_id else '公司'
+        payer_name = '-' if e.entry_type == 'INCOME' else (udict.get(e.payer_id, '?') if e.payer_id else '公司')
         ws2.cell(ri2, 6, payer_name)
         ws2.cell(ri2, 7, e.note or '')
         ws2.cell(ri2, 8, udict.get(e.created_by, '?'))
@@ -3304,7 +3315,7 @@ def _report_pdf(report_type, label, start_date, end_date,
     l_rows = [['日期', '說明', '類型', '類別', '金額(NTD)', '支出者', '備註', '建立者']]
     for e in ledger_entries:
         t_lbl = '收入' if e.entry_type == 'INCOME' else '支出'
-        payer_name = udict.get(e.payer_id, '?') if e.payer_id else '公司'
+        payer_name = '-' if e.entry_type == 'INCOME' else (udict.get(e.payer_id, '?') if e.payer_id else '公司')
         l_rows.append([str(e.entry_date), e.description, t_lbl,
                        e.category or '', f'{e.amount:,}', payer_name,
                        e.note or '', udict.get(e.created_by, '?')])
@@ -3389,12 +3400,11 @@ def _run_auto_report(report_type: str, target_date, source: str = 'auto') -> tup
                 report_type=report_type, report_date=target_date, source='manual').count()
             r2_suffix = f'_{manual_count + 1}' if manual_count > 0 else ''
 
-        # Collect data
+        # Collect data — 與統計報表頁相同，不過濾 is_confirmed
         users     = User.query.order_by(User.id).all()
         reports   = (Report.query
                      .filter(Report.report_date >= start_date,
-                             Report.report_date <= end_date,
-                             Report.is_confirmed == True)
+                             Report.report_date <= end_date)
                      .all())
         ledger    = (LedgerEntry.query
                      .filter(LedgerEntry.entry_date >= start_date,
@@ -3403,28 +3413,15 @@ def _run_auto_report(report_type: str, target_date, source: str = 'auto') -> tup
         materials = Material.query.order_by(Material.sort_order.asc()).all()
         prices    = get_item_prices()
 
-        # Generate Excel
+        # Generate Excel only (PDF removed)
         excel_buf = _report_excel(report_type, label, start_date, end_date,
                                   users, reports, ledger, materials, prices)
 
-        # Generate PDF (non-fatal — continue with Excel-only if PDF fails)
-        try:
-            pdf_buf = _report_pdf(report_type, label, start_date, end_date,
-                                  users, reports, ledger, materials, prices)
-        except Exception as pdf_exc:
-            app.logger.error(
-                f'PDF generation failed for {report_type} {target_date}: {pdf_exc}\n'
-                + _tb.format_exc())
-            pdf_buf = None
-
-        r2_excel = r2_pdf = None
+        r2_excel = None
         if _r2_client:
             r2_excel = f'{prefix}/{label}{r2_suffix}.xlsx'
             _r2_upload(excel_buf, r2_excel,
                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            if pdf_buf is not None:
-                r2_pdf = f'{prefix}/{label}{r2_suffix}.pdf'
-                _r2_upload(pdf_buf, r2_pdf, 'application/pdf')
         else:
             app.logger.warning('R2 not configured — report generated but not uploaded')
 
@@ -3434,7 +3431,7 @@ def _run_auto_report(report_type: str, target_date, source: str = 'auto') -> tup
             period_start = start_date,
             period_end   = end_date,
             r2_key_excel = r2_excel,
-            r2_key_pdf   = r2_pdf,
+            r2_key_pdf   = None,
             source       = source,
         )
         db.session.add(archive)
@@ -3446,8 +3443,7 @@ def _run_auto_report(report_type: str, target_date, source: str = 'auto') -> tup
                       f'生成{"日報" if report_type == "DAILY" else "月報"} {label}{r2_suffix}{src_label}')
         db.session.commit()
         app.logger.info(
-            f'Report {report_type} {label} ({source}) generated OK — '
-            f'r2_excel={r2_excel}, r2_pdf={r2_pdf}')
+            f'Report {report_type} {label} ({source}) generated OK — r2_excel={r2_excel}')
         return True, None
 
     except Exception as exc:

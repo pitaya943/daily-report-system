@@ -73,9 +73,8 @@
             <th>來源</th>
             <th>報表日期</th>
             <th>涵蓋期間</th>
-            <th>生成時間</th>
+            <th>生成時間 (UTC+8)</th>
             <th class="text-center">Excel</th>
-            <th class="text-center">PDF</th>
           </tr>
         </thead>
         <tbody>
@@ -98,22 +97,12 @@
             </td>
             <td class="text-nowrap fw-semibold">{{ arc.report_date }}</td>
             <td class="text-muted small text-nowrap">{{ arc.period_start }} ～ {{ arc.period_end }}</td>
-            <td class="text-muted small text-nowrap">{{ arc.generated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="text-muted small text-nowrap">{{ arc.generated_at | tw_time }}</td>
             <td class="text-center">
               {% if arc.r2_key_excel %}
                 <a href="{{ url_for('report_archive_download', archive_id=arc.id, fmt='excel') }}"
                    class="btn btn-outline-success btn-sm py-0 px-2" data-no-loading title="下載 Excel">
                   <i class="bi bi-file-earmark-excel me-1"></i>下載
-                </a>
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
-            </td>
-            <td class="text-center">
-              {% if arc.r2_key_pdf %}
-                <a href="{{ url_for('report_archive_download', archive_id=arc.id, fmt='pdf') }}"
-                   class="btn btn-outline-danger btn-sm py-0 px-2" data-no-loading title="下載 PDF">
-                  <i class="bi bi-file-earmark-pdf me-1"></i>下載
                 </a>
               {% else %}
                 <span class="text-muted">—</span>
