@@ -48,7 +48,7 @@ flowchart TD
         
         B6 -->|刪除| B16{權限檢查}
         B16 -->|USER 且已確認| B17[❌ 拒絕 - disabled 按鈕]
-        B16 -->|USER 未確認 或 ADMIN| B18[confirm() 確認對話框]
+        B16 -->|USER 未確認 或 ADMIN| B18["confirm() 確認對話框"]
         B18 --> B19[POST /history/id/delete]
         B19 --> B20[刪除回報\nadd_audit REPORT_DELETE]
         B20 --> B21[Redirect /history]
@@ -120,7 +120,7 @@ flowchart LR
     U -->|❌ 禁止| C
     U -->|❌ 禁止| R
     A -->|可編輯| D
-    A -->|可編輯\n自動取消確認| C
+    A -->|可編輯 自動取消確認| C
     A -->|可編輯| R
 ```
 
