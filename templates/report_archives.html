@@ -8,8 +8,8 @@
 <!-- 說明卡 -->
 <div class="alert alert-info py-2 mb-3">
   <i class="bi bi-info-circle me-1"></i>
-  系統每日 <strong>23:59</strong> 自動生成日報；每月最後一天 <strong>23:59</strong> 自動生成月報，並上傳至 Cloudflare R2。
-  亦可手動觸發生成（會覆蓋同日期的舊報表）。
+  系統每日 <strong>23:59</strong> 自動生成日報（<span class="badge bg-secondary">自動</span>）；每月最後一天 <strong>23:59</strong> 自動生成月報，並上傳至 Cloudflare R2。
+  手動生成（<span class="badge bg-info text-dark">手動</span>）可隨時觸發，不影響自動報表，亦不互相覆蓋。
 </div>
 
 <!-- 篩選 + 手動生成 -->
@@ -70,6 +70,7 @@
           <tr>
             <th>#</th>
             <th>類型</th>
+            <th>來源</th>
             <th>報表日期</th>
             <th>涵蓋期間</th>
             <th>生成時間</th>
@@ -86,6 +87,13 @@
                 <span class="badge bg-primary">日報</span>
               {% else %}
                 <span class="badge bg-purple" style="background:#6f42c1">月報</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if arc.source == 'auto' %}
+                <span class="badge bg-secondary">自動</span>
+              {% else %}
+                <span class="badge bg-info text-dark">手動</span>
               {% endif %}
             </td>
             <td class="text-nowrap fw-semibold">{{ arc.report_date }}</td>

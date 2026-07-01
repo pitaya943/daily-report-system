@@ -310,6 +310,15 @@ def _init_db():
                 conn.commit()
         except Exception:
             pass
+    # Column migration: add source to report_archives if missing
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text(
+                "ALTER TABLE report_archives ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'auto'"
+            ))
+            conn.commit()
+    except Exception:
+        pass
 
 with app.app_context():
     _init_db()
@@ -3221,7 +3230,15 @@ def _report_pdf(report_type, label, start_date, end_date,
             user_totals[uid][k] += getattr(r, k, 0) or 0
 
     grand = {k: 0 for k, _ in REPORT_FIELDS}
-    hdr = ['帳戶'] + [lbl for _, lbl in REPORT_FIELDS] + ['合計']
+    # Compute narrow col widths to fit landscape A4 (avoids LayoutError on wide tables)
+    _pw = landscape(A4)[0] - 24 - 24        # ≈794 pt usable width
+    _nw, _tw = 60, 40                        # name / total fixed widths
+    _fw = max(25.0, (_pw - _nw - _tw) / len(REPORT_FIELDS))
+    _work_cw = [_nw] + [_fw] * len(REPORT_FIELDS) + [_tw]
+    _ws = sty('WS', fontSize=6, leading=8)  # small wrapping style for narrow headers
+    hdr = ([Paragraph('帳戶', _ws)] +
+           [Paragraph(lbl, _ws) for _, lbl in REPORT_FIELDS] +
+           [Paragraph('合計', _ws)])
     rows = [hdr]
     for uid, tots in user_totals.items():
         rows.append([udict.get(uid, f'UID{uid}')] +
@@ -3230,7 +3247,7 @@ def _report_pdf(report_type, label, start_date, end_date,
         for k, _ in REPORT_FIELDS:
             grand[k] += tots[k]
     rows.append(['總計'] + [grand[k] for k, _ in REPORT_FIELDS] + [sum(grand.values())])
-    story.append(mk_table(rows))
+    story.append(mk_table(rows, col_widths=_work_cw))
 
     # ── 流水帳 ───────────────────────────────────────────────────────────
     story.append(PageBreak())
@@ -3290,19 +3307,14 @@ def _report_pdf(report_type, label, start_date, end_date,
     return buf
 
 
-def _run_auto_report(report_type: str, target_date, allow_duplicate: bool = False):
+def _run_auto_report(report_type: str, target_date, source: str = 'auto') -> tuple:
     """生成日報或月報並上傳至 R2，記錄於 ReportArchive。
-    allow_duplicate=True 時允許同日期重複生成（R2 檔名加計數後綴）。
+    source='auto'   → 自動排程，檔名加 _auto，當天已有 auto 紀錄則跳過。
+    source='manual' → 手動生成，檔名加計數後綴（第 1 份無後綴，第 2 份加 _2…）。
+    回傳 (success: bool, err_msg: str | None)。
     """
+    import traceback as _tb
     try:
-        existing_count = ReportArchive.query.filter_by(
-            report_type=report_type, report_date=target_date).count()
-
-        # 自動排程：已有記錄則跳過
-        if existing_count > 0 and not allow_duplicate:
-            app.logger.info(f'Report {report_type} {target_date} already exists, skipping')
-            return
-
         if report_type == 'DAILY':
             start_date = end_date = target_date
             label = target_date.strftime('%Y-%m-%d')
@@ -3311,60 +3323,93 @@ def _run_auto_report(report_type: str, target_date, allow_duplicate: bool = Fals
             end_date   = target_date
             label      = target_date.strftime('%Y-%m')
 
-        users    = User.query.order_by(User.id).all()
-        reports  = (Report.query
-                    .filter(Report.report_date >= start_date,
-                            Report.report_date <= end_date,
-                            Report.is_confirmed == True)
-                    .all())
-        ledger   = (LedgerEntry.query
-                    .filter(LedgerEntry.entry_date >= start_date,
-                            LedgerEntry.entry_date <= end_date)
-                    .order_by(LedgerEntry.entry_date.asc()).all())
+        prefix = 'reports/daily' if report_type == 'DAILY' else 'reports/monthly'
+
+        if source == 'auto':
+            # 當天已有 auto 報表則跳過（避免重啟時重複生成）
+            existing_auto = ReportArchive.query.filter_by(
+                report_type=report_type, report_date=target_date, source='auto').first()
+            if existing_auto:
+                app.logger.info(
+                    f'Auto report {report_type} {target_date} already exists '
+                    f'(id={existing_auto.id}), skipping')
+                return True, None
+            r2_suffix = '_auto'
+        else:  # manual
+            manual_count = ReportArchive.query.filter_by(
+                report_type=report_type, report_date=target_date, source='manual').count()
+            r2_suffix = f'_{manual_count + 1}' if manual_count > 0 else ''
+
+        # Collect data
+        users     = User.query.order_by(User.id).all()
+        reports   = (Report.query
+                     .filter(Report.report_date >= start_date,
+                             Report.report_date <= end_date,
+                             Report.is_confirmed == True)
+                     .all())
+        ledger    = (LedgerEntry.query
+                     .filter(LedgerEntry.entry_date >= start_date,
+                              LedgerEntry.entry_date <= end_date)
+                     .order_by(LedgerEntry.entry_date.asc()).all())
         materials = Material.query.order_by(Material.sort_order.asc()).all()
         prices    = get_item_prices()
 
+        # Generate Excel
         excel_buf = _report_excel(report_type, label, start_date, end_date,
                                   users, reports, ledger, materials, prices)
-        pdf_buf   = _report_pdf(report_type, label, start_date, end_date,
-                                users, reports, ledger, materials, prices)
+
+        # Generate PDF (non-fatal — continue with Excel-only if PDF fails)
+        try:
+            pdf_buf = _report_pdf(report_type, label, start_date, end_date,
+                                  users, reports, ledger, materials, prices)
+        except Exception as pdf_exc:
+            app.logger.error(
+                f'PDF generation failed for {report_type} {target_date}: {pdf_exc}\n'
+                + _tb.format_exc())
+            pdf_buf = None
 
         r2_excel = r2_pdf = None
         if _r2_client:
-            prefix = 'reports/daily' if report_type == 'DAILY' else 'reports/monthly'
-            # 計數後綴：第 1 份無後綴，第 2 份起加 _2、_3…
-            suffix = f'_{existing_count + 1}' if existing_count > 0 else ''
-            r2_excel = f'{prefix}/{label}{suffix}.xlsx'
-            r2_pdf   = f'{prefix}/{label}{suffix}.pdf'
+            r2_excel = f'{prefix}/{label}{r2_suffix}.xlsx'
             _r2_upload(excel_buf, r2_excel,
                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            _r2_upload(pdf_buf, r2_pdf, 'application/pdf')
+            if pdf_buf is not None:
+                r2_pdf = f'{prefix}/{label}{r2_suffix}.pdf'
+                _r2_upload(pdf_buf, r2_pdf, 'application/pdf')
         else:
             app.logger.warning('R2 not configured — report generated but not uploaded')
 
         archive = ReportArchive(
-            report_type=report_type,
-            report_date=target_date,
-            period_start=start_date,
-            period_end=end_date,
-            r2_key_excel=r2_excel,
-            r2_key_pdf=r2_pdf,
+            report_type  = report_type,
+            report_date  = target_date,
+            period_start = start_date,
+            period_end   = end_date,
+            r2_key_excel = r2_excel,
+            r2_key_pdf   = r2_pdf,
+            source       = source,
         )
         db.session.add(archive)
 
         admin = User.query.filter_by(role='ADMIN').first()
         if admin:
-            suffix_label = f'（第 {existing_count + 1} 份）' if existing_count > 0 else ''
+            src_label = '（自動）' if source == 'auto' else '（手動）'
             add_audit(admin.id, 'AUTO_REPORT',
-                      f'生成{"日報" if report_type == "DAILY" else "月報"} {label}{suffix_label}')
+                      f'生成{"日報" if report_type == "DAILY" else "月報"} {label}{r2_suffix}{src_label}')
         db.session.commit()
-        app.logger.info(f'Auto report {report_type} {label} (copy #{existing_count + 1}) generated OK')
+        app.logger.info(
+            f'Report {report_type} {label} ({source}) generated OK — '
+            f'r2_excel={r2_excel}, r2_pdf={r2_pdf}')
+        return True, None
+
     except Exception as exc:
-        app.logger.error(f'Auto report {report_type} {target_date} failed: {exc}')
+        app.logger.error(
+            f'Report {report_type} {target_date} ({source}) failed: {exc}\n'
+            + _tb.format_exc())
         try:
             db.session.rollback()
         except Exception:
             pass
+        return False, str(exc)
 
 
 # ── 排程器（每天 23:59 日報；每月末 23:59 月報）────────────────────────
@@ -3376,11 +3421,15 @@ try:
 
     def _daily_job():
         with app.app_context():
-            _run_auto_report('DAILY', date.today())
+            ok, err = _run_auto_report('DAILY', date.today(), source='auto')
+            if not ok:
+                app.logger.error(f'Daily auto-report job failed: {err}')
 
     def _monthly_job():
         with app.app_context():
-            _run_auto_report('MONTHLY', date.today())
+            ok, err = _run_auto_report('MONTHLY', date.today(), source='auto')
+            if not ok:
+                app.logger.error(f'Monthly auto-report job failed: {err}')
 
     _scheduler.add_job(_daily_job,   CronTrigger(hour=23, minute=59, second=0,
                                                   timezone='Asia/Taipei'))
@@ -3452,10 +3501,12 @@ def manual_report():
         flash('日期格式錯誤', 'danger')
         return redirect(url_for('report_archives'))
 
-    _run_auto_report(rtype, rdate, allow_duplicate=True)
-    count = ReportArchive.query.filter_by(report_type=rtype, report_date=rdate).count()
+    success, err = _run_auto_report(rtype, rdate, source='manual')
     type_name = '日報' if rtype == 'DAILY' else '月報'
-    flash(f'{type_name} {rdate} 已生成（此日期共 {count} 份）', 'success')
+    if success:
+        flash(f'{type_name} {rdate} 已成功生成並上傳至 R2', 'success')
+    else:
+        flash(f'{type_name} {rdate} 生成失敗：{err}', 'danger')
     return redirect(url_for('report_archives'))
 
 

@@ -135,6 +135,7 @@ class ReportArchive(db.Model):
     period_end   = db.Column(db.Date, nullable=False)
     r2_key_excel = db.Column(db.String(300), nullable=True)
     r2_key_pdf   = db.Column(db.String(300), nullable=True)
+    source       = db.Column(db.String(10), nullable=False, default='auto')  # 'auto' / 'manual'
     generated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
