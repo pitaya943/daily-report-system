@@ -2741,7 +2741,8 @@ def ledger():
     total_expense = db.session.query(db.func.sum(LedgerEntry.amount)).filter(
         LedgerEntry.entry_type == 'EXPENSE').scalar() or 0
 
-    url_args = {k: v for k, v in request.args.items() if k != 'page'}
+    url_args  = {k: v for k, v in request.args.items() if k != 'page'}
+    users_dict = {u.id: u.display_name for u in User.query.all()}
     return render_template('ledger.html',
                            pagination=pagination, entries=entries,
                            total_income=total_income, total_expense=total_expense,
@@ -2749,6 +2750,7 @@ def ledger():
                            f_start=f_start, f_end=f_end,
                            f_type=f_type, f_category=f_category,
                            url_args=url_args,
+                           users_dict=users_dict,
                            r2_enabled=bool(_r2_client))
 
 
@@ -2761,7 +2763,7 @@ def ledger_add():
     amount_str  = request.form.get('amount', '').strip()
     entry_type  = request.form.get('entry_type', '').strip()
     category    = request.form.get('category', '').strip()
-    note        = request.form.get('note', '').strip()
+    note        = request.form.get('note', '').strip()[:100]
 
     if not entry_date or not description or not amount_str or entry_type not in ('INCOME', 'EXPENSE'):
         flash('必填欄位不完整', 'danger')
@@ -2830,7 +2832,7 @@ def ledger_edit(entry_id):
     amount_str  = request.form.get('amount', '').strip()
     entry_type  = request.form.get('entry_type', '').strip()
     category    = request.form.get('category', '').strip()
-    note        = request.form.get('note', '').strip()
+    note        = request.form.get('note', '').strip()[:100]
 
     if not entry_date or not description or not amount_str or entry_type not in ('INCOME', 'EXPENSE'):
         flash('必填欄位不完整', 'danger')

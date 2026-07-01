@@ -112,18 +112,19 @@
     {% if pagination.total > 0 %}
     {{ paginate(pagination, 'ledger', url_args) }}
     <div class="table-responsive">
-      <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
+      <table class="table table-sm table-hover mb-0" style="font-size:.85rem; min-width:900px">
         <thead class="table-light">
           <tr>
-            <th>#</th>
-            <th>日期</th>
+            <th style="width:40px">#</th>
+            <th style="width:95px">日期</th>
             <th>說明</th>
-            <th>類型</th>
-            <th>類別</th>
-            <th class="text-end">金額(NTD)</th>
-            <th>備註</th>
-            <th class="text-center">附件</th>
-            <th class="text-center">操作</th>
+            <th style="width:60px">類型</th>
+            <th style="width:70px">類別</th>
+            <th class="text-end" style="min-width:120px">金額(NTD)</th>
+            <th style="min-width:200px">備註</th>
+            <th style="width:55px" class="text-center">附件</th>
+            <th style="width:80px">建立者</th>
+            <th style="width:70px" class="text-center">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -140,10 +141,10 @@
               {% endif %}
             </td>
             <td>{{ e.category or '' }}</td>
-            <td class="text-end fw-semibold {{ 'text-success' if e.entry_type == 'INCOME' else 'text-danger' }}">
+            <td class="text-end fw-semibold text-nowrap {{ 'text-success' if e.entry_type == 'INCOME' else 'text-danger' }}">
               {{ '{:,}'.format(e.amount) }}
             </td>
-            <td class="text-muted" style="max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"
+            <td class="text-muted" style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"
                 title="{{ e.note or '' }}">{{ e.note or '' }}</td>
             <td class="text-center">
               {% if e.receipt_key %}
@@ -155,17 +156,16 @@
                 <span class="text-muted">—</span>
               {% endif %}
             </td>
+            <td class="text-muted small">{{ users_dict.get(e.created_by, '?') }}</td>
             <td class="text-center text-nowrap">
-              <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1"
-                      onclick="openEditModal({{ e.id }}, {{ e.entry_date | string | tojson }}, {{ e.description | tojson }},
-                               {{ e.entry_type | tojson }}, {{ (e.category or '') | tojson }}, {{ e.amount }},
-                               {{ (e.note or '') | tojson }}, {{ 'true' if e.receipt_name else 'false' }},
-                               {{ (e.receipt_name or '') | tojson }})"
+              {# 用 data-entry 傳 JSON，避免 tojson 的雙引號破壞 onclick 屬性 #}
+              <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1 btn-edit-ledger"
+                      data-entry="{{ {'id': e.id, 'entry_date': e.entry_date|string, 'description': e.description, 'entry_type': e.entry_type, 'category': e.category or '', 'amount': e.amount, 'note': e.note or '', 'has_receipt': e.receipt_key is not none, 'receipt_name': e.receipt_name or ''} | tojson | e }}"
                       title="編輯">
                 <i class="bi bi-pencil"></i>
               </button>
               <form method="POST" action="{{ url_for('ledger_delete', entry_id=e.id) }}" style="display:inline"
-                    onsubmit="return confirm('確定刪除「{{ e.description }}」記錄？{% if e.receipt_key %}附件也將一併從 R2 刪除。{% endif %}')">
+                    onsubmit="return confirm('確定刪除「{{ e.description | replace("'", "\\'") }}」記錄？{% if e.receipt_key %}附件也將一併從 R2 刪除。{% endif %}')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1 ms-1" title="刪除">
                   <i class="bi bi-trash"></i>
@@ -216,7 +216,8 @@
             </div>
             <div class="col-sm-4">
               <label class="form-label fw-semibold">金額 (NTD) <span class="text-danger">*</span></label>
-              <input type="number" name="amount" class="form-control" required min="1" placeholder="例：1500">
+              <input type="number" name="amount" class="form-control" required min="1"
+                     max="2000000000" placeholder="例：1500">
             </div>
             <div class="col-sm-6">
               <label class="form-label fw-semibold">類別</label>
@@ -239,8 +240,10 @@
               <div class="form-text">支援 PDF / JPG / PNG / WebP，上限 10MB</div>
             </div>
             <div class="col-12">
-              <label class="form-label fw-semibold">備註</label>
-              <textarea name="note" class="form-control" rows="2" maxlength="500" placeholder="（選填）"></textarea>
+              <label class="form-label fw-semibold">備註 <small class="text-muted fw-normal">（最多 100 字）</small></label>
+              <textarea name="note" class="form-control" rows="3" maxlength="100"
+                        placeholder="（選填）" id="add_note"></textarea>
+              <div class="form-text text-end"><span id="add_note_count">0</span> / 100 字</div>
             </div>
           </div>
         </div>
@@ -282,7 +285,7 @@
             </div>
             <div class="col-sm-4">
               <label class="form-label fw-semibold">金額 (NTD) <span class="text-danger">*</span></label>
-              <input type="number" name="amount" id="edit_amount" class="form-control" required min="1">
+              <input type="number" name="amount" id="edit_amount" class="form-control" required min="1" max="2000000000">
             </div>
             <div class="col-sm-6">
               <label class="form-label fw-semibold">類別</label>
@@ -305,8 +308,9 @@
               <div class="form-text" id="edit_receipt_hint"></div>
             </div>
             <div class="col-12">
-              <label class="form-label fw-semibold">備註</label>
-              <textarea name="note" id="edit_note" class="form-control" rows="2" maxlength="500"></textarea>
+              <label class="form-label fw-semibold">備註 <small class="text-muted fw-normal">（最多 100 字）</small></label>
+              <textarea name="note" id="edit_note" class="form-control" rows="3" maxlength="100"></textarea>
+              <div class="form-text text-end"><span id="edit_note_count">0</span> / 100 字</div>
             </div>
           </div>
         </div>
@@ -321,27 +325,43 @@
 
 {% block scripts %}
 <script>
-const TODAY = new Date().toISOString().slice(0, 10);
-document.getElementById('add_entry_date').value = TODAY;
+document.getElementById('add_entry_date').value = new Date().toISOString().slice(0, 10);
 
-function openEditModal(id, entryDate, description, entryType, category, amount, note, hasReceipt, receiptName) {
-  document.getElementById('editForm').action = '/ledger/' + id + '/edit';
-  document.getElementById('edit_entry_date').value  = entryDate;
-  document.getElementById('edit_description').value = description;
-  document.getElementById('edit_amount').value       = amount;
-  document.getElementById('edit_note').value         = note;
-
-  const typeEl = document.getElementById('edit_entry_type');
-  typeEl.value = entryType;
-
-  const catEl = document.getElementById('edit_category');
-  catEl.value = category;
-
-  const hint = document.getElementById('edit_receipt_hint');
-  hint.textContent = hasReceipt ? '目前附件：' + receiptName + '（選擇新檔案將取代原附件）' : '（無附件）';
-
-  new bootstrap.Modal(document.getElementById('editModal')).show();
+// 字數計數器
+function bindCounter(textareaId, counterId) {
+  const ta = document.getElementById(textareaId);
+  const ct = document.getElementById(counterId);
+  if (!ta || !ct) return;
+  const update = () => { ct.textContent = ta.value.length; };
+  ta.addEventListener('input', update);
+  update();
 }
+bindCounter('add_note', 'add_note_count');
+bindCounter('edit_note', 'edit_note_count');
+
+// 編輯 Modal：透過 data-entry JSON 傳資料，避免 tojson 雙引號破壞 onclick 屬性
+document.querySelectorAll('.btn-edit-ledger').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    const e = JSON.parse(this.dataset.entry);
+    document.getElementById('editForm').action = '/ledger/' + e.id + '/edit';
+    document.getElementById('edit_entry_date').value  = e.entry_date;
+    document.getElementById('edit_description').value = e.description;
+    document.getElementById('edit_amount').value      = e.amount;
+    document.getElementById('edit_note').value        = e.note;
+    document.getElementById('edit_entry_type').value  = e.entry_type;
+    document.getElementById('edit_category').value    = e.category;
+
+    const hint = document.getElementById('edit_receipt_hint');
+    hint.textContent = e.has_receipt
+      ? '目前附件：' + e.receipt_name + '（選擇新檔案將取代原附件）'
+      : '（無附件）';
+
+    // 更新字數計數
+    document.getElementById('edit_note_count').textContent = e.note.length;
+
+    new bootstrap.Modal(document.getElementById('editModal')).show();
+  });
+});
 </script>
 {% endblock %}
 {% endblock %}
