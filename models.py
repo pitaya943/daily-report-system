@@ -1,6 +1,10 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+def _tw_now():
+    return datetime.utcnow() + timedelta(hours=8)
 
 db = SQLAlchemy()
 
@@ -12,8 +16,8 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256), nullable=False)
     role = db.Column(db.String(10), nullable=False)  # 'ADMIN' or 'USER'
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_tw_now)
+    updated_at = db.Column(db.DateTime, default=_tw_now)
 
     payment_method      = db.Column(db.String(10), nullable=False, default='TRANSFER')  # CASH or TRANSFER
     insurance_deduction = db.Column(db.Integer,   nullable=False, default=0)           # NTD per pay period; 0 = not enrolled
@@ -62,8 +66,8 @@ class Report(db.Model):
     confirmed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     confirmed_at = db.Column(db.DateTime, nullable=True)
     is_rejected  = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_tw_now)
+    updated_at = db.Column(db.DateTime, default=_tw_now)
 
 
 class Material(db.Model):
@@ -73,8 +77,8 @@ class Material(db.Model):
     unit = db.Column(db.String(20), nullable=False)
     remaining_quantity = db.Column(db.Integer, default=0)
     sort_order = db.Column(db.Integer, nullable=False, default=0)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_tw_now)
+    updated_at = db.Column(db.DateTime, default=_tw_now)
 
 
 class MaterialRequest(db.Model):
@@ -90,7 +94,7 @@ class MaterialRequest(db.Model):
     status = db.Column(db.String(10), default='PENDING')  # PENDING, APPROVED, REJECTED
     reviewed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     reviewed_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_tw_now)
 
 
 class SystemConfig(db.Model):
@@ -110,7 +114,7 @@ class AuditLog(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     action_type = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=_tw_now)
 
 
 class UserRetentionRate(db.Model):
@@ -137,7 +141,7 @@ class ReportArchive(db.Model):
     r2_key_pdf   = db.Column(db.String(300), nullable=True)
     source       = db.Column(db.String(10), nullable=False, default='auto')  # 'auto' / 'manual'
     generated_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # NULL = 自動排程
-    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    generated_at = db.Column(db.DateTime, default=_tw_now)
 
 
 class LedgerEntry(db.Model):
@@ -157,5 +161,5 @@ class LedgerEntry(db.Model):
     receipt_name = db.Column(db.String(200), nullable=True)    # original filename
     created_by   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     payer_id     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # NULL = 公司
-    created_at   = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at   = db.Column(db.DateTime, default=_tw_now)
+    updated_at   = db.Column(db.DateTime, default=_tw_now)

@@ -394,13 +394,17 @@ login_manager.login_message = '請先登入'
 login_manager.login_message_category = 'warning'
 
 
+def tw_now():
+    """回傳目前台灣時間（UTC+8）的 naive datetime。"""
+    return datetime.utcnow() + timedelta(hours=8)
+
+
 @app.template_filter('tw_time')
 def tw_time_filter(dt):
-    """將 UTC datetime 轉換為 UTC+8（台灣時間）顯示。"""
+    """顯示已按 UTC+8 儲存的 datetime。"""
     if dt is None:
         return ''
-    from datetime import timedelta
-    return (dt + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
+    return dt.strftime('%Y-%m-%d %H:%M')
 
 
 @login_manager.user_loader
@@ -760,7 +764,7 @@ def history_edit(report_id):
 
     for key, _ in REPORT_FIELDS:
         setattr(r, key, new_vals[key])
-    r.updated_at = datetime.utcnow()
+    r.updated_at = tw_now()
 
     if was_confirmed and current_user.role == 'ADMIN':
         r.is_confirmed = False
@@ -905,7 +909,7 @@ def settings_password():
         flash('新密碼至少需要 4 個字元', 'danger')
     else:
         current_user.password_hash = generate_password_hash(new_pw)
-        current_user.updated_at = datetime.utcnow()
+        current_user.updated_at = tw_now()
         add_audit(current_user.id, 'PASSWORD_CHANGE',
                   f'{current_user.display_name} 修改了自己的密碼')
         db.session.commit()
@@ -972,7 +976,7 @@ def settings_update_display_name(user_id):
     else:
         old_name = target.display_name
         target.display_name = new_name
-        target.updated_at = datetime.utcnow()
+        target.updated_at = tw_now()
         add_audit(current_user.id, 'ACCOUNT_UPDATE',
                   f'更新帳戶名稱：{old_name} → {new_name}')
         db.session.commit()
@@ -994,7 +998,7 @@ def settings_payment_method(user_id):
         return redirect(url_for('settings'))
     old = target.payment_method
     target.payment_method = method
-    target.updated_at = datetime.utcnow()
+    target.updated_at = tw_now()
     label = '領現' if method == 'CASH' else '轉帳'
     add_audit(current_user.id, 'ACCOUNT_UPDATE',
               f'更新「{target.display_name}」發薪方式：{old} → {method}')
@@ -1014,7 +1018,7 @@ def settings_bank_account(user_id):
         flash('銀行帳號格式錯誤（需為 14 位數字：3碼分行代碼 + 11碼帳號主碼）', 'danger')
         return redirect(url_for('settings'))
     target.bank_account = encrypt_bank(acct) if acct else None
-    target.updated_at = datetime.utcnow()
+    target.updated_at = tw_now()
     if not target.bank_account and target.payment_method == 'TRANSFER':
         target.payment_method = 'CASH'
         add_audit(current_user.id, 'ACCOUNT_UPDATE',
@@ -1041,7 +1045,7 @@ def settings_fixed_salary(user_id):
         return redirect(url_for('settings'))
     old = target.fixed_salary
     target.fixed_salary = amount
-    target.updated_at = datetime.utcnow()
+    target.updated_at = tw_now()
     add_audit(current_user.id, 'ACCOUNT_UPDATE',
               f'更新「{target.display_name}」固定薪資：{old} → {amount} NTD')
     db.session.commit()
@@ -1079,7 +1083,7 @@ def settings_insurance(user_id):
         add_audit(current_user.id, 'ACCOUNT_UPDATE',
                   f'更新「{target.display_name}」投保狀態：未投保，扣稅務支出')
         flash(f'「{target.display_name}」已設為未投保（扣稅務支出）', 'success')
-    target.updated_at = datetime.utcnow()
+    target.updated_at = tw_now()
     db.session.commit()
     return redirect(url_for('settings'))
 
@@ -1238,7 +1242,7 @@ def settings_delete_user(user_id):
         db.session.delete(target)
     else:
         target.is_active = False
-        target.updated_at = datetime.utcnow()
+        target.updated_at = tw_now()
         add_audit(current_user.id, 'ACCOUNT_DEACTIVATE',
                   f'停用帳戶「{dname}」（保留歷史資料）')
 
@@ -1257,7 +1261,7 @@ def settings_reactivate_user(user_id):
         flash('該帳戶目前為啟用狀態', 'warning')
         return redirect(url_for('settings'))
     target.is_active = True
-    target.updated_at = datetime.utcnow()
+    target.updated_at = tw_now()
     add_audit(current_user.id, 'ACCOUNT_REACTIVATE',
               f'重新啟用帳戶「{target.display_name}」')
     db.session.commit()
@@ -1280,7 +1284,7 @@ def settings_reset_password(user_id):
         flash('兩次輸入的密碼不相符', 'danger')
     else:
         target.password_hash = generate_password_hash(new_pw)
-        target.updated_at = datetime.utcnow()
+        target.updated_at = tw_now()
         add_audit(current_user.id, 'PASSWORD_CHANGE',
                   f'{current_user.display_name} 重設了「{target.display_name}」的密碼')
         db.session.commit()
@@ -1391,7 +1395,7 @@ def materials_update(material_id):
         new_qty = 0
     old_qty = m.remaining_quantity
     m.remaining_quantity = new_qty
-    m.updated_at = datetime.utcnow()
+    m.updated_at = tw_now()
     add_audit(current_user.id, 'MATERIAL_UPDATE',
               f'調整「{m.name}」數量：{old_qty}{m.unit} → {new_qty}{m.unit}')
     db.session.commit()
@@ -1567,8 +1571,8 @@ def confirm_report(report_id):
     users_dict = {u.id: u for u in User.query.all()}
     r.is_confirmed = True
     r.confirmed_by = current_user.id
-    r.confirmed_at = datetime.utcnow()
-    r.updated_at = datetime.utcnow()
+    r.confirmed_at = tw_now()
+    r.updated_at = tw_now()
     add_audit(current_user.id, 'REPORT_CONFIRM',
               f'確認 {get_user_display(users_dict, r.user_id)} 的回報 #{r.id}（{r.report_date}）')
     db.session.commit()
@@ -1584,7 +1588,7 @@ def reject_report(report_id):
         abort(404)
     users_dict = {u.id: u for u in User.query.all()}
     r.is_rejected = True
-    r.updated_at = datetime.utcnow()
+    r.updated_at = tw_now()
     add_audit(current_user.id, 'REPORT_REJECT',
               f'駁回 {get_user_display(users_dict, r.user_id)} 的回報 #{r.id}（{r.report_date}）')
     db.session.commit()
@@ -1604,12 +1608,12 @@ def approve_material(req_id):
 
     req.status = 'APPROVED'
     req.reviewed_by = current_user.id
-    req.reviewed_at = datetime.utcnow()
+    req.reviewed_at = tw_now()
 
     old_qty = m.remaining_quantity if m else 0
     if m:
         m.remaining_quantity = max(0, m.remaining_quantity - req.requested_quantity)
-        m.updated_at = datetime.utcnow()
+        m.updated_at = tw_now()
 
     mname = m.name if m else '?'
     munit = m.unit if m else ''
@@ -1633,7 +1637,7 @@ def reject_material(req_id):
 
     req.status = 'REJECTED'
     req.reviewed_by = current_user.id
-    req.reviewed_at = datetime.utcnow()
+    req.reviewed_at = tw_now()
 
     mname = m.name if m else '?'
     munit = m.unit if m else ''
@@ -2858,8 +2862,8 @@ def ledger_add():
         payer_id=payer_id,
     )
     db.session.add(entry)
-    db.session.commit()
     add_audit(current_user.id, 'LEDGER_ADD', f'新增流水帳「{description}」{entry_type} {amount}元')
+    db.session.commit()
     flash('記錄已新增', 'success')
     return redirect(url_for('ledger'))
 
@@ -2924,9 +2928,9 @@ def ledger_edit(entry_id):
     entry.category    = category or None
     entry.note        = note or None
     entry.payer_id    = payer_id
-    entry.updated_at  = datetime.utcnow()
-    db.session.commit()
+    entry.updated_at  = tw_now()
     add_audit(current_user.id, 'LEDGER_EDIT', f'編輯流水帳 #{entry_id}「{description}」')
+    db.session.commit()
     flash('記錄已更新', 'success')
     return redirect(url_for('ledger'))
 
@@ -2940,8 +2944,8 @@ def ledger_delete(entry_id):
         _r2_delete(entry.receipt_key)
     desc = entry.description
     db.session.delete(entry)
-    db.session.commit()
     add_audit(current_user.id, 'LEDGER_DELETE', f'刪除流水帳 #{entry_id}「{desc}」')
+    db.session.commit()
     flash('記錄已刪除', 'success')
     return redirect(url_for('ledger'))
 
@@ -2958,7 +2962,7 @@ def ledger_settle(entry_id):
     payer = db.session.get(User, entry.payer_id)
     payer_name = payer.display_name if payer else '(已刪除)'
     entry.payer_id   = None
-    entry.updated_at = datetime.utcnow()
+    entry.updated_at = tw_now()
     add_audit(current_user.id, 'LEDGER_SETTLE',
               f'沖銷流水帳 #{entry_id}「{entry.description}」（原代墊人：{payer_name}）')
     db.session.commit()
@@ -3105,12 +3109,21 @@ def _report_excel(report_type, label, start_date, end_date,
 
     def auto_w(ws):
         from openpyxl.cell.cell import MergedCell
+        # 跨多欄的 merge origin 不應計入單欄寬度（例如標題列 A1:V1）
+        mc_origins = set()
+        for rng in ws.merged_cells.ranges:
+            if rng.max_col > rng.min_col:
+                mc_origins.add((rng.min_row, rng.min_col))
         for col in ws.columns:
-            cells = [c for c in col if not isinstance(c, MergedCell)]
-            if not cells:
+            real_cells = [c for c in col if not isinstance(c, MergedCell)]
+            if not real_cells:
                 continue
-            w = max((len(str(c.value or '')) for c in cells), default=4)
-            ws.column_dimensions[cells[0].column_letter].width = max(8, min(round(w / 0.7), 60))
+            col_letter = real_cells[0].column_letter
+            measure = [c for c in real_cells if (c.row, c.column) not in mc_origins]
+            if not measure:
+                continue
+            w = max((len(str(c.value or '')) for c in measure), default=4)
+            ws.column_dimensions[col_letter].width = max(8, min(round(w / 0.7), 60))
 
     wb = openpyxl.Workbook()
     udict = {u.id: u.display_name for u in users}
@@ -3532,7 +3545,7 @@ def report_archives():
     q = ReportArchive.query
     if f_type in ('DAILY', 'MONTHLY'):
         q = q.filter(ReportArchive.report_type == f_type)
-    pagination = q.order_by(ReportArchive.report_date.desc(),
+    pagination = q.order_by(ReportArchive.generated_at.desc(),
                              ReportArchive.id.desc()).paginate(
         page=page, per_page=30, error_out=False)
     url_args   = {k: v for k, v in request.args.items() if k != 'page'}
