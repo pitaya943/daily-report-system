@@ -197,4 +197,117 @@ flowchart TD
 
 ---
 
-*生成日期: 2026-06-30*
+---
+
+## 流水帳（Ledger）操作流程
+
+```mermaid
+flowchart TD
+    L_START([ADMIN 進入流水帳]) --> L1[GET /ledger\n顯示列表 + 期間合計]
+
+    subgraph ADD["新增記錄"]
+        L2[填寫：日期/描述/金額/類型/類別] --> L3{有憑證?}
+        L3 -->|是| L4[上傳 PDF/圖片 至 R2\nreceipt_key 儲存]
+        L3 -->|否| L5[receipt_key = NULL]
+        L4 --> L6[POST /ledger/add]
+        L5 --> L6
+        L6 --> L7[新增 LedgerEntry]
+        L7 --> L8[add_audit LEDGER_CREATE]
+        L8 --> L9[db.session.commit]
+    end
+
+    subgraph EDIT["修改記錄"]
+        E1[POST /ledger/id/edit] --> E2{換憑證?}
+        E2 -->|是| E3[刪除舊 R2 物件\n上傳新憑證]
+        E2 -->|否| E4[保留現有]
+        E3 --> E5[更新 LedgerEntry]
+        E4 --> E5
+        E5 --> E6[add_audit LEDGER_UPDATE]
+        E6 --> E7[db.session.commit]
+    end
+
+    subgraph DELETE["刪除記錄"]
+        D1[POST /ledger/id/delete] --> D2{有 R2 憑證?}
+        D2 -->|是| D3[r2_delete receipt_key]
+        D2 -->|否| D4[跳過]
+        D3 --> D5[刪除 LedgerEntry]
+        D4 --> D5
+        D5 --> D6[add_audit LEDGER_DELETE]
+        D6 --> D7[db.session.commit]
+    end
+
+    subgraph SETTLE["沖銷墊付"]
+        S1[POST /ledger/id/settle\nADMIN 確認員工墊付已還款] --> S2[更新記錄狀態]
+        S2 --> S3[add_audit LEDGER_SETTLE]
+        S3 --> S4[db.session.commit]
+    end
+
+    L1 --> ADD
+    L1 --> EDIT
+    L1 --> DELETE
+    L1 --> SETTLE
+```
+
+---
+
+## 日月報檔案庫（Report Archive）流程
+
+```mermaid
+flowchart TD
+    subgraph AUTO["自動生成（APScheduler）"]
+        A1{每日 23:59} --> A2[auto_daily_report]
+        A2 --> A3[生成當日已確認回報 Excel]
+        A3 --> A4[上傳至 R2\nreports/daily/YYYY/YYYYMMDD_daily.xlsx]
+        A4 --> A5[建立 ReportArchive 記錄\nsource=auto, generated_by=NULL]
+
+        A6{每月最後一天 23:59} --> A7[auto_monthly_report]
+        A7 --> A8[生成當月已確認回報 Excel\n含薪資彙總工作表]
+        A8 --> A9[上傳至 R2\nreports/monthly/YYYY/YYYYMM_monthly.xlsx]
+        A9 --> A10[建立 ReportArchive 記錄\nsource=auto, generated_by=NULL]
+    end
+
+    subgraph MANUAL["手動生成（ADMIN）"]
+        M1[ADMIN 在 /report_archives\n選擇日期+類型] --> M2[POST /report_archives/manual]
+        M2 --> M3[同 auto 生成邏輯]
+        M3 --> M4[建立 ReportArchive 記錄\nsource=manual, generated_by=ADMIN_ID]
+    end
+
+    subgraph DOWNLOAD["下載"]
+        DL1[GET /report_archives/id/download/excel] --> DL2{r2_key_excel 存在?}
+        DL2 -->|是| DL3[r2_presigned_url 3600s]
+        DL3 --> DL4[Redirect 至 R2 URL\n瀏覽器直接下載]
+        DL2 -->|否| DL5[Flash 錯誤]
+    end
+
+    subgraph DEL_ARC["刪除記錄"]
+        DA1[POST /report_archives/id/delete] --> DA2[r2_delete r2_key_excel]
+        DA2 --> DA3[db.session.delete ReportArchive]
+        DA3 --> DA4[db.session.commit]
+    end
+
+    AUTO --> DOWNLOAD
+    MANUAL --> DOWNLOAD
+    DOWNLOAD --> DEL_ARC
+```
+
+---
+
+## 薪資計算流程（v1.0.3 更新：包含停用帳戶）
+
+```mermaid
+flowchart TD
+    SAL1[POST /salary calculate] --> SAL2[查詢所有已確認回報\n不限帳戶狀態]
+    SAL2 --> SAL3[建立 user_data\n含 is_deactivated 旗標]
+    SAL3 --> SAL4[補入：有固定薪資但無回報的帳戶\n含停用帳戶]
+    SAL4 --> SAL5[批次查詢保留金費率]
+    SAL5 --> SAL6[計算每位帳戶薪資]
+    SAL6 --> SAL7{is_deactivated?}
+    SAL7 -->|是| SAL8[顯示名稱加 停用 badge\nExcel 顯示名稱加（停用）]
+    SAL7 -->|否| SAL9[正常顯示]
+    SAL8 --> SAL10[薪資計算結果頁面]
+    SAL9 --> SAL10
+```
+
+---
+
+*生成日期: 2026-07-01 | 版本: v1.0.3*

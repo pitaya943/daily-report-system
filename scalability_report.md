@@ -1,6 +1,6 @@
 # 擴展性報告 — 員工日報回報系統
 
-> 版本: v1.0.1 | 日期: 2026-06-30
+> 版本: v1.0.3 | 日期: 2026-07-01
 > 系統規模: 10 ADMIN + 75 USER = 85 人
 
 ---
@@ -61,8 +61,10 @@
 | 表格 | 每月新增 | 一年累積 | 五年累積 |
 |------|----------|----------|----------|
 | reports | 85 × 22 = 1,870 | 22,440 | 112,200 |
-| audit_logs | ~500 | ~6,000 | ~30,000 |
+| audit_logs | ~700 | ~8,400 | ~42,000 |
 | material_requests | ~200 | ~2,400 | ~12,000 |
+| ledger_entries | ~20 | ~240 | ~1,200 |
+| report_archives | ~23（22日+1月）| ~276 | ~1,380 |
 
 **結論**: 在正確索引下，SQLite 和 PostgreSQL 在此資料量下均能流暢運作（SQLite 支援至 TB 級別，PostgreSQL 更不受限）。
 
@@ -107,28 +109,19 @@
 
 ---
 
-### 瓶頸 3: 確認頁面 — 無分頁
+### 瓶頸 3: 確認頁面 — 無分頁 ✅ 已修復（v1.0.2）
 
-**描述**: `/confirmation` 顯示所有未確認回報。若積累大量未確認記錄（如系統閒置 1 個月），頁面可能載入 500+ 筆回報。
+**描述**: `/confirmation` 原本顯示所有未確認回報，可能載入 500+ 筆。
 
-**建議**: 加入分頁或日期篩選（如「僅顯示最近 30 天」的預設篩選）。
+**修復**: 已加入日期篩選（預設顯示最近 30 天），材料申請亦改為 20 筆分頁。
 
 ---
 
-### 瓶頸 4: 個人統計薪資試算 — 重複查詢保留金費率
+### 瓶頸 4: 個人統計薪資試算 — 重複查詢保留金費率 ✅ 已修復（v1.0.2）
 
-**描述**: `personal_stats()` 呼叫 `get_user_all_retention_rates(current_user.id)` 是針對單一用戶的版本，為 N 次查詢（N = RETENTION_FIELDS 數量）。
+**描述**: `personal_stats()` 原使用 N 次查詢取保留金費率。
 
-**現狀**: 已由批次版本 `get_users_all_retention_rates()` 在薪資計算中處理，但個人統計仍使用舊版。
-
-**修復**:
-```python
-# 舊（personal_stats 中）
-my_ret_rates = get_user_all_retention_rates(current_user.id)
-
-# 建議改為批次版本
-my_ret_rates = get_users_all_retention_rates([current_user.id])[current_user.id]
-```
+**修復**: 改為批次版本 `get_users_all_retention_rates([current_user.id])[current_user.id]`，一次查詢取得所有欄位費率。
 
 ---
 
@@ -215,8 +208,8 @@ my_ret_rates = get_users_all_retention_rates([current_user.id])[current_user.id]
 | 業務邏輯 | ★★★★☆ | 薪資計算邏輯清晰；YTD 快取可改進 |
 | 查詢效率 | ★★★★☆ | 批次查詢已實施；索引補全後接近最佳 |
 | 前端效能 | ★★★☆☆ | CDN 依賴、無 JS 壓縮；功能性優先，不影響使用 |
-| 可維護性 | ★★★☆☆ | 單檔 app.py（2500+ 行）應考慮 Blueprint 拆分 |
-| 安全性 | ★★☆☆☆ | 缺 CSRF、速率限制（見 security_report.md）|
+| 可維護性 | ★★★☆☆ | 單檔 app.py（3,600+ 行）應考慮 Blueprint 拆分 |
+| 安全性 | ★★★★☆ | CSRF/速率限制/Session/安全標頭/銀行加密均已實施；密碼複雜度待改善 |
 | 擴展彈性 | ★★★☆☆ | 硬編碼工項、單一 namespace；擴展需重構 |
 
 **整體評估**: 在 85 人規模下，當前架構為近似最佳解，效能足夠。未來若規模擴展至 200 人或需行動端支援，建議啟動 v2.0 架構規劃。
@@ -226,21 +219,28 @@ my_ret_rates = get_users_all_retention_rates([current_user.id])[current_user.id]
 ## 六、建議的近期優化項目（不需大規模重構）
 
 ```
-優先級 1（1-2小時）:
-  ✅ 已完成：加入資料庫索引
-  □ 修復：個人統計保留金費率使用批次版本函數
-  □ 確認頁面：加入日期篩選（預設顯示最近 30 天）
+優先級 1（已完成）:
+  ✅ 加入資料庫索引
+  ✅ 個人統計保留金費率改用批次版本函數
+  ✅ 確認頁面加入日期篩選（預設最近 30 天）
+  ✅ 流水帳（LedgerEntry）+ Cloudflare R2 憑證上傳
+  ✅ 日月報檔案庫（ReportArchive）+ APScheduler 自動生成
+  ✅ 薪資計算涵蓋停用帳戶（含 (停用) 標示）
+  ✅ Excel 欄寬 70% 填充修正
+  ✅ 月報 YTD 保留金 per-user 批次計算修正
+  ✅ UTC+8 時間統一儲存
 
-優先級 2（半天）:
+優先級 2（待規劃）:
   □ app.py 拆分：Blueprint（report_bp, settings_bp, salary_bp 等）
-  □ 加入 Redis 快取 SystemConfig（單價讀取）
+  □ 加入 Redis 快取 SystemConfig（多 worker 環境）
 
 優先級 3（長期規劃）:
-  □ YTD 保留金快取表
+  □ YTD 保留金快取表（超過 50,000 筆回報時需要）
   □ 薪資計算結果儲存（PayrollRecord）
   □ 行動版回報介面
+  □ APScheduler 改為分散式排程（多 worker 安全）
 ```
 
 ---
 
-*報告生成日期: 2026-06-30*
+*報告生成日期: 2026-07-01 | 版本: v1.0.3*

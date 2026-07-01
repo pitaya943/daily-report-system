@@ -164,6 +164,9 @@
         {% for uid, data in salary_results.user_data.items() %}
         <h6 class="fw-semibold mb-1">
           {{ data.username }}
+          {% if data.is_deactivated %}
+            <span class="badge bg-secondary ms-1" title="此帳戶已停用，但有已確認回報，公司仍需支付薪資">停用</span>
+          {% endif %}
           {% if data.payment_method == 'CASH' %}
             <span class="badge bg-warning text-dark ms-1">領現</span>
           {% else %}

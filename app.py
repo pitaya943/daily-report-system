@@ -1762,24 +1762,26 @@ def salary():
                         pre_ret_by_user[_uid][f] += getattr(_r, f, 0)
 
             users_dict = {u.id: u for u in User.query.all()}
-            active_user_ids = {u.id for u in all_active_users}
 
             user_data = {}
             for r in reports:
                 uid = r.user_id
-                if uid not in active_user_ids:
-                    continue  # 略過已停用帳戶的回報
+                # 包含停用帳戶：已確認的回報代表公司應支付的工作成果
                 if uid not in user_data:
-                    uname = users_dict[uid].display_name if uid in users_dict else '(已刪除)'
+                    u_obj = users_dict.get(uid)
+                    uname = u_obj.display_name if u_obj else '(已刪除)'
+                    is_deact = (not u_obj.is_active) if u_obj else False
                     user_data[uid] = {'username': uname,
+                                      'is_deactivated': is_deact,
                                       'totals': {k: 0 for k, _ in REPORT_FIELDS}}
                 for k, _ in REPORT_FIELDS:
                     user_data[uid]['totals'][k] += getattr(r, k, 0)
 
-            # 有固定薪資但本期無回報的在職帳戶也需納入計算
-            for u in all_active_users:
+            # 所有帳戶（含停用）有固定薪資但本期無回報者也納入計算
+            for u in users_dict.values():
                 if u.id not in user_data and u.fixed_salary > 0:
                     user_data[u.id] = {'username': u.display_name,
+                                       'is_deactivated': not u.is_active,
                                        'totals': {k: 0 for k, _ in REPORT_FIELDS}}
 
             tax_rate = get_tax_rate()
@@ -3247,7 +3249,8 @@ def _report_excel(report_type, label, start_date, end_date,
             tax = round(gross * tax_v / 100) if not_enrolled else 0
             net = int(gross - retention - insurance - tax + u.fixed_salary)
             total_net += net
-            row_vals = [u.display_name, '領現' if u.payment_method == 'CASH' else '轉帳',
+            dname = u.display_name if u.is_active else f'{u.display_name}（停用）'
+            row_vals = [dname, '領現' if u.payment_method == 'CASH' else '轉帳',
                         int(gross), int(retention), insurance, tax, u.fixed_salary, net]
             for ci, v in enumerate(row_vals, 1):
                 c = ws4.cell(sal_ri, ci, v)
