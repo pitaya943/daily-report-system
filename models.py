@@ -155,5 +155,6 @@ class LedgerEntry(db.Model):
     receipt_key  = db.Column(db.String(300), nullable=True)    # R2 object key (path in bucket)
     receipt_name = db.Column(db.String(200), nullable=True)    # original filename
     created_by   = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    payer_id     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # NULL = 公司
     created_at   = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at   = db.Column(db.DateTime, default=datetime.utcnow)

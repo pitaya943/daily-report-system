@@ -319,6 +319,15 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # Column migration: add payer_id to ledger_entries if missing
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text(
+                "ALTER TABLE ledger_entries ADD COLUMN payer_id INTEGER REFERENCES users(id)"
+            ))
+            conn.commit()
+    except Exception:
+        pass
 
 with app.app_context():
     _init_db()
@@ -2750,8 +2759,10 @@ def ledger():
     total_expense = db.session.query(db.func.sum(LedgerEntry.amount)).filter(
         LedgerEntry.entry_type == 'EXPENSE').scalar() or 0
 
-    url_args  = {k: v for k, v in request.args.items() if k != 'page'}
-    users_dict = {u.id: u.display_name for u in User.query.all()}
+    url_args    = {k: v for k, v in request.args.items() if k != 'page'}
+    all_users   = User.query.order_by(User.id).all()
+    users_dict  = {u.id: u.display_name for u in all_users}
+    admin_users = [u for u in all_users if u.role == 'ADMIN' and u.is_active]
     return render_template('ledger.html',
                            pagination=pagination, entries=entries,
                            total_income=total_income, total_expense=total_expense,
@@ -2760,6 +2771,7 @@ def ledger():
                            f_type=f_type, f_category=f_category,
                            url_args=url_args,
                            users_dict=users_dict,
+                           admin_users=admin_users,
                            r2_enabled=bool(_r2_client))
 
 
@@ -2767,12 +2779,14 @@ def ledger():
 @login_required
 @admin_required
 def ledger_add():
-    entry_date  = request.form.get('entry_date', '').strip()
-    description = request.form.get('description', '').strip()
-    amount_str  = request.form.get('amount', '').strip()
-    entry_type  = request.form.get('entry_type', '').strip()
-    category    = request.form.get('category', '').strip()
-    note        = request.form.get('note', '').strip()[:100]
+    entry_date   = request.form.get('entry_date', '').strip()
+    description  = request.form.get('description', '').strip()
+    amount_str   = request.form.get('amount', '').strip()
+    entry_type   = request.form.get('entry_type', '').strip()
+    category     = request.form.get('category', '').strip()
+    note         = request.form.get('note', '').strip()[:100]
+    payer_id_str = request.form.get('payer_id', '').strip()
+    payer_id     = int(payer_id_str) if payer_id_str.isdigit() else None
 
     if not entry_date or not description or not amount_str or entry_type not in ('INCOME', 'EXPENSE'):
         flash('必填欄位不完整', 'danger')
@@ -2822,6 +2836,7 @@ def ledger_add():
         receipt_key=receipt_key,
         receipt_name=receipt_name,
         created_by=current_user.id,
+        payer_id=payer_id,
     )
     db.session.add(entry)
     db.session.commit()
@@ -2836,12 +2851,14 @@ def ledger_add():
 def ledger_edit(entry_id):
     entry = LedgerEntry.query.get_or_404(entry_id)
 
-    entry_date  = request.form.get('entry_date', '').strip()
-    description = request.form.get('description', '').strip()
-    amount_str  = request.form.get('amount', '').strip()
-    entry_type  = request.form.get('entry_type', '').strip()
-    category    = request.form.get('category', '').strip()
-    note        = request.form.get('note', '').strip()[:100]
+    entry_date   = request.form.get('entry_date', '').strip()
+    description  = request.form.get('description', '').strip()
+    amount_str   = request.form.get('amount', '').strip()
+    entry_type   = request.form.get('entry_type', '').strip()
+    category     = request.form.get('category', '').strip()
+    note         = request.form.get('note', '').strip()[:100]
+    payer_id_str = request.form.get('payer_id', '').strip()
+    payer_id     = int(payer_id_str) if payer_id_str.isdigit() else None
 
     if not entry_date or not description or not amount_str or entry_type not in ('INCOME', 'EXPENSE'):
         flash('必填欄位不完整', 'danger')
@@ -2886,6 +2903,7 @@ def ledger_edit(entry_id):
     entry.entry_type  = entry_type
     entry.category    = category or None
     entry.note        = note or None
+    entry.payer_id    = payer_id
     entry.updated_at  = datetime.utcnow()
     db.session.commit()
     add_audit(current_user.id, 'LEDGER_EDIT', f'編輯流水帳 #{entry_id}「{description}」')
@@ -2905,6 +2923,26 @@ def ledger_delete(entry_id):
     db.session.commit()
     add_audit(current_user.id, 'LEDGER_DELETE', f'刪除流水帳 #{entry_id}「{desc}」')
     flash('記錄已刪除', 'success')
+    return redirect(url_for('ledger'))
+
+
+@app.route('/ledger/<int:entry_id>/settle', methods=['POST'])
+@login_required
+@admin_required
+def ledger_settle(entry_id):
+    """將代墊款沖銷：把支出者改回「公司」。"""
+    entry = LedgerEntry.query.get_or_404(entry_id)
+    if entry.payer_id is None:
+        flash('此記錄的支出者已是公司', 'info')
+        return redirect(url_for('ledger'))
+    payer = db.session.get(User, entry.payer_id)
+    payer_name = payer.display_name if payer else '(已刪除)'
+    entry.payer_id   = None
+    entry.updated_at = datetime.utcnow()
+    add_audit(current_user.id, 'LEDGER_SETTLE',
+              f'沖銷流水帳 #{entry_id}「{entry.description}」（原代墊人：{payer_name}）')
+    db.session.commit()
+    flash(f'已沖銷「{entry.description}」的代墊款（原代墊人：{payer_name}）', 'success')
     return redirect(url_for('ledger'))
 
 
@@ -2959,7 +2997,7 @@ def ledger_export():
     ws = wb.active
     ws.title = '流水帳'
 
-    headers = ['日期', '說明', '類型', '類別', '金額(NTD)', '備註', '有附件']
+    headers = ['日期', '說明', '類型', '類別', '金額(NTD)', '支出者', '備註', '有附件']
     ws.append(headers)
     hdr_font = Font(bold=True)
     hdr_fill = PatternFill('solid', fgColor='D9E1F2')
@@ -2968,14 +3006,17 @@ def ledger_export():
         cell.fill = hdr_fill
         cell.alignment = Alignment(horizontal='center')
 
-    type_label = {'INCOME': '收入', 'EXPENSE': '支出'}
+    type_label  = {'INCOME': '收入', 'EXPENSE': '支出'}
+    users_dict  = {u.id: u.display_name for u in User.query.all()}
     for e in entries:
+        payer_name = users_dict.get(e.payer_id, '?') if e.payer_id else '公司'
         ws.append([
             e.entry_date.strftime('%Y-%m-%d'),
             e.description,
             type_label.get(e.entry_type, e.entry_type),
             e.category or '',
             e.amount,
+            payer_name,
             e.note or '',
             '是' if e.receipt_key else '否',
         ])
@@ -2985,8 +3026,9 @@ def ledger_export():
     ws.column_dimensions['C'].width = 8
     ws.column_dimensions['D'].width = 12
     ws.column_dimensions['E'].width = 12
-    ws.column_dimensions['F'].width = 30
-    ws.column_dimensions['G'].width = 8
+    ws.column_dimensions['F'].width = 10
+    ws.column_dimensions['G'].width = 30
+    ws.column_dimensions['H'].width = 8
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -3042,9 +3084,13 @@ def _report_excel(report_type, label, start_date, end_date,
             c.alignment = Alignment(horizontal='center')
 
     def auto_w(ws):
+        from openpyxl.cell.cell import MergedCell
         for col in ws.columns:
-            w = max((len(str(c.value or '')) for c in col), default=4)
-            ws.column_dimensions[col[0].column_letter].width = min(w + 4, 40)
+            cells = [c for c in col if not isinstance(c, MergedCell)]
+            if not cells:
+                continue
+            w = max((len(str(c.value or '')) for c in cells), default=4)
+            ws.column_dimensions[cells[0].column_letter].width = min(w + 4, 40)
 
     wb = openpyxl.Workbook()
     udict = {u.id: u.display_name for u in users}
@@ -3087,7 +3133,7 @@ def _report_excel(report_type, label, start_date, end_date,
 
     # ── Sheet 2: 流水帳 ─────────────────────────────────────────────────
     ws2 = wb.create_sheet('流水帳')
-    set_hdr(ws2, 1, ['日期', '說明', '類型', '類別', '金額(NTD)', '備註', '建立者'])
+    set_hdr(ws2, 1, ['日期', '說明', '類型', '類別', '金額(NTD)', '支出者', '備註', '建立者'])
     inc_total = exp_total = 0
     for ri2, e in enumerate(ledger_entries, 2):
         ws2.cell(ri2, 1, str(e.entry_date))
@@ -3100,14 +3146,16 @@ def _report_excel(report_type, label, start_date, end_date,
             ac.font = GRN_FONT; inc_total += e.amount
         else:
             ac.font = RED_FONT; exp_total += e.amount
-        ws2.cell(ri2, 6, e.note or '')
-        ws2.cell(ri2, 7, udict.get(e.created_by, '?'))
+        payer_name = udict.get(e.payer_id, '?') if e.payer_id else '公司'
+        ws2.cell(ri2, 6, payer_name)
+        ws2.cell(ri2, 7, e.note or '')
+        ws2.cell(ri2, 8, udict.get(e.created_by, '?'))
         if ri2 % 2 == 0:
-            for ci in range(1, 8): ws2.cell(ri2, ci).fill = ALT_FILL
+            for ci in range(1, 9): ws2.cell(ri2, ci).fill = ALT_FILL
     sr = len(ledger_entries) + 2
     ws2.cell(sr, 1, '合計').font = BOLD
     ws2.cell(sr, 3, f'收入:{inc_total:,}  支出:{exp_total:,}  淨餘:{inc_total - exp_total:,}').font = BOLD
-    for ci in range(1, 8): ws2.cell(sr, ci).fill = GRN_FILL
+    for ci in range(1, 9): ws2.cell(sr, ci).fill = GRN_FILL
     auto_w(ws2)
 
     # ── Sheet 3: 材料庫存 ────────────────────────────────────────────────
@@ -3253,17 +3301,18 @@ def _report_pdf(report_type, label, start_date, end_date,
     story.append(PageBreak())
     story.append(Paragraph('流水帳', h2_sty))
     inc_t = exp_t = 0
-    l_rows = [['日期', '說明', '類型', '類別', '金額(NTD)', '備註', '建立者']]
+    l_rows = [['日期', '說明', '類型', '類別', '金額(NTD)', '支出者', '備註', '建立者']]
     for e in ledger_entries:
         t_lbl = '收入' if e.entry_type == 'INCOME' else '支出'
+        payer_name = udict.get(e.payer_id, '?') if e.payer_id else '公司'
         l_rows.append([str(e.entry_date), e.description, t_lbl,
-                       e.category or '', f'{e.amount:,}', e.note or '',
-                       udict.get(e.created_by, '?')])
+                       e.category or '', f'{e.amount:,}', payer_name,
+                       e.note or '', udict.get(e.created_by, '?')])
         if e.entry_type == 'INCOME': inc_t += e.amount
         else: exp_t += e.amount
     l_rows.append(['合計', '', f'收入:{inc_t:,}  支出:{exp_t:,}  淨餘:{inc_t - exp_t:,}',
-                   '', '', '', ''])
-    story.append(mk_table(l_rows, col_widths=[65, 130, 38, 52, 65, 130, 60]))
+                   '', '', '', '', ''])
+    story.append(mk_table(l_rows, col_widths=[55, 110, 35, 45, 60, 50, 100, 55]))
 
     # ── 材料庫存 ─────────────────────────────────────────────────────────
     story.append(PageBreak())
