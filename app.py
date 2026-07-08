@@ -3310,6 +3310,7 @@ def personal_stats():
                 _n = float(r.collab_count or 1)
                 for k, _ in zone_fields:
                     totals_s[k] += float(getattr(r, k, 0) or 0) / _n
+            totals_s = {k: round(v, 2) for k, v in totals_s.items()}
             period_ret_s = sum(totals_s.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
             totals_result = {'start': stats_start, 'end': stats_end,
                              'confirm_filter': stats_confirm,
