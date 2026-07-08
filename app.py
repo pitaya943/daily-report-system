@@ -1,5 +1,7 @@
 import io
+import json
 import os
+import time
 from datetime import datetime, date, timedelta
 from functools import wraps
 
@@ -308,6 +310,8 @@ def _init_db():
         # 流水帳
         "CREATE INDEX IF NOT EXISTS ix_ledger_date ON ledger_entries(entry_date)",
         "CREATE INDEX IF NOT EXISTS ix_ledger_type ON ledger_entries(entry_type)",
+        # JSONB GIN index — 加速 collab_json::jsonb @> '[uid]' 搜尋（歷史紀錄共作查詢）
+        "CREATE INDEX IF NOT EXISTS idx_reports_collab_gin ON reports USING gin ((collab_json::jsonb))",
     ]
     from sqlalchemy import text as _text
     for _sql in _indexes:
@@ -459,7 +463,6 @@ def money_filter(value):
 
 @app.template_filter('from_json')
 def from_json_filter(s):
-    import json
     if not s:
         return []
     try:
@@ -484,7 +487,6 @@ def qty_filter(value):
 
 @app.template_filter('report_json')
 def report_json_filter(r):
-    import json
     all_keys = {k for k, _ in WEST_REPORT_FIELDS} | {k for k, _ in SOUTH_REPORT_FIELDS}
     data = {k: float(getattr(r, k, 0) or 0) for k in all_keys}
     data['id'] = r.id
@@ -670,32 +672,54 @@ def get_zone_retention_fields(zone: str) -> list:
     return SOUTH_RETENTION_FIELDS if zone == ZONE_SOUTH else WEST_RETENTION_FIELDS
 
 
+# ---------------------------------------------------------------------------
+# SystemConfig cache — batch-load all config rows in ONE query, TTL 60 s.
+# Eliminates 4+ individual SELECT per request for rate/tax lookups.
+# ---------------------------------------------------------------------------
+_config_cache: dict = {}
+_config_cache_ts: float = 0.0
+_CONFIG_CACHE_TTL = 60
+
+
+def _load_config_cache() -> None:
+    global _config_cache, _config_cache_ts
+    rows = SystemConfig.query.all()
+    _config_cache = {r.key: r.value for r in rows}
+    _config_cache_ts = time.monotonic()
+
+
+def _get_config(key: str, default: str = '0') -> str:
+    if not _config_cache or (time.monotonic() - _config_cache_ts) > _CONFIG_CACHE_TTL:
+        _load_config_cache()
+    return _config_cache.get(key, default)
+
+
+def _invalidate_config_cache() -> None:
+    global _config_cache
+    _config_cache = {}
+
+
 def get_retention_rate() -> float:
-    cfg = db.session.get(SystemConfig, 'retention_rate')
-    return float(cfg.value) if cfg else float(RETENTION_RATE)
+    return float(_get_config('retention_rate', str(RETENTION_RATE)))
 
 
 def get_tax_rate() -> float:
-    """未在公司保勞健者適用的稅務支出比率（%），預設 3"""
-    cfg = db.session.get(SystemConfig, 'tax_rate')
-    return float(cfg.value) if cfg else 3.0
+    return float(_get_config('tax_rate', '3'))
 
 
 def get_retention_rate_for_zone(zone: str) -> float:
-    """南區有獨立設定時回傳南區費率，否則 fallback 至西區全域費率。"""
     if zone == ZONE_SOUTH:
-        cfg = db.session.get(SystemConfig, 'retention_rate_south')
-        if cfg:
-            return float(cfg.value)
+        v = _get_config('retention_rate_south', '')
+        if v:
+            return float(v)
     return get_retention_rate()
 
 
 def get_tax_rate_for_zone(zone: str) -> float:
-    """南區有獨立設定時回傳南區稅率，否則 fallback 至西區全域稅率。"""
     if zone == ZONE_SOUTH:
-        cfg = db.session.get(SystemConfig, 'tax_rate_south')
-        if cfg:
-            return float(cfg.value)
+        v = _get_config('tax_rate_south', '')
+        if v:
+            return float(v)
     return get_tax_rate()
 
 
@@ -708,8 +732,7 @@ _PRICE_CACHE_TTL = 300
 
 def get_item_prices_for_zone(zone: str = ZONE_WEST) -> dict:
     """各工項單位計薪，按區域讀取 SystemConfig，結果分別快取 5 分鐘。
-    西區 key：price_<field>；南區 key：price_south_<field>（共用欄位亦然）。"""
-    import time
+    使用 IN 批次查詢取代 N 次個別 SELECT（36 queries → 1 query）。"""
     global _price_cache_west, _price_cache_south, _price_cache_ts_west, _price_cache_ts_south
     if zone == ZONE_SOUTH:
         if _price_cache_south and (time.monotonic() - _price_cache_ts_south) < _PRICE_CACHE_TTL:
@@ -723,13 +746,21 @@ def get_item_prices_for_zone(zone: str = ZONE_WEST) -> dict:
         fields   = WEST_REPORT_FIELDS
         defaults = DEFAULT_PRICES_WEST
         prefix   = 'price_'
+
+    # ONE batch query for all keys (+ west fallback keys for south zone)
+    primary_keys  = [f'{prefix}{k}' for k, _ in fields]
+    fallback_keys = [f'price_{k}' for k, _ in fields] if zone == ZONE_SOUTH else []
+    all_keys = list(set(primary_keys + fallback_keys))
+    cfg_map = {r.key: r.value for r in SystemConfig.query.filter(
+        SystemConfig.key.in_(all_keys)).all()}
+
     prices = {}
     for k, _ in fields:
-        cfg = db.session.get(SystemConfig, f'{prefix}{k}')
-        if cfg is None and zone == ZONE_SOUTH:
-            # 南區若無專屬設定，fallback 到西區同名 key
-            cfg = db.session.get(SystemConfig, f'price_{k}')
-        prices[k] = float(cfg.value) if cfg else defaults.get(k, 0.0)
+        val = cfg_map.get(f'{prefix}{k}')
+        if val is None and zone == ZONE_SOUTH:
+            val = cfg_map.get(f'price_{k}')
+        prices[k] = float(val) if val is not None else defaults.get(k, 0.0)
+
     if zone == ZONE_SOUTH:
         _price_cache_south    = prices
         _price_cache_ts_south = time.monotonic()
@@ -945,7 +976,7 @@ def report():
             user_id=current_user.id,
             report_date=report_date,
             collab_count=1 + len(collab_ids),
-            collab_json=__import__('json').dumps(collab_ids) if collab_ids else None,
+            collab_json=json.dumps(collab_ids) if collab_ids else None,
             **vals
         )
         db.session.add(r)
@@ -1015,9 +1046,18 @@ def history():
     page = request.args.get('page', 1, type=int)
     pagination = (q.order_by(Report.report_date.desc(), Report.created_at.desc())
                   .paginate(page=page, per_page=20, error_out=False))
-    _all_users_list = User.query.all()
-    users_dict = {u.id: u for u in _all_users_list}
-    all_users = _all_users_list if current_user.role == 'ADMIN' else []
+
+    if current_user.role == 'ADMIN':
+        # ADMIN needs full user list for the filter dropdown + all submitters
+        _all_users_list = User.query.order_by(User.display_name).all()
+        users_dict = {u.id: u for u in _all_users_list}
+        all_users  = _all_users_list
+    else:
+        # USER: only load users referenced by the current page (submitters of collab rows)
+        _page_uids = {r.user_id for r in pagination.items}
+        users_dict = {u.id: u for u in User.query.filter(User.id.in_(_page_uids)).all()} if _page_uids else {}
+        all_users  = []
+
     url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
     # USER sees their zone's fields; ADMIN sees all using west+south combined for detail modal
@@ -1090,8 +1130,8 @@ def history_delete(report_id):
         flash('已確認的回報只能由管理員刪除', 'danger')
         return redirect(url_for('history'))
 
-    users_dict = {u.id: u for u in User.query.all()}
-    uname = get_user_display(users_dict, r.user_id)
+    submitter = db.session.get(User, r.user_id)
+    uname = submitter.display_name if submitter else '(已刪除)'
     add_audit(current_user.id, 'REPORT_DELETE',
               f'刪除回報 #{r.id} ({uname} / {r.report_date})')
     db.session.delete(r)
@@ -1128,10 +1168,9 @@ def settings():
                        .all())
         users_dict_all = {u.id: u for u in all_users}
         ytd_totals: dict = {}
-        import json as _json_s
         for r in ytd_reports:
             _n = float(r.collab_count or 1)
-            for _uid in [r.user_id] + (_json_s.loads(r.collab_json) if r.collab_json else []):
+            for _uid in [r.user_id] + (json.loads(r.collab_json) if r.collab_json else []):
                 _u = users_dict_all.get(_uid)
                 if not _u:
                     continue
@@ -1431,6 +1470,7 @@ def settings_tax_rate():
         db.session.add(SystemConfig(key='tax_rate', value=str(rate)))
     add_audit(current_user.id, 'SYSTEM_CONFIG', f'更新稅務支出費率：{rate}%')
     db.session.commit()
+    _invalidate_config_cache()
     flash(f'稅務支出費率已更新為 {rate}%', 'success')
     return redirect(url_for('settings'))
 
@@ -1451,6 +1491,7 @@ def settings_retention_rate():
     add_audit(current_user.id, 'SYSTEM_CONFIG',
               f'更新保留金費率：{rate} NTD/只')
     db.session.commit()
+    _invalidate_config_cache()
     flash(f'保留金費率已更新為 {rate} NTD/只', 'success')
     return redirect(url_for('settings'))
 
@@ -1470,6 +1511,7 @@ def settings_retention_rate_south():
         db.session.add(SystemConfig(key='retention_rate_south', value=str(rate)))
     add_audit(current_user.id, 'SYSTEM_CONFIG', f'更新南區保留金費率：{rate} NTD/只')
     db.session.commit()
+    _invalidate_config_cache()
     flash(f'南區保留金費率已更新為 {rate} NTD/只', 'success')
     return redirect(url_for('settings'))
 
@@ -1490,6 +1532,7 @@ def settings_tax_rate_south():
         db.session.add(SystemConfig(key='tax_rate_south', value=str(rate)))
     add_audit(current_user.id, 'SYSTEM_CONFIG', f'更新南區稅務支出費率：{rate}%')
     db.session.commit()
+    _invalidate_config_cache()
     flash(f'南區稅務支出費率已更新為 {rate}%', 'success')
     return redirect(url_for('settings'))
 
@@ -1716,13 +1759,17 @@ def settings_reset_password(user_id):
 @login_required
 def materials():
     all_materials = Material.query.order_by(Material.sort_order, Material.id).all()
-    users_dict = {u.id: u for u in User.query.all()}
 
     my_requests = None
     if current_user.role == 'USER':
         my_requests = (MaterialRequest.query
                        .filter_by(user_id=current_user.id)
                        .order_by(MaterialRequest.created_at.desc()).all())
+        users_dict = {current_user.id: current_user}
+    else:
+        # ADMIN: load only users with active requests
+        _req_uids = {r.user_id for r in MaterialRequest.query.with_entities(MaterialRequest.user_id).all()}
+        users_dict = {u.id: u for u in User.query.filter(User.id.in_(_req_uids)).all()} if _req_uids else {}
 
     return render_template('materials.html',
                            all_materials=all_materials,
@@ -1897,7 +1944,6 @@ def summary():
         reports = q.all()
         users_dict = {u.id: u for u in all_users}
 
-        import json as _sjson
         import math as _math
         user_totals = {}
 
@@ -1921,7 +1967,7 @@ def summary():
             _n = r.collab_count or 1
             _summary_accum(r.user_id, r, _n, True)
             if r.collab_json:
-                for _cuid in _sjson.loads(r.collab_json):
+                for _cuid in json.loads(r.collab_json):
                     _summary_accum(_cuid, r, _n, False)
 
         grand = {k: sum(d['totals'][k] for d in user_totals.values()) for k, _ in REPORT_FIELDS}
@@ -1987,8 +2033,15 @@ def confirmation():
     mat_pagination = (MaterialRequest.query.filter_by(status='PENDING')
                       .order_by(MaterialRequest.created_at.asc())
                       .paginate(page=mat_page, per_page=20, error_out=False))
-    users_dict = {u.id: u for u in User.query.all()}
-    materials_dict = {m.id: m for m in Material.query.all()}
+
+    # Only load users/materials referenced on this page (not the entire table)
+    _report_uids = {r.user_id for r in pending_pagination.items}
+    _mat_uids    = {req.user_id for req in mat_pagination.items}
+    _all_uids    = _report_uids | _mat_uids
+    users_dict   = {u.id: u for u in User.query.filter(User.id.in_(_all_uids)).all()} if _all_uids else {}
+    _mat_ids     = {req.material_id for req in mat_pagination.items}
+    materials_dict = {m.id: m for m in Material.query.filter(Material.id.in_(_mat_ids)).all()} if _mat_ids else {}
+
     url_args = {k: v for k, v in request.args.items() if k not in ('page', 'mat_page')}
 
     return render_template('confirmation.html',
@@ -2011,13 +2064,14 @@ def confirm_report(report_id):
     r = db.session.get(Report, report_id)
     if not r:
         abort(404)
-    users_dict = {u.id: u for u in User.query.all()}
+    submitter = db.session.get(User, r.user_id)
+    uname = submitter.display_name if submitter else '(已刪除)'
     r.is_confirmed = True
     r.confirmed_by = current_user.id
     r.confirmed_at = tw_now()
     r.updated_at = tw_now()
     add_audit(current_user.id, 'REPORT_CONFIRM',
-              f'確認 {get_user_display(users_dict, r.user_id)} 的回報 #{r.id}（{r.report_date}）')
+              f'確認 {uname} 的回報 #{r.id}（{r.report_date}）')
     db.session.commit()
     flash('回報已確認', 'success')
     return redirect(url_for('confirmation'))
@@ -2029,11 +2083,12 @@ def reject_report(report_id):
     r = db.session.get(Report, report_id)
     if not r:
         abort(404)
-    users_dict = {u.id: u for u in User.query.all()}
+    submitter = db.session.get(User, r.user_id)
+    uname = submitter.display_name if submitter else '(已刪除)'
     r.is_rejected = True
     r.updated_at = tw_now()
     add_audit(current_user.id, 'REPORT_REJECT',
-              f'駁回 {get_user_display(users_dict, r.user_id)} 的回報 #{r.id}（{r.report_date}）')
+              f'駁回 {uname} 的回報 #{r.id}（{r.report_date}）')
     db.session.commit()
     flash('回報已駁回，回報者可在歷史紀錄中查看', 'warning')
     return redirect(url_for('confirmation'))
@@ -2046,8 +2101,8 @@ def approve_material(req_id):
     if not req:
         abort(404)
     m = db.session.get(Material, req.material_id)
-    users_dict = {u.id: u for u in User.query.all()}
-    uname = get_user_display(users_dict, req.user_id)
+    requester = db.session.get(User, req.user_id)
+    uname = requester.display_name if requester else '(已刪除)'
 
     req.status = 'APPROVED'
     req.reviewed_by = current_user.id
@@ -2075,8 +2130,8 @@ def reject_material(req_id):
     if not req:
         abort(404)
     m = db.session.get(Material, req.material_id)
-    users_dict = {u.id: u for u in User.query.all()}
-    uname = get_user_display(users_dict, req.user_id)
+    requester = db.session.get(User, req.user_id)
+    uname = requester.display_name if requester else '(已刪除)'
 
     req.status = 'REJECTED'
     req.reviewed_by = current_user.id
@@ -2204,18 +2259,17 @@ def salary():
                 for f in rfields:
                     ret_dict[uid][f] = ret_dict[uid].get(f, 0.0) + float(getattr(rpt, f, 0) or 0) / divisor
 
-            import json as _json
             for _r in year_confirmed:
                 _n = float(_r.collab_count or 1)
                 if _r.report_date >= ytd_year_start:
                     _accum_ret(ytd_totals_by_user, _r.user_id, _r, _n)
                     if _r.collab_json:
-                        for _cuid in _json.loads(_r.collab_json):
+                        for _cuid in json.loads(_r.collab_json):
                             _accum_ret(ytd_totals_by_user, _cuid, _r, _n)
                 if pre_year_start <= _r.report_date < sd:
                     _accum_ret(pre_ret_by_user, _r.user_id, _r, _n)
                     if _r.collab_json:
-                        for _cuid in _json.loads(_r.collab_json):
+                        for _cuid in json.loads(_r.collab_json):
                             _accum_ret(pre_ret_by_user, _cuid, _r, _n)
 
             # ── 初始化 user_data ──
@@ -2243,7 +2297,7 @@ def salary():
                         user_data[uid]['totals'][k] = user_data[uid]['totals'].get(k, 0.0) + float(getattr(r, k, 0) or 0) / _n
                 # 共同作業者
                 if r.collab_json:
-                    for _cuid in _json.loads(r.collab_json):
+                    for _cuid in json.loads(r.collab_json):
                         _init_user(_cuid)
                         if _cuid in user_data:
                             for k, _ in get_zone_fields(user_data[_cuid]['zone']):
@@ -3639,7 +3693,6 @@ def _report_excel(report_type, label, start_date, end_date,
     u_zone_map = {u.id: u.zone for u in users}
     user_totals_west  = {}   # uid → {k: float}
     user_totals_south = {}   # uid → {k: float}
-    import json as _json_r
     for r in reports:
         uid = r.user_id
         _n  = float(r.collab_count or 1)
@@ -3652,7 +3705,7 @@ def _report_excel(report_type, label, start_date, end_date,
             z_map[uid][k] += float(getattr(r, k, 0) or 0) / _n
         # 共同作業者
         if r.collab_json:
-            for _cuid in _json_r.loads(r.collab_json):
+            for _cuid in json.loads(r.collab_json):
                 _czone = u_zone_map.get(_cuid, zone)
                 _cfields = get_zone_fields(_czone)
                 _cmap = user_totals_south if _czone == ZONE_SOUTH else user_totals_west
