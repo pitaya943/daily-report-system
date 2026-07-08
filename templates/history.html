@@ -51,17 +51,19 @@
 
   <div class="card-body p-0">
     <div class="table-responsive">
-      <table class="table table-hover table-sm mb-0" style="font-size:.84rem">
+      <table class="table table-hover table-sm mb-0 align-middle" style="font-size:.8rem">
         <thead>
-          <tr>
-            <th>#</th>
-            {% if current_user.role == 'ADMIN' %}<th>帳戶</th>{% endif %}
-            <th>日期</th>
+          <tr class="align-bottom">
+            <th class="text-nowrap" style="min-width:28px">#</th>
+            {% if current_user.role == 'ADMIN' %}<th class="text-nowrap" style="min-width:72px">帳戶</th>{% endif %}
+            <th class="text-nowrap" style="min-width:80px">日期</th>
             {% for key, label in report_fields %}
-            <th class="text-center" title="{{ label }}">{{ label[:3] }}..</th>
+            <th class="text-center p-0" style="min-width:28px; width:28px" title="{{ label }}">
+              <div style="writing-mode:vertical-lr;transform:rotate(180deg);white-space:nowrap;font-size:.65rem;padding:4px 2px">{{ label }}</div>
+            </th>
             {% endfor %}
-            <th class="text-center">狀態</th>
-            <th class="text-center">操作</th>
+            <th class="text-center text-nowrap" style="min-width:68px">狀態</th>
+            <th class="text-center text-nowrap" style="min-width:72px">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -69,19 +71,19 @@
           <tr>
             <td class="text-muted">{{ r.id }}</td>
             {% if current_user.role == 'ADMIN' %}
-            <td>
+            <td class="text-nowrap">
               {% set u = users_dict.get(r.user_id) %}
               {{ u.display_name if u else '(已刪除)' }}
               {% if u and u.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}
             </td>
             {% endif %}
-            <td>{{ r.report_date }}
+            <td class="text-nowrap">{{ r.report_date }}
               {% if r.collab_count and r.collab_count > 1 %}
                 <span class="badge bg-secondary ms-1" style="font-size:.6rem" title="共同作業">共{{ r.collab_count }}人</span>
               {% endif %}
             </td>
             {% for key, _ in report_fields %}
-            <td class="text-center">{{ r[key] if r[key] else '' }}</td>
+            <td class="text-center px-0">{{ r[key] if r[key] else '' }}</td>
             {% endfor %}
             <td class="text-center">
               {% if r.is_confirmed %}

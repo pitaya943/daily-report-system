@@ -629,6 +629,7 @@ DEFAULT_PRICES = DEFAULT_PRICES_WEST
 RETENTION_FIELDS = WEST_RETENTION_FIELDS
 
 RETENTION_FIELDS_LABELED = [(f, lbl) for f, lbl in WEST_REPORT_FIELDS if f in set(WEST_RETENTION_FIELDS)]
+SOUTH_RETENTION_FIELDS_LABELED = [(f, lbl) for f, lbl in SOUTH_REPORT_FIELDS if f in set(SOUTH_RETENTION_FIELDS)]
 RETENTION_RATE = 20
 RETENTION_CAP  = 60000
 
@@ -1045,7 +1046,7 @@ def settings():
     all_users = sorted(_all_users_raw, key=lambda u: (0 if u.role == 'ADMIN' else 1, u.id))
     uid_list = [u.id for u in all_users]
 
-    # ── 3 queries total (was N×2 + 1) ────────────────────────────────
+    # ── 3 queries total ───────────────────────────────────────────────
     global_rate = int(get_retention_rate())
 
     # 1 query: 當年全部已確認回報（供 YTD 保留金計算）
@@ -1058,13 +1059,20 @@ def settings():
                                Report.report_date >= year_start,
                                Report.report_date <= date.today())
                        .all())
+        users_dict_all = {u.id: u for u in all_users}
         ytd_totals: dict = {}
+        import json as _json_s
         for r in ytd_reports:
-            uid = r.user_id
-            if uid not in ytd_totals:
-                ytd_totals[uid] = {f: 0 for f in RETENTION_FIELDS}
-            for f in RETENTION_FIELDS:
-                ytd_totals[uid][f] += getattr(r, f, 0)
+            _n = float(r.collab_count or 1)
+            for _uid in [r.user_id] + (_json_s.loads(r.collab_json) if r.collab_json else []):
+                _u = users_dict_all.get(_uid)
+                if not _u:
+                    continue
+                _zf = get_zone_retention_fields(_u.zone)
+                if _uid not in ytd_totals:
+                    ytd_totals[_uid] = {f: 0.0 for f in _zf}
+                for f in _zf:
+                    ytd_totals[_uid][f] = ytd_totals[_uid].get(f, 0.0) + float(getattr(r, f, 0) or 0) / _n
 
         # 1 query: 所有帳戶客製費率
         all_custom = (UserRetentionRate.query
@@ -1075,13 +1083,15 @@ def settings():
 
         for u in all_users:
             custom = custom_map.get(u.id, {})
-            user_rates = {f: float(custom.get(f, global_rate)) for f in RETENTION_FIELDS}
+            z_ret_fields = get_zone_retention_fields(u.zone)
+            user_rates = {f: float(custom.get(f, global_rate)) for f in z_ret_fields}
             user_ret_rates[u.id] = {
                 'rates': {f: int(v) for f, v in user_rates.items()},
-                'is_custom': bool(custom)
+                'is_custom': bool(custom),
+                'zone': u.zone,
             }
             totals = ytd_totals.get(u.id, {})
-            calculated = sum(totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
+            calculated = sum(float(totals.get(f, 0)) * user_rates[f] for f in z_ret_fields)
             ytd_by_user[u.id] = min(float(RETENTION_CAP),
                                     max(0.0, calculated + u.retention_offset))
     # ─────────────────────────────────────────────────────────────────
@@ -1089,7 +1099,12 @@ def settings():
     # ── USER：計算自己的保留金 ──────────────────────────────────────────────
     my_ytd = 0.0
     my_ret_rates = {}
+    my_retention_labeled = RETENTION_FIELDS_LABELED
     if current_user.role != 'ADMIN':
+        _my_zone = current_user.zone
+        _my_ret_fields = get_zone_retention_fields(_my_zone)
+        my_retention_labeled = (SOUTH_RETENTION_FIELDS_LABELED
+                                if _my_zone == ZONE_SOUTH else RETENTION_FIELDS_LABELED)
         year_start = date(date.today().year, 1, 1)
         my_reports = (Report.query
                       .filter(Report.user_id == current_user.id,
@@ -1097,14 +1112,16 @@ def settings():
                               Report.report_date >= year_start,
                               Report.report_date <= date.today())
                       .all())
-        my_totals = {f: 0 for f in RETENTION_FIELDS}
+        my_totals = {f: 0.0 for f in _my_ret_fields}
         for r in my_reports:
-            for f in RETENTION_FIELDS:
-                my_totals[f] += getattr(r, f, 0)
-        my_rates = get_user_all_retention_rates(current_user.id)
+            _n = float(r.collab_count or 1)
+            for f in _my_ret_fields:
+                my_totals[f] = my_totals.get(f, 0.0) + float(getattr(r, f, 0) or 0) / _n
+        my_custom = {cr.field: float(cr.rate)
+                     for cr in UserRetentionRate.query.filter_by(user_id=current_user.id).all()}
+        my_rates = {f: float(my_custom.get(f, global_rate)) for f in _my_ret_fields}
         my_ret_rates = my_rates
-        calculated = sum(my_totals.get(f, 0) * float(my_rates.get(f, global_rate))
-                         for f in RETENTION_FIELDS)
+        calculated = sum(my_totals.get(f, 0.0) * my_rates[f] for f in _my_ret_fields)
         my_ytd = min(float(RETENTION_CAP),
                      max(0.0, calculated + current_user.retention_offset))
 
@@ -1116,7 +1133,9 @@ def settings():
                            tax_rate=get_tax_rate(),
                            ytd_by_user=ytd_by_user,
                            user_ret_rates=user_ret_rates,
-                           retention_fields_labeled=RETENTION_FIELDS_LABELED,
+                           west_ret_labeled=RETENTION_FIELDS_LABELED,
+                           south_ret_labeled=SOUTH_RETENTION_FIELDS_LABELED,
+                           retention_fields_labeled=my_retention_labeled,
                            report_fields=REPORT_FIELDS,
                            west_fields=WEST_REPORT_FIELDS,
                            south_fields=SOUTH_REPORT_FIELDS,
@@ -1477,7 +1496,8 @@ def settings_retention_rates(user_id):
         db.session.commit()
         flash(f'「{u.display_name}」保留金費率已重置為全域設定', 'success')
     else:
-        for field in RETENTION_FIELDS:
+        z_ret_fields = get_zone_retention_fields(u.zone)
+        for field in z_ret_fields:
             try:
                 rate = max(0, int(request.form.get(f'rate_{field}', 0)))
             except (ValueError, TypeError):

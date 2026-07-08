@@ -882,7 +882,8 @@
 </div>
 
 <script>
-const RET_FIELDS = {{ retention_fields_labeled | tojson }};
+const WEST_RET_FIELDS = {{ west_ret_labeled | tojson }};
+const SOUTH_RET_FIELDS = {{ south_ret_labeled | tojson }};
 const USER_RET_RATES = {{ user_ret_rates | tojson }};
 const GLOBAL_RATE = {{ retention_rate }};
 
@@ -943,10 +944,11 @@ function openRetRates(userId, name) {
   document.getElementById('retRatesUsername').textContent = name;
   document.getElementById('retRatesForm').action = url;
   document.getElementById('retRatesResetForm').action = url;
-  const info = USER_RET_RATES[userId] || { rates: {}, is_custom: false };
+  const info = USER_RET_RATES[userId] || { rates: {}, is_custom: false, zone: '西區' };
+  const retFields = info.zone === '南區' ? SOUTH_RET_FIELDS : WEST_RET_FIELDS;
   const tbody = document.getElementById('retRatesBody');
   tbody.innerHTML = '';
-  RET_FIELDS.forEach(function([field, label]) {
+  retFields.forEach(function([field, label]) {
     const rate = info.rates[field] !== undefined ? info.rates[field] : GLOBAL_RATE;
     const tr = document.createElement('tr');
     tr.innerHTML =
