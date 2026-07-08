@@ -820,12 +820,15 @@ def get_users_all_retention_rates(user_ids, users_dict: dict = None) -> dict:
 
 def get_ytd_retention(user_id: int) -> float:
     """今年度累積保留金（最低 0，最高 RETENTION_CAP，含共同作業分配）"""
+    from sqlalchemy import or_, text as _sa_t_ytd
     u = db.session.get(User, user_id)
     zone = u.zone if u else ZONE_WEST
     ret_fields = get_zone_retention_fields(zone)
     year_start = date(date.today().year, 1, 1)
+    _uid = int(user_id)
     reports = Report.query.filter(
-        Report.user_id == user_id,
+        or_(Report.user_id == _uid,
+            _sa_t_ytd(f"collab_json::jsonb @> '[{_uid}]'")),
         Report.is_confirmed == True,
         Report.report_date >= year_start,
         Report.report_date <= date.today()
@@ -921,17 +924,24 @@ def index():
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
-    active_users = User.query.filter_by(is_active=True).order_by(User.display_name).all()
+    login_type = request.args.get('type', '')  # 'admin' or 'user'
     if request.method == 'POST':
-        user_id = request.form.get('user_id', '').strip()
+        login_type = request.form.get('login_type', login_type)
+        user_id  = request.form.get('user_id', '').strip()
         password = request.form.get('password', '')
         user = db.session.get(User, int(user_id)) if user_id.isdigit() else None
         if user and user.is_active and check_password_hash(user.password_hash, password):
             login_user(user, remember=True)
-            session.permanent = True  # 確保 PERMANENT_SESSION_LIFETIME 生效
+            session.permanent = True
             return redirect(url_for('confirmation') if user.role == 'ADMIN' else url_for('report'))
         flash('密碼錯誤，請重試', 'danger')
-    return render_template('login.html', active_users=active_users)
+    if login_type == 'admin':
+        active_users = User.query.filter_by(is_active=True, role='ADMIN').order_by(User.display_name).all()
+    elif login_type == 'user':
+        active_users = User.query.filter_by(is_active=True, role='USER').order_by(User.display_name).all()
+    else:
+        active_users = []
+    return render_template('login.html', active_users=active_users, login_type=login_type)
 
 
 @app.route('/logout')
@@ -1357,7 +1367,9 @@ def settings_password():
         add_audit(current_user.id, 'PASSWORD_CHANGE',
                   f'{current_user.display_name} 修改了自己的密碼')
         db.session.commit()
-        flash('密碼已更新', 'success')
+        logout_user()
+        flash('密碼已更新，請重新登入', 'success')
+        return redirect(url_for('login'))
     return redirect(url_for('settings'))
 
 

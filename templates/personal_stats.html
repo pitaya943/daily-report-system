@@ -21,7 +21,11 @@
       <div class="text-muted small">今年度累積保留金（{{ now_year }} 年，已確認回報）</div>
       <div class="fw-bold fs-4 text-warning">{{ ytd_retention | money }} NTD</div>
       <div class="text-muted" style="font-size:.75rem">
+        {% if zone == '南區' %}
+        每筆直總/間接/換由令(含表)/換開關(含表)/固拆(含表) 各工項抽保留金費率，年底結算歸零
+        {% else %}
         每筆直總-13/20/25/40、間接-13/20/25/40 各抽保留金費率，年底結算歸零
+        {% endif %}
       </div>
     </div>
   </div>
