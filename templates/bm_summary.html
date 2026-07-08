@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+{% from '_pagination.html' import paginate %}
+{% block title %}大表統計報表{% endblock %}
+{% block page_title %}<i class="bi bi-table me-2"></i>大表統計報表 <span class="badge bg-dark ms-2">大表</span>{% endblock %}
+
+{% block content %}
+<!-- Filter -->
+<div class="card mb-4">
+  <div class="card-body py-3">
+    <form method="GET" class="row g-2 align-items-end">
+      <div class="col-md-2">
+        <label class="form-label small mb-1">開始日期 <span class="text-danger">*</span></label>
+        <input type="date" name="start_date" class="form-control form-control-sm"
+               value="{{ start_date }}" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">結束日期 <span class="text-danger">*</span></label>
+        <input type="date" name="end_date" class="form-control form-control-sm"
+               value="{{ end_date }}" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">帳戶</label>
+        <select name="user_id" class="form-select form-select-sm">
+          <option value="">全部帳戶</option>
+          {% for u in all_bm_users %}
+          <option value="{{ u.id }}" {% if selected_user_id|string == u.id|string %}selected{% endif %}>
+            {{ u.display_name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">確認狀態</label>
+        <select name="confirm_filter" class="form-select form-select-sm">
+          <option value="all"         {% if confirm_filter == 'all'         %}selected{% endif %}>全部</option>
+          <option value="confirmed"   {% if confirm_filter == 'confirmed'   %}selected{% endif %}>僅已確認</option>
+          <option value="unconfirmed" {% if confirm_filter == 'unconfirmed' %}selected{% endif %}>僅未確認</option>
+        </select>
+      </div>
+      <div class="col-md-auto">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-search me-1"></i>查詢
+        </button>
+        <a href="{{ url_for('bm_summary') }}" class="btn btn-outline-secondary btn-sm ms-1">清除</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if results %}
+<div class="card">
+  <div class="card-header bg-dark text-white">
+    <span>{{ start_date }} ～ {{ end_date }}｜共 {{ results.total_reports }} 筆回報</span>
+  </div>
+
+  {% if bm_pagination %}{{ paginate(bm_pagination, 'bm_summary', url_args) }}{% endif %}
+
+  <div class="card-body p-0">
+    {% if results.user_totals %}
+    <div class="table-responsive">
+      <table class="table table-bordered table-sm mb-0 align-middle" style="font-size:.8rem">
+        <thead class="table-dark">
+          <tr class="align-bottom">
+            <th class="text-nowrap" style="min-width:90px">帳戶</th>
+            <th class="text-center text-nowrap" style="min-width:36px">筆數</th>
+            {% for key, label in bm_fields %}
+            <th class="text-center" style="min-width:28px; max-width:34px; font-size:.6rem; word-break:break-all; line-height:1.1; padding:3px 1px; vertical-align:bottom;" title="{{ label }}">{{ label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for uid, data in results.user_totals.items() %}
+          <tr>
+            <td class="fw-semibold">{{ data.username }}</td>
+            <td class="text-center">{{ data.count }}</td>
+            {% for key, _ in bm_fields %}
+            <td class="text-center px-1">
+              {% if data.totals.get(key, 0) > 0 %}{{ data.totals[key] | qty }}{% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="table-success fw-bold">
+            <td class="text-nowrap">合計</td>
+            <td class="text-center">—</td>
+            {% for key, _ in bm_fields %}
+            <td class="text-center px-1">{{ results.grand.get(key, 0) | qty if results.grand.get(key, 0) else '' }}</td>
+            {% endfor %}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-center text-muted py-3 mb-0">
+      <i class="bi bi-info-circle me-1"></i>查詢範圍內無資料。
+    </p>
+    {% endif %}
+  </div>
+
+  {% if bm_pagination %}{{ paginate(bm_pagination, 'bm_summary', url_args) }}{% endif %}
+</div>
+{% elif start_date %}
+<div class="alert alert-info">
+  <i class="bi bi-info-circle me-1"></i>查詢範圍內無資料。
+</div>
+{% else %}
+<div class="card border-0">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-bar-chart-line display-4 mb-3 d-block"></i>
+    請選擇日期範圍後點擊「查詢」以檢視大表統計報表。
+  </div>
+</div>
+{% endif %}
+{% endblock %}

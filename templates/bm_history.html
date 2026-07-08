@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+{% from '_pagination.html' import paginate %}
+{% block title %}大表歷史紀錄{% endblock %}
+{% block page_title %}<i class="bi bi-clock-history me-2"></i>大表歷史紀錄 <span class="badge bg-dark ms-2">大表</span>{% endblock %}
+
+{% block content %}
+<!-- Filter -->
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <form method="GET" class="row g-2 align-items-end">
+      <div class="col-6 col-md-3">
+        <label class="form-label small mb-1">帳戶</label>
+        <select name="user_id" class="form-select form-select-sm">
+          <option value="">全部帳戶</option>
+          {% for u in all_bm_users %}
+          <option value="{{ u.id }}" {% if selected_user_id|string == u.id|string %}selected{% endif %}>
+            {{ u.display_name }}{% if not u.is_active %} (停用){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-1">開始日期</label>
+        <input type="date" name="start_date" class="form-control form-control-sm" value="{{ start_date }}">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-1">結束日期</label>
+        <input type="date" name="end_date" class="form-control form-control-sm" value="{{ end_date }}">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search me-1"></i>查詢</button>
+        <a href="{{ url_for('bm_history') }}" class="btn btn-outline-secondary btn-sm ms-1">清除</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>共 {{ pagination.total }} 筆紀錄</span>
+  </div>
+
+  {{ paginate(pagination, 'bm_history', url_args) }}
+
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0 align-middle" style="font-size:.8rem">
+        <thead class="table-light">
+          <tr class="align-bottom">
+            <th style="min-width:32px">#</th>
+            <th style="min-width:90px">帳戶</th>
+            <th style="min-width:82px">日期</th>
+            {% for key, label in bm_fields %}
+            <th class="text-center" style="min-width:28px; max-width:34px; font-size:.6rem; word-break:break-all; line-height:1.1; padding:3px 1px; vertical-align:bottom;" title="{{ label }}">{{ label }}</th>
+            {% endfor %}
+            <th class="text-center" style="min-width:60px">狀態</th>
+            <th class="text-center" style="min-width:70px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in reports %}
+          {% set submitter = users_dict.get(r.user_id) %}
+          <tr>
+            <td class="text-muted">{{ r.id }}</td>
+            <td>
+              <span class="fw-semibold">{{ submitter.display_name if submitter else '(已刪除)' }}</span>
+              {% if r.collab_count and r.collab_count > 1 %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>{% endif %}
+            </td>
+            <td class="text-nowrap">{{ r.report_date }}</td>
+            {% for key, _ in bm_fields %}
+            <td class="text-center px-1">{{ r[key] | qty }}</td>
+            {% endfor %}
+            <td class="text-center">
+              {% if r.is_confirmed %}<span class="badge bg-success">已確認</span>
+              {% elif r.is_rejected %}<span class="badge bg-danger">已駁回</span>
+              {% else %}<span class="badge bg-secondary">未確認</span>{% endif %}
+            </td>
+            <td class="text-center text-nowrap">
+              <button class="btn btn-outline-primary btn-sm py-0 px-2"
+                      onclick="openEdit({{ r.id }}, {{ r | report_json }})">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
+                      onclick="confirmDelete({{ r.id }}, '{{ r.report_date }}')">
+                <i class="bi bi-trash"></i>
+              </button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="30" class="text-center text-muted py-4">無資料</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{ paginate(pagination, 'bm_history', url_args) }}
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>修改大表回報</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="editForm" method="POST" onsubmit="return confirm('確定儲存修改？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <div id="editCollabInfo" class="alert alert-info py-2 mb-3 d-none" style="font-size:.85rem">
+            <i class="bi bi-people me-1"></i>共同作業人員：<span id="editCollabNames"></span>
+          </div>
+          <div id="editFields" class="row g-3"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Delete form -->
+<form id="deleteForm" method="POST" style="display:none">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="confirm" value="1">
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BM_FIELDS = {{ bm_fields | tojson }};
+const USERS = {
+  {% for uid, u in users_dict.items() %}{{ uid }}: "{{ u.display_name | e }}"{% if not loop.last %}, {% endif %}{% endfor %}
+};
+
+function getVal(r, k) { return r[k] ?? 0; }
+
+function openEdit(id, r) {
+  document.getElementById('editForm').action = `/bm/history/${id}/edit`;
+  const collabIds = JSON.parse(r.collab_json || '[]');
+  const collabDiv = document.getElementById('editCollabInfo');
+  if (collabIds.length > 0) {
+    document.getElementById('editCollabNames').textContent = collabIds.map(cid => USERS[cid] || '?').join('、');
+    collabDiv.classList.remove('d-none');
+  } else {
+    collabDiv.classList.add('d-none');
+  }
+  const container = document.getElementById('editFields');
+  container.innerHTML = '';
+  BM_FIELDS.forEach(([k, label]) => {
+    container.innerHTML += `
+      <div class="col-6 col-md-3">
+        <label class="form-label small text-muted">${label}</label>
+        <input type="number" class="form-control form-control-sm"
+               name="${k}" value="${getVal(r, k)}" min="0" step="1">
+      </div>`;
+  });
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+
+function confirmDelete(id, dt) {
+  if (!confirm(`確定刪除 ${dt} 的回報 #${id}？`)) return;
+  const f = document.getElementById('deleteForm');
+  f.action = `/bm/history/${id}/delete`;
+  f.submit();
+}
+</script>
+{% endblock %}

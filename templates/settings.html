@@ -161,7 +161,10 @@
               </td>
               <td>
                 {% if u.role == 'USER' %}
-                  {% if u.zone == '南區' %}
+                  {% if u.is_big_meter %}
+                    <span class="badge bg-dark">大表</span>
+                    <span class="badge bg-secondary ms-1" style="font-size:.6rem">{{ u.zone }}</span>
+                  {% elif u.zone == '南區' %}
                     <span class="badge bg-warning text-dark">南區</span>
                   {% else %}
                     <span class="badge bg-info text-dark">西區</span>
@@ -256,6 +259,17 @@
                         title="切換區域（西區/南區）">
                   <i class="bi bi-geo-alt"></i>
                 </button>
+                <form method="POST"
+                      action="{{ url_for('settings_toggle_big_meter', user_id=u.id) }}"
+                      class="d-inline"
+                      onsubmit="return confirm('確定切換「{{ u.display_name|e }}」為{% if u.is_big_meter %}一般用戶{% else %}大表用戶{% endif %}？')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit"
+                          class="btn btn-{% if u.is_big_meter %}dark{% else %}outline-dark{% endif %} btn-sm py-0 px-2 ms-1"
+                          title="{% if u.is_big_meter %}目前為大表用戶，點擊切換為一般用戶{% else %}點擊切換為大表用戶{% endif %}">
+                    <i class="bi bi-speedometer2"></i>
+                  </button>
+                </form>
                 {% endif %}
                 <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
                         onclick="openResetPwd({{ u.id }}, '{{ u.display_name|e }}')"
@@ -483,6 +497,11 @@
           <span class="badge bg-warning text-dark me-1">南區</span> 南區計薪
         </a>
       </li>
+      <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#priceBM">
+          <span class="badge bg-dark me-1">大表</span> 大表計薪
+        </a>
+      </li>
     </ul>
     <div class="tab-content">
       <!-- West Zone -->
@@ -528,6 +547,29 @@
           </div>
           <button type="submit" class="btn btn-warning btn-sm text-dark">
             <i class="bi bi-check-lg me-1"></i>儲存南區計薪
+          </button>
+        </form>
+      </div>
+      <!-- Big Meter -->
+      <div class="tab-pane fade" id="priceBM">
+        <form method="POST" action="{{ url_for('settings_item_prices_bm') }}"
+              onsubmit="return confirm('確定更新大表工項單位計薪？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="row g-2 mb-3">
+            {% for key, label in bm_fields %}
+            <div class="col-sm-6 col-lg-4">
+              <label class="form-label small mb-1" title="{{ label }}">{{ label }}</label>
+              <div class="input-group input-group-sm">
+                <input type="number" name="price_bm_{{ key }}" class="form-control"
+                       value="{{ bm_prices.get(key, 0) | int }}"
+                       min="0" step="1" required>
+                <span class="input-group-text">NTD</span>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <button type="submit" class="btn btn-dark btn-sm">
+            <i class="bi bi-check-lg me-1"></i>儲存大表計薪
           </button>
         </form>
       </div>

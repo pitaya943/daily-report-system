@@ -161,6 +161,22 @@
        title="日報/月報">
       <i class="bi bi-archive"></i><span class="nav-text"> 日報/月報</span>
     </a>
+    <div class="sidebar-section mt-2">大表管理</div>
+    <a href="{{ url_for('bm_history') }}"
+       class="nav-link {% if request.endpoint == 'bm_history' %}active{% endif %}"
+       title="大表歷史紀錄">
+      <i class="bi bi-clock-history"></i><span class="nav-text"> 大表歷史紀錄</span>
+    </a>
+    <a href="{{ url_for('bm_confirmation') }}"
+       class="nav-link {% if request.endpoint == 'bm_confirmation' %}active{% endif %}"
+       title="大表確認">
+      <i class="bi bi-check-circle"></i><span class="nav-text"> 大表確認</span>
+    </a>
+    <a href="{{ url_for('bm_summary') }}"
+       class="nav-link {% if request.endpoint == 'bm_summary' %}active{% endif %}"
+       title="大表統計報表">
+      <i class="bi bi-table"></i><span class="nav-text"> 大表統計報表</span>
+    </a>
     {% endif %}
   </div>
 </nav>

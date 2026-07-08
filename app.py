@@ -289,6 +289,12 @@ def _init_db():
             if not db.session.get(SystemConfig, _pk):
                 db.session.add(SystemConfig(key=_pk,
                                             value=str(int(DEFAULT_PRICES_SOUTH.get(_field, 0.0)))))
+        # Seed big meter item prices (idempotent)
+        for _field, _ in BIG_METER_FIELDS:
+            _pk = f'price_bm_{_field}'
+            if not db.session.get(SystemConfig, _pk):
+                db.session.add(SystemConfig(key=_pk,
+                                            value=str(int(DEFAULT_PRICES_BM.get(_field, 0.0)))))
         db.session.commit()
     except Exception:
         pass
@@ -418,6 +424,43 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # Column migration: add app_item to reports (共用 APP 工項)
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text(
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS app_item NUMERIC(8,1) NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+    # Column migration: add is_big_meter to users
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_big_meter BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+    # Column migration: add big meter fields to reports
+    for _col in [
+        'bm_50_down', 'bm_75_down', 'bm_100_down', 'bm_150_down',
+        'bm_200_down', 'bm_250_down', 'bm_300_down',
+        'bm_50_up', 'bm_75_up', 'bm_100_up', 'bm_150_up',
+        'bm_200_up', 'bm_250_up',
+        'bm_rm_screw50', 'bm_rm_noscrew50',
+        'bm_rm_75', 'bm_rm_100', 'bm_rm_150', 'bm_rm_200',
+        'bm_hole', 'bm_clean_big', 'bm_truck',
+        'bm_mobilization', 'bm_recheck', 'bm_app',
+    ]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(_text(
+                    f"ALTER TABLE reports ADD COLUMN IF NOT EXISTS {_col} NUMERIC(8,1) NOT NULL DEFAULT 0"
+                ))
+                conn.commit()
+        except Exception:
+            pass
 
 with app.app_context():
     _init_db()
@@ -573,7 +616,8 @@ WEST_REPORT_FIELDS = [
     ('mobilization',  '動員'),
     ('recheck',       '複查案/9年表'),
     ('soil_clearing', '清積土'),
-]  # 31 欄
+    ('app_item',      'APP'),
+]  # 32 欄
 
 SOUTH_REPORT_FIELDS = [
     ('direct_13',   '直總-13'),
@@ -612,7 +656,8 @@ SOUTH_REPORT_FIELDS = [
     ('mobilization',  '動員'),
     ('recheck',       '複查案/9年表'),
     ('soil_clearing', '清積土'),
-]  # 36 欄
+    ('app_item',      'APP'),
+]  # 37 欄
 
 WEST_RETENTION_FIELDS = [
     'direct_13', 'direct_20', 'direct_25', 'direct_40',
@@ -639,6 +684,7 @@ DEFAULT_PRICES_WEST = {
     'dfix_13':340.0,'dfix_20':340.0,'dfix_25':340.0,'direct_fixed_40':500.0,
     'ifix_13':230.0,'ifix_20':230.0,'ifix_25':230.0,'indirect_fixed_40':450.0,
     'pipe_repair':150.0,'mobilization':1200.0,'recheck':60.0,'soil_clearing':100.0,
+    'app_item':10.0,
 }
 
 DEFAULT_PRICES_SOUTH = {
@@ -651,6 +697,46 @@ DEFAULT_PRICES_SOUTH = {
     's_dfix_13':330.0,'s_dfix_20':330.0,'s_dfix_25':330.0,'direct_fixed_40':490.0,
     's_ifix_13':270.0,'s_ifix_20':270.0,'s_ifix_25':270.0,'indirect_fixed_40':440.0,
     'pipe_repair':150.0,'mobilization':1200.0,'recheck':70.0,'soil_clearing':130.0,
+    'app_item':10.0,
+}
+
+BIG_METER_FIELDS = [
+    ('bm_50_down',      '50mm下'),
+    ('bm_75_down',      '75mm下'),
+    ('bm_100_down',     '100mm下'),
+    ('bm_150_down',     '150mm下'),
+    ('bm_200_down',     '200mm下'),
+    ('bm_250_down',     '250mm下'),
+    ('bm_300_down',     '300mm下'),
+    ('bm_50_up',        '50mm上'),
+    ('bm_75_up',        '75mm上'),
+    ('bm_100_up',       '100mm上'),
+    ('bm_150_up',       '150mm上'),
+    ('bm_200_up',       '200mm上'),
+    ('bm_250_up',       '250mm上'),
+    ('bm_rm_screw50',   '拆表/復水-螺紋50mm'),
+    ('bm_rm_noscrew50', '拆表/復水-非螺紋50mm'),
+    ('bm_rm_75',        '拆表/復水-75mm'),
+    ('bm_rm_100',       '拆表/復水-100mm'),
+    ('bm_rm_150',       '拆表/復水-150mm'),
+    ('bm_rm_200',       '拆表/復水-200mm'),
+    ('bm_hole',         '孔片'),
+    ('bm_clean_big',    '清箱大'),
+    ('bm_truck',        '小貨車'),
+    ('bm_mobilization', '動員'),
+    ('bm_recheck',      '復查'),
+    ('bm_app',          'APP'),
+]  # 25 欄
+
+DEFAULT_PRICES_BM = {
+    'bm_50_down':1100.0,'bm_75_down':1800.0,'bm_100_down':2000.0,
+    'bm_150_down':2400.0,'bm_200_down':2800.0,'bm_250_down':3300.0,'bm_300_down':3900.0,
+    'bm_50_up':1100.0,'bm_75_up':1700.0,'bm_100_up':1900.0,
+    'bm_150_up':2100.0,'bm_200_up':2500.0,'bm_250_up':2700.0,
+    'bm_rm_screw50':800.0,'bm_rm_noscrew50':1100.0,
+    'bm_rm_75':1600.0,'bm_rm_100':1900.0,'bm_rm_150':2100.0,'bm_rm_200':3000.0,
+    'bm_hole':500.0,'bm_clean_big':700.0,'bm_truck':700.0,
+    'bm_mobilization':1200.0,'bm_recheck':70.0,'bm_app':10.0,
 }
 
 # 向後相容別名
@@ -670,6 +756,13 @@ def get_zone_fields(zone: str) -> list:
 
 def get_zone_retention_fields(zone: str) -> list:
     return SOUTH_RETENTION_FIELDS if zone == ZONE_SOUTH else WEST_RETENTION_FIELDS
+
+
+def get_user_report_fields(user) -> list:
+    """回傳該用戶的回報工項清單：大表用戶用 BIG_METER_FIELDS，其餘依區域。"""
+    if getattr(user, 'is_big_meter', False):
+        return BIG_METER_FIELDS
+    return get_zone_fields(user.zone)
 
 
 # ---------------------------------------------------------------------------
@@ -725,8 +818,10 @@ def get_tax_rate_for_zone(zone: str) -> float:
 
 _price_cache_west: dict = {}
 _price_cache_south: dict = {}
+_price_cache_bm: dict = {}
 _price_cache_ts_west: float = 0.0
 _price_cache_ts_south: float = 0.0
+_price_cache_ts_bm: float = 0.0
 _PRICE_CACHE_TTL = 300
 
 
@@ -771,14 +866,32 @@ def get_item_prices_for_zone(zone: str = ZONE_WEST) -> dict:
 
 
 def get_item_prices() -> dict:
-    """向後相容：西區計價。"""
+    """向後相容：西區��價。"""
     return get_item_prices_for_zone(ZONE_WEST)
 
 
+def get_item_prices_bm() -> dict:
+    """大表計價，prefix=price_bm_，快取 5 分鐘。"""
+    global _price_cache_bm, _price_cache_ts_bm
+    if _price_cache_bm and (time.monotonic() - _price_cache_ts_bm) < _PRICE_CACHE_TTL:
+        return _price_cache_bm
+    keys = [f'price_bm_{k}' for k, _ in BIG_METER_FIELDS]
+    cfg_map = {r.key: r.value for r in SystemConfig.query.filter(
+        SystemConfig.key.in_(keys)).all()}
+    prices = {}
+    for k, _ in BIG_METER_FIELDS:
+        raw = cfg_map.get(f'price_bm_{k}')
+        prices[k] = float(raw) if raw is not None else float(DEFAULT_PRICES_BM.get(k, 0))
+    _price_cache_bm    = prices
+    _price_cache_ts_bm = time.monotonic()
+    return prices
+
+
 def _invalidate_price_cache():
-    global _price_cache_west, _price_cache_south
+    global _price_cache_west, _price_cache_south, _price_cache_bm
     _price_cache_west  = {}
     _price_cache_south = {}
+    _price_cache_bm    = {}
 
 
 def calc_retention_from_totals(totals: dict) -> float:
@@ -788,8 +901,10 @@ def calc_retention_from_totals(totals: dict) -> float:
 
 
 def get_user_all_retention_rates(user_id: int) -> dict:
-    """回傳 {field: rate}，未自訂的欄位使用該區域全域費率。"""
+    """回傳 {field: rate}，未自訂的欄位使用該區域全域費率。大表用戶回傳 {}。"""
     u = db.session.get(User, user_id)
+    if u and u.is_big_meter:
+        return {}
     zone = u.zone if u else ZONE_WEST
     global_rate = get_retention_rate_for_zone(zone)
     ret_fields = get_zone_retention_fields(zone)
@@ -801,17 +916,17 @@ def get_user_all_retention_rates(user_id: int) -> dict:
 
 
 def get_users_all_retention_rates(user_ids, users_dict: dict = None) -> dict:
-    """批次載入多帳戶費率，回傳 {uid: {field: rate}}，支援南/西區不同欄位。"""
+    """批次載入多帳戶費率，回傳 {uid: {field: rate}}，支援南/西區不同欄位。大表用戶回傳 {}。"""
     ids = list(user_ids)
     west_rate  = get_retention_rate()
     south_rate = get_retention_rate_for_zone(ZONE_SOUTH)
     result = {}
     for uid in ids:
-        zone = ZONE_WEST
-        if users_dict:
-            u = users_dict.get(uid)
-            if u:
-                zone = u.zone
+        u_obj = users_dict.get(uid) if users_dict else None
+        if u_obj and u_obj.is_big_meter:
+            result[uid] = {}
+            continue
+        zone = u_obj.zone if u_obj else ZONE_WEST
         zone_rate = south_rate if zone == ZONE_SOUTH else west_rate
         result[uid] = {f: zone_rate for f in get_zone_retention_fields(zone)}
     if ids:
@@ -827,6 +942,8 @@ def get_ytd_retention(user_id: int) -> float:
     """今年度累積保留金（最低 0，最高 RETENTION_CAP，含共同作業分配）"""
     from sqlalchemy import or_, text as _sa_t_ytd
     u = db.session.get(User, user_id)
+    if u and u.is_big_meter:
+        return 0.0  # 大表用戶無保留金
     zone = u.zone if u else ZONE_WEST
     ret_fields = get_zone_retention_fields(zone)
     year_start = date(date.today().year, 1, 1)
@@ -884,9 +1001,10 @@ def add_audit(user_id, action_type, description):
     db.session.add(log)
 
 
-def parse_report_values(form, zone: str = ZONE_WEST):
+def parse_report_values(form, zone: str = ZONE_WEST, is_big_meter: bool = False):
+    fields = BIG_METER_FIELDS if is_big_meter else get_zone_fields(zone)
     vals = {}
-    for key, _ in get_zone_fields(zone):
+    for key, _ in fields:
         try:
             vals[key] = max(0.0, round(float(form.get(key, 0) or 0), 1))
         except (ValueError, TypeError):
@@ -894,9 +1012,10 @@ def parse_report_values(form, zone: str = ZONE_WEST):
     return vals
 
 
-def report_diff(old_report, new_vals, zone: str = ZONE_WEST):
+def report_diff(old_report, new_vals, zone: str = ZONE_WEST, is_big_meter: bool = False):
+    fields = BIG_METER_FIELDS if is_big_meter else get_zone_fields(zone)
     changes = []
-    for key, label in get_zone_fields(zone):
+    for key, label in fields:
         ov = float(getattr(old_report, key, 0) or 0)
         nv = float(new_vals.get(key, 0))
         if round(ov, 1) != round(nv, 1):
@@ -975,9 +1094,10 @@ def report():
             report_date = date.today()
 
         zone = current_user.zone
-        vals = parse_report_values(request.form, zone)
+        is_bm = current_user.is_big_meter
+        vals = parse_report_values(request.form, zone, is_big_meter=is_bm)
 
-        # 解析共同作業人員（同區、啟用、USER、不含自己，最多 6 人）
+        # 解析共同作業人員（同區、相同類型、啟用、USER、不含自己，最多 6 人）
         collab_raw = request.form.get('collab_ids', '').strip()
         collab_ids = [int(x) for x in collab_raw.split(',') if x.strip().isdigit()]
         if collab_ids:
@@ -985,7 +1105,8 @@ def report():
                 User.id.in_(collab_ids),
                 User.role == 'USER',
                 User.is_active == True,
-                User.zone == zone
+                User.zone == zone,
+                User.is_big_meter == is_bm
             ).all() if u.id != current_user.id}
             collab_ids = [i for i in collab_ids if i in valid_ids][:6]
 
@@ -998,8 +1119,8 @@ def report():
         )
         db.session.add(r)
 
-        zone_fields = get_zone_fields(zone)
-        nonzero = ', '.join(f'{label}:{vals[k]:g}' for k, label in zone_fields if vals.get(k, 0) > 0)
+        user_fields = get_user_report_fields(current_user)
+        nonzero = ', '.join(f'{label}:{vals[k]:g}' for k, label in user_fields if vals.get(k, 0) > 0)
         collab_note = f'（共{1 + len(collab_ids)}人作業）' if collab_ids else ''
         add_audit(current_user.id, 'REPORT_CREATE',
                   f'新增 {report_date} 的回報{collab_note}｜{nonzero or "全部為0"}')
@@ -1007,19 +1128,21 @@ def report():
         flash('回報已成功送出', 'success')
         return redirect(url_for('report'))
 
-    zone_fields = get_zone_fields(current_user.zone)
+    user_fields = get_user_report_fields(current_user)
     return render_template('report.html',
-                           report_fields=zone_fields,
+                           report_fields=user_fields,
                            zone=current_user.zone,
+                           is_big_meter=current_user.is_big_meter,
                            today=str(date.today()))
 
 
 @app.route('/api/collab-users')
 @login_required
 def api_collab_users():
-    """回傳與 current_user 同區的所有啟用 USER（不含自己），供共同作業下拉使用。"""
+    """回傳與 current_user 同區且相同類型（大表/一般）的啟用 USER（不含自己）。"""
     users = (User.query
-             .filter_by(role='USER', is_active=True, zone=current_user.zone)
+             .filter_by(role='USER', is_active=True, zone=current_user.zone,
+                        is_big_meter=current_user.is_big_meter)
              .filter(User.id != current_user.id)
              .order_by(User.display_name)
              .all())
@@ -1047,16 +1170,20 @@ def history():
             Report.user_id == _uid,
             _sa_t(f"collab_json::jsonb @> '[{_uid}]'")
         ))
-    elif selected_user_id:
-        _sid = int(selected_user_id)
-        q = q.filter(or_(
-            Report.user_id == _sid,
-            _sa_t(f"collab_json::jsonb @> '[{_sid}]'")
-        ))
+    else:
+        # ADMIN: exclude big-meter users (they appear only in /bm/history)
+        _bm_ids = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+        q = q.filter(Report.user_id.notin_(_bm_ids))
+        if selected_user_id:
+            _sid = int(selected_user_id)
+            q = q.filter(or_(
+                Report.user_id == _sid,
+                _sa_t(f"collab_json::jsonb @> '[{_sid}]'")
+            ))
 
     # Zone filter (ADMIN only — filter by submitter's zone)
     if current_user.role == 'ADMIN' and selected_zone in (ZONE_WEST, ZONE_SOUTH):
-        _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone).scalar_subquery()
+        _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone, is_big_meter=False).scalar_subquery()
         q = q.filter(Report.user_id.in_(_zone_ids))
 
     if start_date:
@@ -1069,9 +1196,9 @@ def history():
                   .paginate(page=page, per_page=20, error_out=False))
 
     if current_user.role == 'ADMIN':
-        # ADMIN needs full user list for the filter dropdown + all submitters
-        _all_users_list = User.query.order_by(User.display_name).all()
-        users_dict = {u.id: u for u in _all_users_list}
+        # ADMIN: non-BM users only for dropdown + submitter resolution
+        _all_users_list = User.query.filter_by(is_big_meter=False).order_by(User.display_name).all()
+        users_dict = {u.id: u for u in User.query.order_by(User.display_name).all()}
         all_users  = _all_users_list
     else:
         # USER: load submitters + collab members on this page so modal can resolve all names
@@ -1086,8 +1213,8 @@ def history():
 
     url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
-    # USER sees their zone's fields; ADMIN uses zone-split tables
-    report_fields = get_zone_fields(current_user.zone) if current_user.role == 'USER' else None
+    # USER sees their fields (zone-aware + big meter); ADMIN uses zone-split tables
+    report_fields = get_user_report_fields(current_user) if current_user.role == 'USER' else None
 
     if current_user.role == 'ADMIN':
         west_reports  = [r for r in pagination.items
@@ -1107,6 +1234,7 @@ def history():
                            report_fields=report_fields,
                            west_fields=WEST_REPORT_FIELDS,
                            south_fields=SOUTH_REPORT_FIELDS,
+                           bm_fields=BIG_METER_FIELDS,
                            west_reports=west_reports,
                            south_reports=south_reports,
                            start_date=start_date,
@@ -1130,12 +1258,13 @@ def history_edit(report_id):
         return redirect(url_for('history'))
 
     report_user = db.session.get(User, r.user_id)
-    zone = report_user.zone if report_user else ZONE_WEST
-    new_vals = parse_report_values(request.form, zone)
-    diff = report_diff(r, new_vals, zone)
+    zone   = report_user.zone          if report_user else ZONE_WEST
+    is_bm  = report_user.is_big_meter  if report_user else False
+    new_vals = parse_report_values(request.form, zone, is_big_meter=is_bm)
+    diff = report_diff(r, new_vals, zone, is_big_meter=is_bm)
     was_confirmed = r.is_confirmed
-
-    for key, _ in get_zone_fields(zone):
+    edit_fields = BIG_METER_FIELDS if is_bm else get_zone_fields(zone)
+    for key, _ in edit_fields:
         setattr(r, key, new_vals[key])
     r.updated_at = tw_now()
 
@@ -1361,6 +1490,8 @@ def settings():
                            item_prices=get_item_prices(),
                            west_prices=get_item_prices_for_zone(ZONE_WEST),
                            south_prices=get_item_prices_for_zone(ZONE_SOUTH),
+                           bm_fields=BIG_METER_FIELDS,
+                           bm_prices=get_item_prices_bm(),
                            my_ytd=my_ytd,
                            my_ret_rates=my_ret_rates,
                            bank_accounts=bank_accounts)
@@ -1704,6 +1835,50 @@ def settings_item_prices_south():
     return redirect(url_for('settings'))
 
 
+@app.route('/settings/item-prices-bm', methods=['POST'])
+@admin_required
+def settings_item_prices_bm():
+    updated = 0
+    for k, _ in BIG_METER_FIELDS:
+        val_str = request.form.get(f'price_bm_{k}', '').strip()
+        if val_str == '':
+            continue
+        try:
+            val = max(0.0, float(val_str))
+        except ValueError:
+            flash('無效數值，已略過部分欄位', 'warning')
+            continue
+        cfg = db.session.get(SystemConfig, f'price_bm_{k}')
+        if cfg:
+            cfg.value = str(val)
+        else:
+            db.session.add(SystemConfig(key=f'price_bm_{k}', value=str(val)))
+        updated += 1
+    if updated:
+        add_audit(current_user.id, 'SYSTEM_CONFIG',
+                  f'更新大表工項單位計薪（{updated} 個工項）')
+        db.session.commit()
+        _invalidate_price_cache()
+        flash('大表工項單位計薪已儲存', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/users/<int:user_id>/toggle-big-meter', methods=['POST'])
+@admin_required
+def settings_toggle_big_meter(user_id):
+    u = db.session.get(User, user_id)
+    if not u or u.role != 'USER':
+        abort(404)
+    new_val = not u.is_big_meter
+    u.is_big_meter = new_val
+    label = '大表用戶' if new_val else '一般用戶'
+    add_audit(current_user.id, 'USER_EDIT',
+              f'設定帳戶「{u.display_name}」為{label}')
+    db.session.commit()
+    flash(f'已將「{u.display_name}」設為{label}', 'success')
+    return redirect(url_for('settings'))
+
+
 @app.route('/settings/users/<int:user_id>/zone', methods=['POST'])
 @admin_required
 def settings_user_zone(user_id):
@@ -2033,14 +2208,16 @@ def summary():
     selected_zone = request.args.get('zone', '')
     confirm_filter = request.args.get('confirm_filter', 'all')
 
-    all_users = User.query.order_by(User.display_name).all()
+    # summary: non-BM users only (BM has its own /bm/summary)
+    _bm_ids_sum = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+    all_users = User.query.filter_by(is_big_meter=False).order_by(User.display_name).all()
     results = None
 
     if start_date and end_date:
         q = Report.query.filter(
             Report.report_date >= date.fromisoformat(start_date),
             Report.report_date <= date.fromisoformat(end_date)
-        )
+        ).filter(Report.user_id.notin_(_bm_ids_sum))
         if selected_user_id:
             _sid_sum = int(selected_user_id)
             from sqlalchemy import or_, text as _sa_t_sum
@@ -2049,7 +2226,7 @@ def summary():
                 _sa_t_sum(f"collab_json::jsonb @> '[{_sid_sum}]'")
             ))
         elif selected_zone in (ZONE_WEST, ZONE_SOUTH):
-            _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone).scalar_subquery()
+            _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone, is_big_meter=False).scalar_subquery()
             q = q.filter(Report.user_id.in_(_zone_ids))
         if confirm_filter == 'confirmed':
             q = q.filter_by(is_confirmed=True)
@@ -2140,14 +2317,16 @@ def confirmation():
         filter_end    = ed.isoformat()
 
     selected_zone = request.args.get('zone', '')
+    # confirmation: exclude big-meter users (they have /bm/confirmation)
+    _bm_ids_conf = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
     pending_q = Report.query.filter(
         Report.is_confirmed == False,
         Report.is_rejected  == False,
         Report.report_date  >= sd,
         Report.report_date  <= ed
-    )
+    ).filter(Report.user_id.notin_(_bm_ids_conf))
     if selected_zone in (ZONE_WEST, ZONE_SOUTH):
-        _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone).scalar_subquery()
+        _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone, is_big_meter=False).scalar_subquery()
         pending_q = pending_q.filter(Report.user_id.in_(_zone_ids))
     pending_pagination = (pending_q
                           .order_by(Report.report_date.asc(), Report.id.asc())
@@ -2339,6 +2518,256 @@ def audit():
 
 
 # ---------------------------------------------------------------------------
+# Pages: 大表管理 (BM) — ADMIN only
+# ---------------------------------------------------------------------------
+
+@app.route('/bm/history')
+@admin_required
+def bm_history():
+    page             = request.args.get('page', 1, type=int)
+    start_date       = request.args.get('start_date', '')
+    end_date         = request.args.get('end_date',   '')
+    selected_user_id = request.args.get('user_id', '')
+
+    _bm_ids = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+    q = Report.query.filter(Report.user_id.in_(_bm_ids))
+    if start_date:
+        q = q.filter(Report.report_date >= date.fromisoformat(start_date))
+    if end_date:
+        q = q.filter(Report.report_date <= date.fromisoformat(end_date))
+    if selected_user_id:
+        q = q.filter(Report.user_id == int(selected_user_id))
+
+    pagination = (q.order_by(Report.report_date.desc(), Report.id.desc())
+                   .paginate(page=page, per_page=25, error_out=False))
+
+    _uids = {r.user_id for r in pagination.items}
+    for r in pagination.items:
+        if r.collab_json:
+            _uids.update(json.loads(r.collab_json))
+    users_dict    = {u.id: u for u in User.query.filter(User.id.in_(_uids)).all()} if _uids else {}
+    all_bm_users  = User.query.filter_by(is_big_meter=True).order_by(User.display_name).all()
+    url_args      = {k: v for k, v in request.args.items() if k != 'page'}
+
+    return render_template('bm_history.html',
+                           reports=pagination.items,
+                           pagination=pagination,
+                           users_dict=users_dict,
+                           all_bm_users=all_bm_users,
+                           bm_fields=BIG_METER_FIELDS,
+                           selected_user_id=selected_user_id,
+                           start_date=start_date,
+                           end_date=end_date,
+                           url_args=url_args)
+
+
+@app.route('/bm/history/<int:report_id>/edit', methods=['POST'])
+@admin_required
+def bm_history_edit(report_id):
+    r = db.session.get(Report, report_id)
+    if not r:
+        abort(404)
+    report_user = db.session.get(User, r.user_id)
+    if not report_user or not report_user.is_big_meter:
+        abort(403)
+    new_vals = parse_report_values(request.form, is_big_meter=True)
+    diff = report_diff(r, new_vals, is_big_meter=True)
+    for key, _ in BIG_METER_FIELDS:
+        setattr(r, key, new_vals[key])
+    r.updated_at = tw_now()
+    if diff:
+        add_audit(current_user.id, 'REPORT_EDIT',
+                  f'ADMIN 修改大表回報 #{r.id}（{r.report_date}，{report_user.display_name}）：{diff}')
+    db.session.commit()
+    flash('修改已儲存', 'success')
+    return redirect(url_for('bm_history'))
+
+
+@app.route('/bm/history/<int:report_id>/delete', methods=['POST'])
+@admin_required
+def bm_history_delete(report_id):
+    r = db.session.get(Report, report_id)
+    if not r:
+        abort(404)
+    report_user = db.session.get(User, r.user_id)
+    if not report_user or not report_user.is_big_meter:
+        abort(403)
+    if request.form.get('confirm') != '1':
+        flash('請確認刪除操作', 'warning')
+        return redirect(url_for('bm_history'))
+    uname = report_user.display_name
+    add_audit(current_user.id, 'REPORT_DELETE',
+              f'ADMIN 刪除大表回報 #{r.id}（{r.report_date}，{uname}）')
+    db.session.delete(r)
+    db.session.commit()
+    flash(f'回報 #{report_id} 已刪除', 'success')
+    return redirect(url_for('bm_history'))
+
+
+@app.route('/bm/confirmation')
+@admin_required
+def bm_confirmation():
+    page          = request.args.get('page', 1, type=int)
+    default_start = (date.today() - timedelta(days=30)).isoformat()
+    default_end   = date.today().isoformat()
+    filter_start  = request.args.get('start_date', default_start)
+    filter_end    = request.args.get('end_date',   default_end)
+    try:
+        sd = date.fromisoformat(filter_start)
+        ed = date.fromisoformat(filter_end)
+    except ValueError:
+        sd, ed       = date.today() - timedelta(days=30), date.today()
+        filter_start = sd.isoformat()
+        filter_end   = ed.isoformat()
+
+    _bm_ids   = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+    pending_q = Report.query.filter(
+        Report.is_confirmed == False,
+        Report.is_rejected  == False,
+        Report.report_date  >= sd,
+        Report.report_date  <= ed,
+        Report.user_id.in_(_bm_ids)
+    )
+    pending_pagination = (pending_q
+                          .order_by(Report.report_date.asc(), Report.id.asc())
+                          .paginate(page=page, per_page=20, error_out=False))
+
+    _uids = {r.user_id for r in pending_pagination.items}
+    for r in pending_pagination.items:
+        if r.collab_json:
+            _uids.update(json.loads(r.collab_json))
+    users_dict = {u.id: u for u in User.query.filter(User.id.in_(_uids)).all()} if _uids else {}
+    url_args   = {k: v for k, v in request.args.items() if k != 'page'}
+
+    return render_template('bm_confirmation.html',
+                           pending_pagination=pending_pagination,
+                           pending_reports=pending_pagination.items,
+                           users_dict=users_dict,
+                           bm_fields=BIG_METER_FIELDS,
+                           url_args=url_args,
+                           filter_start=filter_start,
+                           filter_end=filter_end)
+
+
+@app.route('/bm/confirmation/report/<int:report_id>/confirm', methods=['POST'])
+@admin_required
+def bm_confirm_report(report_id):
+    r = db.session.get(Report, report_id)
+    if not r:
+        abort(404)
+    submitter = db.session.get(User, r.user_id)
+    uname = submitter.display_name if submitter else '(已刪除)'
+    r.is_confirmed = True
+    r.confirmed_by = current_user.id
+    r.confirmed_at = tw_now()
+    r.updated_at   = tw_now()
+    add_audit(current_user.id, 'REPORT_CONFIRM',
+              f'確認大表回報 {uname} #{r.id}（{r.report_date}）')
+    db.session.commit()
+    flash('回報已確認', 'success')
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'page') if request.form.get(k)}
+    return redirect(url_for('bm_confirmation', **_flt))
+
+
+@app.route('/bm/confirmation/report/<int:report_id>/reject', methods=['POST'])
+@admin_required
+def bm_reject_report(report_id):
+    r = db.session.get(Report, report_id)
+    if not r:
+        abort(404)
+    submitter = db.session.get(User, r.user_id)
+    uname = submitter.display_name if submitter else '(已刪除)'
+    r.is_rejected = True
+    r.updated_at  = tw_now()
+    add_audit(current_user.id, 'REPORT_REJECT',
+              f'駁回大表回報 {uname} #{r.id}（{r.report_date}）')
+    db.session.commit()
+    flash('回報已駁回', 'warning')
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'page') if request.form.get(k)}
+    return redirect(url_for('bm_confirmation', **_flt))
+
+
+@app.route('/bm/summary')
+@admin_required
+def bm_summary():
+    start_date       = request.args.get('start_date', '')
+    end_date         = request.args.get('end_date',   '')
+    selected_user_id = request.args.get('user_id', '')
+    confirm_filter   = request.args.get('confirm_filter', 'all')
+
+    _bm_ids      = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+    all_bm_users = User.query.filter_by(is_big_meter=True).order_by(User.display_name).all()
+    results      = None
+
+    if start_date and end_date:
+        q = Report.query.filter(
+            Report.report_date >= date.fromisoformat(start_date),
+            Report.report_date <= date.fromisoformat(end_date),
+            Report.user_id.in_(_bm_ids)
+        )
+        if selected_user_id:
+            _sid = int(selected_user_id)
+            from sqlalchemy import or_, text as _sa_bm_sum
+            q = q.filter(or_(Report.user_id == _sid,
+                              _sa_bm_sum(f"collab_json::jsonb @> '[{_sid}]'")))
+        if confirm_filter == 'confirmed':
+            q = q.filter_by(is_confirmed=True)
+        elif confirm_filter == 'unconfirmed':
+            q = q.filter_by(is_confirmed=False)
+
+        reports    = q.all()
+        users_dict = {u.id: u for u in all_bm_users}
+        user_totals: dict = {}
+
+        def _bm_accum(tgt_uid, rpt, n):
+            u_obj = users_dict.get(tgt_uid)
+            if not u_obj:
+                return
+            if tgt_uid not in user_totals:
+                user_totals[tgt_uid] = {
+                    'username': u_obj.display_name,
+                    'totals':   {k: 0.0 for k, _ in BIG_METER_FIELDS},
+                    'count': 0,
+                }
+            for k, _ in BIG_METER_FIELDS:
+                user_totals[tgt_uid]['totals'][k] += float(getattr(rpt, k, 0) or 0) / n
+            user_totals[tgt_uid]['count'] += 1
+
+        for r in reports:
+            _n = float(r.collab_count or 1)
+            if selected_user_id:
+                _bm_accum(int(selected_user_id), r, _n)
+            else:
+                _bm_accum(r.user_id, r, _n)
+                if r.collab_json:
+                    for _cuid in json.loads(r.collab_json):
+                        _bm_accum(_cuid, r, _n)
+
+        bm_grand      = {k: sum(d['totals'].get(k, 0) for d in user_totals.values()) for k, _ in BIG_METER_FIELDS}
+        page          = request.args.get('page', 1, type=int)
+        bm_pagination = SimplePagination(list(user_totals.items()), page, 20)
+        results       = {
+            'user_totals':   dict(bm_pagination.items),
+            'grand':         bm_grand,
+            'total_reports': len(reports),
+        }
+    else:
+        bm_pagination = None
+
+    url_args = {k: v for k, v in request.args.items() if k != 'page'}
+    return render_template('bm_summary.html',
+                           results=results,
+                           bm_pagination=bm_pagination,
+                           all_bm_users=all_bm_users,
+                           bm_fields=BIG_METER_FIELDS,
+                           start_date=start_date,
+                           end_date=end_date,
+                           selected_user_id=selected_user_id,
+                           confirm_filter=confirm_filter,
+                           url_args=url_args)
+
+
+# ---------------------------------------------------------------------------
 # Page 8: Salary (ADMIN)
 # ---------------------------------------------------------------------------
 
@@ -2397,7 +2826,7 @@ def salary():
 
             def _accum_ret(ret_dict, uid, rpt, divisor):
                 u_obj = users_dict.get(uid)
-                if not u_obj:
+                if not u_obj or u_obj.is_big_meter:
                     return
                 rfields = get_zone_retention_fields(u_obj.zone)
                 if uid not in ret_dict:
@@ -2425,12 +2854,13 @@ def salary():
                 u_obj = users_dict.get(uid)
                 if not u_obj:
                     return
-                zone = u_obj.zone
+                fields = get_user_report_fields(u_obj)
                 user_data[uid] = {
                     'username':       u_obj.display_name,
-                    'zone':           zone,
+                    'zone':           u_obj.zone,
+                    'is_big_meter':   u_obj.is_big_meter,
                     'is_deactivated': not u_obj.is_active,
-                    'totals':         {k: 0.0 for k, _ in get_zone_fields(zone)},
+                    'totals':         {k: 0.0 for k, _ in fields},
                 }
 
             user_data = {}
@@ -2439,37 +2869,49 @@ def salary():
                 _init_user(r.user_id)
                 uid = r.user_id
                 if uid in user_data:
-                    for k, _ in get_zone_fields(user_data[uid]['zone']):
+                    _u = users_dict.get(uid)
+                    _fields = get_user_report_fields(_u) if _u else get_zone_fields(user_data[uid]['zone'])
+                    for k, _ in _fields:
                         user_data[uid]['totals'][k] = user_data[uid]['totals'].get(k, 0.0) + float(getattr(r, k, 0) or 0) / _n
                 # 共同作業者
                 if r.collab_json:
                     for _cuid in json.loads(r.collab_json):
                         _init_user(_cuid)
                         if _cuid in user_data:
-                            for k, _ in get_zone_fields(user_data[_cuid]['zone']):
+                            _cu = users_dict.get(_cuid)
+                            _cfields = get_user_report_fields(_cu) if _cu else get_zone_fields(user_data[_cuid]['zone'])
+                            for k, _ in _cfields:
                                 user_data[_cuid]['totals'][k] = user_data[_cuid]['totals'].get(k, 0.0) + float(getattr(r, k, 0) or 0) / _n
 
             # 有固定薪資但本期無回報者也納入
             for u in users_dict.values():
                 if u.id not in user_data and u.fixed_salary > 0:
-                    zone = u.zone
+                    fields = get_user_report_fields(u)
                     user_data[u.id] = {
                         'username':       u.display_name,
-                        'zone':           zone,
+                        'zone':           u.zone,
+                        'is_big_meter':   u.is_big_meter,
                         'is_deactivated': not u.is_active,
-                        'totals':         {k: 0.0 for k, _ in get_zone_fields(zone)},
+                        'totals':         {k: 0.0 for k, _ in fields},
                     }
 
             _west_tax    = get_tax_rate()
             _south_tax   = get_tax_rate_for_zone(ZONE_SOUTH)
             _west_gr     = get_retention_rate()
             _south_gr    = get_retention_rate_for_zone(ZONE_SOUTH)
+            bm_prices    = get_item_prices_bm()
             batch_rates  = get_users_all_retention_rates(list(user_data.keys()), users_dict)
             for uid, data in user_data.items():
-                zone = data['zone']
-                prices      = south_prices if zone == ZONE_SOUTH else west_prices
-                zone_fields = get_zone_fields(zone)
-                ret_fields  = get_zone_retention_fields(zone)
+                zone  = data['zone']
+                is_bm = data.get('is_big_meter', False)
+                if is_bm:
+                    prices      = bm_prices
+                    zone_fields = BIG_METER_FIELDS
+                    ret_fields  = []
+                else:
+                    prices      = south_prices if zone == ZONE_SOUTH else west_prices
+                    zone_fields = get_zone_fields(zone)
+                    ret_fields  = get_zone_retention_fields(zone)
                 global_rate = _south_gr if zone == ZONE_SOUTH else _west_gr
                 zone_tax    = _south_tax if zone == ZONE_SOUTH else _west_tax
 
@@ -2479,19 +2921,22 @@ def salary():
                 data['gross_salary'] = sum(subtotals.values())
 
                 u = users_dict.get(uid)
-                user_rates = batch_rates.get(uid, {f: global_rate for f in ret_fields})
-                ret_offset = u.retention_offset if u else 0
-                pre_totals = pre_ret_by_user.get(uid, {})
-                pre_calc = sum(pre_totals.get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
-                ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + ret_offset))
-                period_ret_raw = sum(data['totals'].get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
-                data['period_retention'] = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
+                if is_bm:
+                    data['period_retention'] = 0.0
+                    data['ytd_retention']    = 0.0
+                else:
+                    user_rates = batch_rates.get(uid, {f: global_rate for f in ret_fields})
+                    ret_offset = u.retention_offset if u else 0
+                    pre_totals = pre_ret_by_user.get(uid, {})
+                    pre_calc = sum(pre_totals.get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
+                    ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + ret_offset))
+                    period_ret_raw = sum(data['totals'].get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
+                    data['period_retention'] = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
+                    _ytd_totals = ytd_totals_by_user.get(uid, {})
+                    _ytd_calc = sum(_ytd_totals.get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
+                    data['ytd_retention'] = min(float(RETENTION_CAP), max(0.0, _ytd_calc + ret_offset))
 
                 data['net_salary'] = data['gross_salary'] - data['period_retention']
-                _ytd_totals = ytd_totals_by_user.get(uid, {})
-                _ytd_calc = sum(_ytd_totals.get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
-                data['ytd_retention'] = min(float(RETENTION_CAP), max(0.0, _ytd_calc + ret_offset))
-
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
                 data['bank_account']   = decrypt_bank(u.bank_account) if u else None
 
@@ -2533,7 +2978,8 @@ def salary():
                               'cash_total': cash_total,
                               'cash_bills': cash_bills,
                               'west_prices': west_prices,
-                              'south_prices': south_prices}
+                              'south_prices': south_prices,
+                              'bm_prices': bm_prices}
 
             if action == 'export-excel':
                 return _export_salary_excel(salary_results)
@@ -3329,17 +3775,20 @@ def personal_stats():
     salary_end    = form.get('salary_end',    '')
     deduct_ins_checked = form.get('deduct_insurance') == '1'
 
-    zone = current_user.zone
-    zone_fields   = get_zone_fields(zone)
-    ret_fields    = get_zone_retention_fields(zone)
-    global_rate   = get_retention_rate()
+    zone   = current_user.zone
+    is_bm  = current_user.is_big_meter
+    user_fields = get_user_report_fields(current_user)
+    ret_fields  = [] if is_bm else get_zone_retention_fields(zone)
+    global_rate = get_retention_rate()
 
-    ytd_retention = get_ytd_retention(current_user.id)
-    my_ret_rates  = get_users_all_retention_rates([current_user.id])[current_user.id]
-    # Ensure all zone-specific retention fields have a rate entry
-    for f in ret_fields:
-        if f not in my_ret_rates:
-            my_ret_rates[f] = global_rate
+    ytd_retention = 0.0 if is_bm else get_ytd_retention(current_user.id)
+    if is_bm:
+        my_ret_rates = {}
+    else:
+        my_ret_rates = get_users_all_retention_rates([current_user.id])[current_user.id]
+        for f in ret_fields:
+            if f not in my_ret_rates:
+                my_ret_rates[f] = global_rate
 
     # ── 工項總和查詢：只要日期有填就計算（不依賴 action）──────────────────
     from sqlalchemy import or_, text as _sa_t2
@@ -3357,13 +3806,13 @@ def personal_stats():
             elif stats_confirm == 'unconfirmed':
                 q = q.filter(Report.is_confirmed == False)
             _reports_s = q.all()
-            totals_s = {k: 0.0 for k, _ in zone_fields}
+            totals_s = {k: 0.0 for k, _ in user_fields}
             for r in _reports_s:
                 _n = float(r.collab_count or 1)
-                for k, _ in zone_fields:
+                for k, _ in user_fields:
                     totals_s[k] += float(getattr(r, k, 0) or 0) / _n
             totals_s = {k: round(v, 2) for k, v in totals_s.items()}
-            period_ret_s = sum(totals_s.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
+            period_ret_s = 0.0 if is_bm else sum(totals_s.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
             totals_result = {'start': stats_start, 'end': stats_end,
                              'confirm_filter': stats_confirm,
                              'totals': totals_s, 'count': len(_reports_s),
@@ -3372,7 +3821,7 @@ def personal_stats():
             pass
 
     # ── 薪資試算：只要日期有填就計算，單價唯讀來自 SystemConfig ─────────
-    item_prices = get_item_prices_for_zone(zone)
+    item_prices = get_item_prices_bm() if is_bm else get_item_prices_for_zone(zone)
     if salary_start and salary_end:
         try:
             prices = item_prices
@@ -3385,27 +3834,30 @@ def personal_stats():
                 Report.report_date >= sd_ps,
                 Report.report_date <= ed_ps
             ).all()
-            totals_p = {k: 0.0 for k, _ in zone_fields}
+            totals_p = {k: 0.0 for k, _ in user_fields}
             for r in _reports_p:
                 _n = float(r.collab_count or 1)
-                for k, _ in zone_fields:
+                for k, _ in user_fields:
                     totals_p[k] += float(getattr(r, k, 0) or 0) / _n
-            subtotals  = {k: totals_p[k] * prices.get(k, 0) for k, _ in zone_fields}
+            subtotals   = {k: totals_p[k] * prices.get(k, 0) for k, _ in user_fields}
             grand_total = sum(subtotals.values())
 
-            year_start  = date(sd_ps.year, 1, 1)
-            pre_reports = Report.query.filter(
-                or_(Report.user_id == _me_id,
-                    _sa_t2(f"collab_json::jsonb @> '[{_me_id}]'")),
-                Report.is_confirmed == True,
-                Report.report_date >= year_start,
-                Report.report_date < sd_ps
-            ).all()
-            pre_totals = {f: sum(float(getattr(r, f, 0) or 0) / float(r.collab_count or 1) for r in pre_reports) for f in ret_fields}
-            pre_calc   = sum(pre_totals.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
-            ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + current_user.retention_offset))
-            period_ret_raw  = sum(totals_p.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
-            period_retention = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
+            if is_bm:
+                period_retention = 0.0
+            else:
+                year_start  = date(sd_ps.year, 1, 1)
+                pre_reports = Report.query.filter(
+                    or_(Report.user_id == _me_id,
+                        _sa_t2(f"collab_json::jsonb @> '[{_me_id}]'")),
+                    Report.is_confirmed == True,
+                    Report.report_date >= year_start,
+                    Report.report_date < sd_ps
+                ).all()
+                pre_totals = {f: sum(float(getattr(r, f, 0) or 0) / float(r.collab_count or 1) for r in pre_reports) for f in ret_fields}
+                pre_calc   = sum(pre_totals.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
+                ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + current_user.retention_offset))
+                period_ret_raw  = sum(totals_p.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
+                period_retention = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
 
             ins_amount   = current_user.insurance_deduction if deduct_ins_checked else 0
             not_enrolled = (current_user.insurance_deduction == 0 and not current_user.tax_exempt)
@@ -3428,7 +3880,8 @@ def personal_stats():
 
     return render_template('personal_stats.html',
                            zone=zone,
-                           report_fields=zone_fields,
+                           is_big_meter=is_bm,
+                           report_fields=user_fields,
                            default_prices=item_prices,
                            totals_result=totals_result,
                            salary_result=salary_result,

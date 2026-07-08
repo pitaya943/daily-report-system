@@ -1,7 +1,9 @@
 {% extends 'base.html' %}
 {% block title %}個人統計{% endblock %}
 {% block page_title %}<i class="bi bi-bar-chart-line me-2"></i>個人統計
-  {% if zone == '南區' %}<span class="badge bg-warning text-dark ms-2">南區</span>{% else %}<span class="badge bg-info text-dark ms-2">西區</span>{% endif %}
+  {% if is_big_meter %}<span class="badge bg-dark ms-2">大表</span>
+  {% elif zone == '南區' %}<span class="badge bg-warning text-dark ms-2">南區</span>
+  {% else %}<span class="badge bg-info text-dark ms-2">西區</span>{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -10,7 +12,8 @@
   此頁面的薪資試算僅供參考，不具正式效力。<strong>正式薪資以管理員於 Salary 頁面計算的結果為準。</strong>
 </div>
 
-<!-- 今年度累積保留金 -->
+<!-- 今年度累積保留金（大表用戶無保留金） -->
+{% if not is_big_meter %}
 <div class="card mb-4 border-warning">
   <div class="card-body py-3 d-flex align-items-center gap-3">
     <div class="rounded-circle d-flex align-items-center justify-content-center bg-warning bg-opacity-25"
@@ -30,6 +33,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <div class="row g-4">
 
@@ -98,10 +102,12 @@
               <td>合計</td>
               <td class="text-end">{{ totals_result.totals.values()|sum|round(2) }}</td>
             </tr>
+            {% if not is_big_meter %}
             <tr class="table-warning fw-semibold">
               <td><i class="bi bi-piggy-bank me-1"></i>本期保留金</td>
               <td class="text-end">{{ totals_result.period_retention | money }} NTD</td>
             </tr>
+            {% endif %}
           </tfoot>
         </table>
         {% endif %}
@@ -202,10 +208,12 @@
               <td colspan="3">計薪小計（稅前）</td>
               <td class="text-end">{{ salary_result.grand_total | money }} NTD</td>
             </tr>
+            {% if not is_big_meter %}
             <tr class="fw-semibold" style="background:#fff3cd">
               <td colspan="3"><i class="bi bi-piggy-bank me-1"></i>本期保留金（扣除）</td>
               <td class="text-end text-warning">－ {{ salary_result.period_retention | money }} NTD</td>
             </tr>
+            {% endif %}
             {% if salary_result.insurance_deduction > 0 %}
             <tr class="fw-semibold" style="background:#fdecea">
               <td colspan="3"><i class="bi bi-shield-check me-1 text-danger"></i>勞健保扣除</td>

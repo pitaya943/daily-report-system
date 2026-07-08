@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% from '_pagination.html' import paginate %}
+{% block title %}大表確認{% endblock %}
+{% block page_title %}<i class="bi bi-check-circle me-2"></i>大表確認 <span class="badge bg-dark ms-2">大表</span>{% endblock %}
+
+{% block content %}
+<!-- Filter -->
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <form method="GET" class="row g-2 align-items-end">
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-1">開始日期</label>
+        <input type="date" name="start_date" class="form-control form-control-sm" value="{{ filter_start }}">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-1">結束日期</label>
+        <input type="date" name="end_date" class="form-control form-control-sm" value="{{ filter_end }}">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search me-1"></i>查詢</button>
+        <a href="{{ url_for('bm_confirmation') }}" class="btn btn-outline-secondary btn-sm ms-1">清除</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-hourglass-split me-1"></i>待確認大表回報（共 {{ pending_pagination.total }} 筆）</span>
+  </div>
+
+  {{ paginate(pending_pagination, 'bm_confirmation', url_args) }}
+
+  <div class="card-body p-0">
+    {% if pending_reports %}
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0 align-middle" style="font-size:.8rem">
+        <thead class="table-light">
+          <tr class="align-bottom">
+            <th style="min-width:32px">#</th>
+            <th style="min-width:90px">帳戶</th>
+            <th style="min-width:82px">日期</th>
+            {% for key, label in bm_fields %}
+            <th class="text-center" style="min-width:28px; max-width:34px; font-size:.6rem; word-break:break-all; line-height:1.1; padding:3px 1px; vertical-align:bottom;" title="{{ label }}">{{ label }}</th>
+            {% endfor %}
+            <th class="text-center" style="min-width:110px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in pending_reports %}
+          {% set submitter = users_dict.get(r.user_id) %}
+          <tr>
+            <td class="text-muted">{{ r.id }}</td>
+            <td>
+              <span class="fw-semibold">{{ submitter.display_name if submitter else '(已刪除)' }}</span>
+              {% if r.collab_count and r.collab_count > 1 %}
+              <span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>
+              {% endif %}
+            </td>
+            <td class="text-nowrap">{{ r.report_date }}</td>
+            {% for key, _ in bm_fields %}
+            <td class="text-center px-1">{{ r[key] | qty }}</td>
+            {% endfor %}
+            <td class="text-center text-nowrap">
+              <form method="POST" action="{{ url_for('bm_confirm_report', report_id=r.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {% for k, v in url_args.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+                <button type="submit" class="btn btn-success btn-sm py-0 px-2"
+                        onclick="return confirm('確認此筆回報？')">
+                  <i class="bi bi-check-lg"></i>
+                </button>
+              </form>
+              <form method="POST" action="{{ url_for('bm_reject_report', report_id=r.id) }}" class="d-inline ms-1">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {% for k, v in url_args.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+                <button type="submit" class="btn btn-danger btn-sm py-0 px-2"
+                        onclick="return confirm('駁回此筆回報？')">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-center text-muted py-4 mb-0">
+      <i class="bi bi-check-circle me-1"></i>目前無待確認大表回報
+    </p>
+    {% endif %}
+  </div>
+
+  {{ paginate(pending_pagination, 'bm_confirmation', url_args) }}
+</div>
+{% endblock %}

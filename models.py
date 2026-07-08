@@ -26,6 +26,7 @@ class User(UserMixin, db.Model):
     bank_account        = db.Column(db.String(200), nullable=True,  default=None)       # encrypted Fernet token (~88 chars); plaintext fallback = 14 digits
     fixed_salary        = db.Column(db.Integer,   nullable=False, default=0)           # fixed monthly salary paid on 10th payday
     zone                = db.Column(db.String(10), nullable=False, default='西區')     # '西區' or '南區'
+    is_big_meter        = db.Column(db.Boolean,   nullable=False, default=False)       # 大表用戶：使用大表工項計價，獨立管理
 
     @property
     def username(self):
@@ -75,6 +76,8 @@ class Report(db.Model):
     ifix_13 = db.Column(db.Numeric(8, 1), default=0)
     ifix_20 = db.Column(db.Numeric(8, 1), default=0)
     ifix_25 = db.Column(db.Numeric(8, 1), default=0)
+    # ── 共用 APP 工項（西區/南區一般用戶）
+    app_item = db.Column(db.Numeric(8, 1), default=0)
     # ── 南區專屬
     s_orig_13 = db.Column(db.Numeric(8, 1), default=0)
     s_orig_20 = db.Column(db.Numeric(8, 1), default=0)
@@ -97,6 +100,32 @@ class Report(db.Model):
     s_ifix_13 = db.Column(db.Numeric(8, 1), default=0)
     s_ifix_20 = db.Column(db.Numeric(8, 1), default=0)
     s_ifix_25 = db.Column(db.Numeric(8, 1), default=0)
+    # ── 大表工項（大表用戶專屬，25 欄）
+    bm_50_down       = db.Column(db.Numeric(8, 1), default=0)
+    bm_75_down       = db.Column(db.Numeric(8, 1), default=0)
+    bm_100_down      = db.Column(db.Numeric(8, 1), default=0)
+    bm_150_down      = db.Column(db.Numeric(8, 1), default=0)
+    bm_200_down      = db.Column(db.Numeric(8, 1), default=0)
+    bm_250_down      = db.Column(db.Numeric(8, 1), default=0)
+    bm_300_down      = db.Column(db.Numeric(8, 1), default=0)
+    bm_50_up         = db.Column(db.Numeric(8, 1), default=0)
+    bm_75_up         = db.Column(db.Numeric(8, 1), default=0)
+    bm_100_up        = db.Column(db.Numeric(8, 1), default=0)
+    bm_150_up        = db.Column(db.Numeric(8, 1), default=0)
+    bm_200_up        = db.Column(db.Numeric(8, 1), default=0)
+    bm_250_up        = db.Column(db.Numeric(8, 1), default=0)
+    bm_rm_screw50    = db.Column(db.Numeric(8, 1), default=0)
+    bm_rm_noscrew50  = db.Column(db.Numeric(8, 1), default=0)
+    bm_rm_75         = db.Column(db.Numeric(8, 1), default=0)
+    bm_rm_100        = db.Column(db.Numeric(8, 1), default=0)
+    bm_rm_150        = db.Column(db.Numeric(8, 1), default=0)
+    bm_rm_200        = db.Column(db.Numeric(8, 1), default=0)
+    bm_hole          = db.Column(db.Numeric(8, 1), default=0)
+    bm_clean_big     = db.Column(db.Numeric(8, 1), default=0)
+    bm_truck         = db.Column(db.Numeric(8, 1), default=0)
+    bm_mobilization  = db.Column(db.Numeric(8, 1), default=0)
+    bm_recheck       = db.Column(db.Numeric(8, 1), default=0)
+    bm_app           = db.Column(db.Numeric(8, 1), default=0)
     # ── 共同作業
     collab_count = db.Column(db.Integer, nullable=False, default=1)   # 含提交者的總人數
     collab_json  = db.Column(db.Text, nullable=True)                   # JSON list of additional collab user_ids

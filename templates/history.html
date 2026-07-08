@@ -178,7 +178,7 @@
                 </button>
                 {% else %}
                 <button class="btn btn-outline-primary btn-sm py-0 px-2"
-                        onclick="openEdit({{ r.id }}, {{ r | report_json }}, '{{ current_user.zone }}')">
+                        onclick="openEdit({{ r.id }}, {{ r | report_json }}, '{{ current_user.zone }}', {{ 'true' if current_user.is_big_meter else 'false' }})">
                   <i class="bi bi-pencil"></i>
                 </button>
                 {% endif %}
@@ -246,13 +246,14 @@
 <script>
 const WEST_FIELDS  = {{ west_fields | tojson }};
 const SOUTH_FIELDS = {{ south_fields | tojson }};
+const BM_FIELDS    = {{ bm_fields | tojson }};
 const USERS = {
   {% for uid, u in users_dict.items() %}{{ uid }}: "{{ u.display_name | e }}"{% if not loop.last %}, {% endif %}{% endfor %}
 };
 
 function getVal(r, k) { return r[k] ?? 0; }
 
-function openEdit(id, r, zone) {
+function openEdit(id, r, zone, isBM) {
   document.getElementById('editForm').action = `/history/${id}/edit`;
 
   const collabIds = JSON.parse(r.collab_json || '[]');
@@ -265,7 +266,7 @@ function openEdit(id, r, zone) {
     collabDiv.classList.add('d-none');
   }
 
-  const fields = zone === '南區' ? SOUTH_FIELDS : WEST_FIELDS;
+  const fields = isBM ? BM_FIELDS : (zone === '南區' ? SOUTH_FIELDS : WEST_FIELDS);
   const container = document.getElementById('editFields');
   container.innerHTML = '';
   fields.forEach(([k, label]) => {
