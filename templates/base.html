@@ -97,11 +97,13 @@
   </div>
   <div class="sidebar-nav">
     <div class="sidebar-section">一般</div>
+    {% if current_user.role == 'USER' %}
     <a href="{{ url_for('report') }}"
        class="nav-link {% if request.endpoint == 'report' %}active{% endif %}"
        title="回報頁面">
       <i class="bi bi-pencil-square"></i><span class="nav-text"> 回報頁面</span>
     </a>
+    {% endif %}
     <a href="{{ url_for('history') }}"
        class="nav-link {% if request.endpoint == 'history' %}active{% endif %}"
        title="歷史紀錄">
@@ -123,12 +125,14 @@
       <i class="bi bi-gear"></i><span class="nav-text"> 設定</span>
     </a>
 
+    {% if current_user.role == 'USER' %}
     <div class="sidebar-section mt-2">個人</div>
     <a href="{{ url_for('personal_stats') }}"
        class="nav-link {% if request.endpoint == 'personal_stats' %}active{% endif %}"
        title="個人統計">
       <i class="bi bi-bar-chart-line"></i><span class="nav-text"> 個人統計</span>
     </a>
+    {% endif %}
 
     {% if current_user.role == 'ADMIN' %}
     <div class="sidebar-section mt-2">管理</div>

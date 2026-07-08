@@ -72,9 +72,14 @@
             <td>
               {% set u = users_dict.get(r.user_id) %}
               {{ u.display_name if u else '(已刪除)' }}
+              {% if u and u.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}
             </td>
             {% endif %}
-            <td>{{ r.report_date }}</td>
+            <td>{{ r.report_date }}
+              {% if r.collab_count and r.collab_count > 1 %}
+                <span class="badge bg-secondary ms-1" style="font-size:.6rem" title="共同作業">共{{ r.collab_count }}人</span>
+              {% endif %}
+            </td>
             {% for key, _ in report_fields %}
             <td class="text-center">{{ r[key] if r[key] else '' }}</td>
             {% endfor %}

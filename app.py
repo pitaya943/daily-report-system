@@ -4,7 +4,7 @@ from datetime import datetime, date, timedelta
 from functools import wraps
 
 from flask import (Flask, render_template, request, redirect, url_for,
-                   flash, send_file, abort, session)
+                   flash, send_file, abort, session, jsonify)
 from flask_login import (LoginManager, login_user, logout_user,
                          login_required, current_user)
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -274,12 +274,18 @@ def _init_db():
             elif _key == 'tax_rate' and cfg.value == '5':
                 # 舊預設值 5% → 修正為 3%
                 cfg.value = '3'
-        # Seed default item prices into SystemConfig (idempotent)
-        for _field, _ in REPORT_FIELDS:
+        # Seed west zone item prices (idempotent)
+        for _field, _ in WEST_REPORT_FIELDS:
             _pk = f'price_{_field}'
             if not db.session.get(SystemConfig, _pk):
                 db.session.add(SystemConfig(key=_pk,
-                                            value=str(DEFAULT_PRICES.get(_field, 0.0))))
+                                            value=str(int(DEFAULT_PRICES_WEST.get(_field, 0.0)))))
+        # Seed south zone item prices (idempotent)
+        for _field, _ in SOUTH_REPORT_FIELDS:
+            _pk = f'price_south_{_field}'
+            if not db.session.get(SystemConfig, _pk):
+                db.session.add(SystemConfig(key=_pk,
+                                            value=str(int(DEFAULT_PRICES_SOUTH.get(_field, 0.0)))))
         db.session.commit()
     except Exception:
         pass
@@ -337,6 +343,76 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # Column migration: add zone to users (南區/西區)
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text("ALTER TABLE users ADD COLUMN zone VARCHAR(10) NOT NULL DEFAULT '西區'"))
+            conn.commit()
+    except Exception:
+        pass
+    # Column migration: upgrade existing work item columns from INTEGER to NUMERIC(8,1)
+    for _col in [
+        'direct_13', 'direct_20', 'direct_25', 'direct_40',
+        'indirect_13', 'indirect_20', 'indirect_25', 'indirect_40',
+        'original_change', 'switch_valve_40', 'direct_fixed_40', 'indirect_fixed_40',
+        'pipe_repair', 'mobilization', 'recheck', 'soil_clearing',
+    ]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(_text(
+                    f"ALTER TABLE reports ALTER COLUMN {_col} TYPE NUMERIC(8,1) USING {_col}::NUMERIC(8,1)"
+                ))
+                conn.commit()
+        except Exception:
+            pass
+    # Column migration: add west-zone split columns (replacing 13~25 aggregates)
+    for _col in [
+        'dsv_13', 'dsv_20', 'dsv_25',
+        'isv_13', 'isv_20', 'isv_25',
+        'sw_13',  'sw_20',  'sw_25',
+        'dfix_13', 'dfix_20', 'dfix_25',
+        'ifix_13', 'ifix_20', 'ifix_25',
+    ]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(_text(
+                    f"ALTER TABLE reports ADD COLUMN IF NOT EXISTS {_col} NUMERIC(8,1) NOT NULL DEFAULT 0"
+                ))
+                conn.commit()
+        except Exception:
+            pass
+    # Column migration: add south-zone columns
+    for _col in [
+        's_orig_13', 's_orig_20', 's_orig_25', 's_orig_40',
+        's_dsv_13',  's_dsv_20',  's_dsv_25',  's_dsv_40',
+        's_isv_13',  's_isv_20',  's_isv_25',  's_isv_40',
+        's_sw_13',   's_sw_20',   's_sw_25',
+        's_dfix_13', 's_dfix_20', 's_dfix_25',
+        's_ifix_13', 's_ifix_20', 's_ifix_25',
+    ]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(_text(
+                    f"ALTER TABLE reports ADD COLUMN IF NOT EXISTS {_col} NUMERIC(8,1) NOT NULL DEFAULT 0"
+                ))
+                conn.commit()
+        except Exception:
+            pass
+    # Column migration: add collab_count and collab_json to reports
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text(
+                "ALTER TABLE reports ADD COLUMN IF NOT EXISTS collab_count INTEGER NOT NULL DEFAULT 1"
+            ))
+            conn.commit()
+    except Exception:
+        pass
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text("ALTER TABLE reports ADD COLUMN IF NOT EXISTS collab_json TEXT"))
+            conn.commit()
+    except Exception:
+        pass
 
 with app.app_context():
     _init_db()
@@ -383,9 +459,11 @@ def money_filter(value):
 @app.template_filter('report_json')
 def report_json_filter(r):
     import json
-    data = {k: getattr(r, k, 0) for k, _ in REPORT_FIELDS}
+    all_keys = {k for k, _ in WEST_REPORT_FIELDS} | {k for k, _ in SOUTH_REPORT_FIELDS}
+    data = {k: float(getattr(r, k, 0) or 0) for k in all_keys}
     data['id'] = r.id
     data['report_date'] = str(r.report_date)
+    data['collab_count'] = r.collab_count or 1
     return json.dumps(data, ensure_ascii=False)
 
 login_manager = LoginManager(app)
@@ -430,62 +508,137 @@ def admin_required(f):
 # Constants
 # ---------------------------------------------------------------------------
 
-REPORT_FIELDS = [
-    ('direct_13',              '直總-13'),
-    ('direct_20',              '直總-20'),
-    ('direct_25',              '直總-25'),
-    ('direct_40',              '直總-40'),
-    ('indirect_13',            '間接-13'),
-    ('indirect_20',            '間接-20'),
-    ('indirect_25',            '間接-25'),
-    ('indirect_40',            '間接-40'),
-    ('original_change',        '原改'),
-    ('direct_switch_valve',    '直總-換由令(含表)-13~25'),
-    ('indirect_switch_valve',  '間接-換由令(含表)-13~25'),
-    ('switch_valve_13_25',     '13~25換開關(含表)'),
-    ('switch_valve_40',        '40換開關(含表)'),
-    ('direct_fixed_13_25',     '直總-13~25固拆(含表)'),
-    ('direct_fixed_40',        '直總-40固拆(含表)'),
-    ('indirect_fixed_13_25',   '間接-13~25固拆(含表)'),
-    ('indirect_fixed_40',      '間接-40固拆(含表)'),
-    ('pipe_repair',            '管修(提高)'),
-    ('mobilization',           '動員'),
-    ('recheck',                '複查案/9年表'),
-    ('soil_clearing',          '清積土'),
-]
+ZONE_WEST  = '西區'
+ZONE_SOUTH = '南區'
 
-DEFAULT_PRICES = {
-    'direct_13':            120.0,
-    'direct_20':            120.0,
-    'direct_25':            120.0,
-    'direct_40':            170.0,
-    'indirect_13':           75.0,
-    'indirect_20':           75.0,
-    'indirect_25':           75.0,
-    'indirect_40':          125.0,
-    'original_change':       45.0,
-    'direct_switch_valve':  200.0,
-    'indirect_switch_valve':150.0,
-    'switch_valve_13_25':   320.0,
-    'switch_valve_40':      450.0,
-    'direct_fixed_13_25':   340.0,
-    'direct_fixed_40':      500.0,
-    'indirect_fixed_13_25': 230.0,
-    'indirect_fixed_40':    450.0,
-    'pipe_repair':          150.0,
-    'mobilization':        1200.0,
-    'recheck':               60.0,
-    'soil_clearing':        100.0,
-}
+WEST_REPORT_FIELDS = [
+    ('direct_13',     '直總-13'),
+    ('direct_20',     '直總-20'),
+    ('direct_25',     '直總-25'),
+    ('direct_40',     '直總-40'),
+    ('indirect_13',   '間接-13'),
+    ('indirect_20',   '間接-20'),
+    ('indirect_25',   '間接-25'),
+    ('indirect_40',   '間接-40'),
+    ('original_change','原改'),
+    ('dsv_13', '直總-換由令(含表)-13'),
+    ('dsv_20', '直總-換由令(含表)-20'),
+    ('dsv_25', '直總-換由令(含表)-25'),
+    ('isv_13', '間接-換由令(含表)-13'),
+    ('isv_20', '間接-換由令(含表)-20'),
+    ('isv_25', '間接-換由令(含表)-25'),
+    ('sw_13',  '13換開關(含表)'),
+    ('sw_20',  '20換開關(含表)'),
+    ('sw_25',  '25換開關(含表)'),
+    ('switch_valve_40', '40換開關(含表)'),
+    ('dfix_13', '直總-13固拆(含表)'),
+    ('dfix_20', '直總-20固拆(含表)'),
+    ('dfix_25', '直總-25固拆(含表)'),
+    ('direct_fixed_40', '直總-40固拆(含表)'),
+    ('ifix_13', '間接-13固拆(含表)'),
+    ('ifix_20', '間接-20固拆(含表)'),
+    ('ifix_25', '間接-25固拆(含表)'),
+    ('indirect_fixed_40', '間接-40固拆(含表)'),
+    ('pipe_repair',   '管修(提高)'),
+    ('mobilization',  '動員'),
+    ('recheck',       '複查案/9年表'),
+    ('soil_clearing', '清積土'),
+]  # 31 欄
 
-# 保留金：以下 8 個欄位每只抽固定費率（可依帳戶客製化）
-RETENTION_FIELDS = [
+SOUTH_REPORT_FIELDS = [
+    ('direct_13',   '直總-13'),
+    ('direct_20',   '直總-20'),
+    ('direct_25',   '直總-25'),
+    ('direct_40',   '直總-40'),
+    ('indirect_13', '間接-13'),
+    ('indirect_20', '間接-20'),
+    ('indirect_25', '間接-25'),
+    ('indirect_40', '間接-40'),
+    ('s_orig_13', '原改-13'),
+    ('s_orig_20', '原改-20'),
+    ('s_orig_25', '原改-25'),
+    ('s_orig_40', '原改-40'),
+    ('s_dsv_13', '直總-換由令(含表)-13'),
+    ('s_dsv_20', '直總-換由令(含表)-20'),
+    ('s_dsv_25', '直總-換由令(含表)-25'),
+    ('s_dsv_40', '直總-換由令(含表)-40'),
+    ('s_isv_13', '間接-換由令(含表)-13'),
+    ('s_isv_20', '間接-換由令(含表)-20'),
+    ('s_isv_25', '間接-換由令(含表)-25'),
+    ('s_isv_40', '間接-換由令(含表)-40'),
+    ('s_sw_13', '13換開關(含表)'),
+    ('s_sw_20', '20換開關(含表)'),
+    ('s_sw_25', '25換開關(含表)'),
+    ('switch_valve_40', '40換開關(含表)'),
+    ('s_dfix_13', '直總-13固拆(含表)'),
+    ('s_dfix_20', '直總-20固拆(含表)'),
+    ('s_dfix_25', '直總-25固拆(含表)'),
+    ('direct_fixed_40', '直總-40固拆(含表)'),
+    ('s_ifix_13', '間接-13固拆(含表)'),
+    ('s_ifix_20', '間接-20固拆(含表)'),
+    ('s_ifix_25', '間接-25固拆(含表)'),
+    ('indirect_fixed_40', '間接-40固拆(含表)'),
+    ('pipe_repair',   '管修(提高)'),
+    ('mobilization',  '動員'),
+    ('recheck',       '複查案/9年表'),
+    ('soil_clearing', '清積土'),
+]  # 36 欄
+
+WEST_RETENTION_FIELDS = [
     'direct_13', 'direct_20', 'direct_25', 'direct_40',
     'indirect_13', 'indirect_20', 'indirect_25', 'indirect_40',
-]
-RETENTION_FIELDS_LABELED = [(f, lbl) for f, lbl in REPORT_FIELDS if f in set(RETENTION_FIELDS)]
-RETENTION_RATE = 20  # default fallback
-RETENTION_CAP  = 60000  # 年度保留金上限 (NTD)
+]  # 8 欄（換由令/換開關/固拆 不扣）
+
+SOUTH_RETENTION_FIELDS = [
+    'direct_13',  'direct_20',  'direct_25',  'direct_40',
+    'indirect_13','indirect_20','indirect_25','indirect_40',
+    's_dsv_13', 's_dsv_20', 's_dsv_25', 's_dsv_40',
+    's_isv_13', 's_isv_20', 's_isv_25', 's_isv_40',
+    's_sw_13',  's_sw_20',  's_sw_25',  'switch_valve_40',
+    's_dfix_13','s_dfix_20','s_dfix_25','direct_fixed_40',
+    's_ifix_13','s_ifix_20','s_ifix_25','indirect_fixed_40',
+]  # 28 欄
+
+DEFAULT_PRICES_WEST = {
+    'direct_13':120.0,'direct_20':120.0,'direct_25':120.0,'direct_40':170.0,
+    'indirect_13':75.0,'indirect_20':75.0,'indirect_25':75.0,'indirect_40':125.0,
+    'original_change':45.0,
+    'dsv_13':200.0,'dsv_20':200.0,'dsv_25':200.0,
+    'isv_13':150.0,'isv_20':150.0,'isv_25':150.0,
+    'sw_13':320.0,'sw_20':320.0,'sw_25':320.0,'switch_valve_40':450.0,
+    'dfix_13':340.0,'dfix_20':340.0,'dfix_25':340.0,'direct_fixed_40':500.0,
+    'ifix_13':230.0,'ifix_20':230.0,'ifix_25':230.0,'indirect_fixed_40':450.0,
+    'pipe_repair':150.0,'mobilization':1200.0,'recheck':60.0,'soil_clearing':100.0,
+}
+
+DEFAULT_PRICES_SOUTH = {
+    'direct_13':140.0,'direct_20':140.0,'direct_25':140.0,'direct_40':190.0,
+    'indirect_13':90.0,'indirect_20':90.0,'indirect_25':90.0,'indirect_40':140.0,
+    's_orig_13':40.0,'s_orig_20':40.0,'s_orig_25':40.0,'s_orig_40':50.0,
+    's_dsv_13':220.0,'s_dsv_20':220.0,'s_dsv_25':220.0,'s_dsv_40':220.0,
+    's_isv_13':170.0,'s_isv_20':170.0,'s_isv_25':170.0,'s_isv_40':170.0,
+    's_sw_13':310.0,'s_sw_20':310.0,'s_sw_25':310.0,'switch_valve_40':440.0,
+    's_dfix_13':330.0,'s_dfix_20':330.0,'s_dfix_25':330.0,'direct_fixed_40':490.0,
+    's_ifix_13':270.0,'s_ifix_20':270.0,'s_ifix_25':270.0,'indirect_fixed_40':440.0,
+    'pipe_repair':150.0,'mobilization':1200.0,'recheck':70.0,'soil_clearing':130.0,
+}
+
+# 向後相容別名
+REPORT_FIELDS  = WEST_REPORT_FIELDS
+DEFAULT_PRICES = DEFAULT_PRICES_WEST
+RETENTION_FIELDS = WEST_RETENTION_FIELDS
+
+RETENTION_FIELDS_LABELED = [(f, lbl) for f, lbl in WEST_REPORT_FIELDS if f in set(WEST_RETENTION_FIELDS)]
+RETENTION_RATE = 20
+RETENTION_CAP  = 60000
+
+
+def get_zone_fields(zone: str) -> list:
+    return SOUTH_REPORT_FIELDS if zone == ZONE_SOUTH else WEST_REPORT_FIELDS
+
+
+def get_zone_retention_fields(zone: str) -> list:
+    return SOUTH_RETENTION_FIELDS if zone == ZONE_SOUTH else WEST_RETENTION_FIELDS
 
 
 def get_retention_rate() -> float:
@@ -499,30 +652,55 @@ def get_tax_rate() -> float:
     return float(cfg.value) if cfg else 3.0
 
 
-_price_cache: dict = {}
-_price_cache_ts: float = 0.0
-_PRICE_CACHE_TTL = 300  # 5 分鐘
+_price_cache_west: dict = {}
+_price_cache_south: dict = {}
+_price_cache_ts_west: float = 0.0
+_price_cache_ts_south: float = 0.0
+_PRICE_CACHE_TTL = 300
+
+
+def get_item_prices_for_zone(zone: str = ZONE_WEST) -> dict:
+    """各工項單位計薪，按區域讀取 SystemConfig，結果分別快取 5 分鐘。
+    西區 key：price_<field>；南區 key：price_south_<field>（共用欄位亦然）。"""
+    import time
+    global _price_cache_west, _price_cache_south, _price_cache_ts_west, _price_cache_ts_south
+    if zone == ZONE_SOUTH:
+        if _price_cache_south and (time.monotonic() - _price_cache_ts_south) < _PRICE_CACHE_TTL:
+            return _price_cache_south
+        fields   = SOUTH_REPORT_FIELDS
+        defaults = DEFAULT_PRICES_SOUTH
+        prefix   = 'price_south_'
+    else:
+        if _price_cache_west and (time.monotonic() - _price_cache_ts_west) < _PRICE_CACHE_TTL:
+            return _price_cache_west
+        fields   = WEST_REPORT_FIELDS
+        defaults = DEFAULT_PRICES_WEST
+        prefix   = 'price_'
+    prices = {}
+    for k, _ in fields:
+        cfg = db.session.get(SystemConfig, f'{prefix}{k}')
+        if cfg is None and zone == ZONE_SOUTH:
+            # 南區若無專屬設定，fallback 到西區同名 key
+            cfg = db.session.get(SystemConfig, f'price_{k}')
+        prices[k] = float(cfg.value) if cfg else defaults.get(k, 0.0)
+    if zone == ZONE_SOUTH:
+        _price_cache_south    = prices
+        _price_cache_ts_south = time.monotonic()
+    else:
+        _price_cache_west    = prices
+        _price_cache_ts_west = time.monotonic()
+    return prices
 
 
 def get_item_prices() -> dict:
-    """各工項單位計薪，優先讀取 SystemConfig（鍵：price_<field>），否則用 DEFAULT_PRICES。
-    結果快取 5 分鐘，避免每次 request 重複查詢 DB。"""
-    import time
-    global _price_cache, _price_cache_ts
-    if _price_cache and (time.monotonic() - _price_cache_ts) < _PRICE_CACHE_TTL:
-        return _price_cache
-    prices = {}
-    for k, _ in REPORT_FIELDS:
-        cfg = db.session.get(SystemConfig, f'price_{k}')
-        prices[k] = float(cfg.value) if cfg else DEFAULT_PRICES.get(k, 0.0)
-    _price_cache    = prices
-    _price_cache_ts = time.monotonic()
-    return _price_cache
+    """向後相容：西區計價。"""
+    return get_item_prices_for_zone(ZONE_WEST)
 
 
 def _invalidate_price_cache():
-    global _price_cache
-    _price_cache = {}
+    global _price_cache_west, _price_cache_south
+    _price_cache_west  = {}
+    _price_cache_south = {}
 
 
 def calc_retention_from_totals(totals: dict) -> float:
@@ -541,11 +719,18 @@ def get_user_all_retention_rates(user_id: int) -> dict:
     return result
 
 
-def get_users_all_retention_rates(user_ids) -> dict:
-    """批次載入多帳戶費率，回傳 {uid: {field: rate}}，減少 DB 查詢次數。"""
+def get_users_all_retention_rates(user_ids, users_dict: dict = None) -> dict:
+    """批次載入多帳戶費率，回傳 {uid: {field: rate}}，支援南/西區不同欄位。"""
     ids = list(user_ids)
     global_rate = get_retention_rate()
-    result = {uid: {f: global_rate for f in RETENTION_FIELDS} for uid in ids}
+    result = {}
+    for uid in ids:
+        zone = ZONE_WEST
+        if users_dict:
+            u = users_dict.get(uid)
+            if u:
+                zone = u.zone
+        result[uid] = {f: global_rate for f in get_zone_retention_fields(zone)}
     if ids:
         for cr in UserRetentionRate.query.filter(
             UserRetentionRate.user_id.in_(ids)
@@ -556,7 +741,10 @@ def get_users_all_retention_rates(user_ids) -> dict:
 
 
 def get_ytd_retention(user_id: int) -> float:
-    """今年度累積保留金（最低 0，最高 RETENTION_CAP）"""
+    """今年度累積保留金（最低 0，最高 RETENTION_CAP，含共同作業分配）"""
+    u = db.session.get(User, user_id)
+    zone = u.zone if u else ZONE_WEST
+    ret_fields = get_zone_retention_fields(zone)
     year_start = date(date.today().year, 1, 1)
     reports = Report.query.filter(
         Report.user_id == user_id,
@@ -564,10 +752,10 @@ def get_ytd_retention(user_id: int) -> float:
         Report.report_date >= year_start,
         Report.report_date <= date.today()
     ).all()
-    totals = {f: sum(getattr(r, f, 0) for r in reports) for f in RETENTION_FIELDS}
+    totals = {f: sum(float(getattr(r, f, 0) or 0) / float(r.collab_count or 1) for r in reports) for f in ret_fields}
     user_rates = get_user_all_retention_rates(user_id)
-    calculated = sum(totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
-    u = db.session.get(User, user_id)
+    global_rate = get_retention_rate()
+    calculated = sum(totals.get(f, 0) * user_rates.get(f, global_rate) for f in ret_fields)
     offset = u.retention_offset if u else 0
     return min(float(RETENTION_CAP), max(0.0, calculated + offset))
 
@@ -610,23 +798,23 @@ def add_audit(user_id, action_type, description):
     db.session.add(log)
 
 
-def parse_report_values(form):
+def parse_report_values(form, zone: str = ZONE_WEST):
     vals = {}
-    for key, _ in REPORT_FIELDS:
+    for key, _ in get_zone_fields(zone):
         try:
-            vals[key] = max(0, int(form.get(key, 0)))
+            vals[key] = max(0.0, round(float(form.get(key, 0) or 0), 1))
         except (ValueError, TypeError):
-            vals[key] = 0
+            vals[key] = 0.0
     return vals
 
 
-def report_diff(old_report, new_vals):
+def report_diff(old_report, new_vals, zone: str = ZONE_WEST):
     changes = []
-    for key, label in REPORT_FIELDS:
-        ov = getattr(old_report, key, 0)
-        nv = new_vals.get(key, 0)
-        if ov != nv:
-            changes.append(f'{label}: {ov} → {nv}')
+    for key, label in get_zone_fields(zone):
+        ov = float(getattr(old_report, key, 0) or 0)
+        nv = float(new_vals.get(key, 0))
+        if round(ov, 1) != round(nv, 1):
+            changes.append(f'{label}: {ov:g} → {nv:g}')
     return '、'.join(changes) if changes else '無變更'
 
 
@@ -683,24 +871,64 @@ def logout():
 @app.route('/report', methods=['GET', 'POST'])
 @login_required
 def report():
+    if current_user.role == 'ADMIN':
+        return redirect(url_for('summary'))
     if request.method == 'POST':
         try:
             report_date = date.fromisoformat(request.form.get('date', str(date.today())))
         except ValueError:
             report_date = date.today()
 
-        vals = parse_report_values(request.form)
-        r = Report(user_id=current_user.id, report_date=report_date, **vals)
+        zone = current_user.zone
+        vals = parse_report_values(request.form, zone)
+
+        # 解析共同作業人員（同區、啟用、USER、不含自己，最多 6 人）
+        collab_raw = request.form.get('collab_ids', '').strip()
+        collab_ids = [int(x) for x in collab_raw.split(',') if x.strip().isdigit()]
+        if collab_ids:
+            valid_ids = {u.id for u in User.query.filter(
+                User.id.in_(collab_ids),
+                User.role == 'USER',
+                User.is_active == True,
+                User.zone == zone
+            ).all() if u.id != current_user.id}
+            collab_ids = [i for i in collab_ids if i in valid_ids][:6]
+
+        r = Report(
+            user_id=current_user.id,
+            report_date=report_date,
+            collab_count=1 + len(collab_ids),
+            collab_json=__import__('json').dumps(collab_ids) if collab_ids else None,
+            **vals
+        )
         db.session.add(r)
 
-        nonzero = ', '.join(f'{label}:{vals[k]}' for k, label in REPORT_FIELDS if vals[k] > 0)
+        zone_fields = get_zone_fields(zone)
+        nonzero = ', '.join(f'{label}:{vals[k]:g}' for k, label in zone_fields if vals.get(k, 0) > 0)
+        collab_note = f'（共{1 + len(collab_ids)}人作業）' if collab_ids else ''
         add_audit(current_user.id, 'REPORT_CREATE',
-                  f'新增 {report_date} 的回報｜{nonzero or "全部為0"}')
+                  f'新增 {report_date} 的回報{collab_note}｜{nonzero or "全部為0"}')
         db.session.commit()
         flash('回報已成功送出', 'success')
         return redirect(url_for('report'))
 
-    return render_template('report.html', report_fields=REPORT_FIELDS, today=str(date.today()))
+    zone_fields = get_zone_fields(current_user.zone)
+    return render_template('report.html',
+                           report_fields=zone_fields,
+                           zone=current_user.zone,
+                           today=str(date.today()))
+
+
+@app.route('/api/collab-users')
+@login_required
+def api_collab_users():
+    """回傳與 current_user 同區的所有啟用 USER（不含自己），供共同作業下拉使用。"""
+    users = (User.query
+             .filter_by(role='USER', is_active=True, zone=current_user.zone)
+             .filter(User.id != current_user.id)
+             .order_by(User.display_name)
+             .all())
+    return jsonify([{'id': u.id, 'name': u.display_name} for u in users])
 
 
 # ---------------------------------------------------------------------------
@@ -758,11 +986,13 @@ def history_edit(report_id):
         flash('已確認的回報無法修改', 'danger')
         return redirect(url_for('history'))
 
-    new_vals = parse_report_values(request.form)
-    diff = report_diff(r, new_vals)
+    report_user = db.session.get(User, r.user_id)
+    zone = report_user.zone if report_user else ZONE_WEST
+    new_vals = parse_report_values(request.form, zone)
+    diff = report_diff(r, new_vals, zone)
     was_confirmed = r.is_confirmed
 
-    for key, _ in REPORT_FIELDS:
+    for key, _ in get_zone_fields(zone):
         setattr(r, key, new_vals[key])
     r.updated_at = tw_now()
 
@@ -888,7 +1118,11 @@ def settings():
                            user_ret_rates=user_ret_rates,
                            retention_fields_labeled=RETENTION_FIELDS_LABELED,
                            report_fields=REPORT_FIELDS,
+                           west_fields=WEST_REPORT_FIELDS,
+                           south_fields=SOUTH_REPORT_FIELDS,
                            item_prices=get_item_prices(),
+                           west_prices=get_item_prices_for_zone(ZONE_WEST),
+                           south_prices=get_item_prices_for_zone(ZONE_SOUTH),
                            my_ytd=my_ytd,
                            my_ret_rates=my_ret_rates,
                            bank_accounts=bank_accounts)
@@ -1131,7 +1365,7 @@ def settings_retention_rate():
 @admin_required
 def settings_item_prices():
     updated = 0
-    for k, _ in REPORT_FIELDS:
+    for k, _ in WEST_REPORT_FIELDS:
         val_str = request.form.get(f'price_{k}', '').strip()
         if val_str == '':
             continue
@@ -1148,10 +1382,58 @@ def settings_item_prices():
         updated += 1
     if updated:
         add_audit(current_user.id, 'SYSTEM_CONFIG',
-                  f'更新各工項單位計薪（{updated} 個工項）')
+                  f'更新西區工項單位計薪（{updated} 個工項）')
         db.session.commit()
         _invalidate_price_cache()
-        flash('各工項單位計薪已儲存', 'success')
+        flash('西區工項單位計薪已儲存', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/item-prices-south', methods=['POST'])
+@admin_required
+def settings_item_prices_south():
+    updated = 0
+    for k, _ in SOUTH_REPORT_FIELDS:
+        val_str = request.form.get(f'price_south_{k}', '').strip()
+        if val_str == '':
+            continue
+        try:
+            val = max(0.0, float(val_str))
+        except ValueError:
+            flash('無效數值，已略過部分欄位', 'warning')
+            continue
+        cfg = db.session.get(SystemConfig, f'price_south_{k}')
+        if cfg:
+            cfg.value = str(val)
+        else:
+            db.session.add(SystemConfig(key=f'price_south_{k}', value=str(val)))
+        updated += 1
+    if updated:
+        add_audit(current_user.id, 'SYSTEM_CONFIG',
+                  f'更新南區工項單位計薪（{updated} 個工項）')
+        db.session.commit()
+        _invalidate_price_cache()
+        flash('南區工項單位計薪已儲存', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/users/<int:user_id>/zone', methods=['POST'])
+@admin_required
+def settings_user_zone(user_id):
+    u = db.session.get(User, user_id)
+    if not u:
+        abort(404)
+    new_zone = request.form.get('zone', '').strip()
+    if new_zone not in (ZONE_WEST, ZONE_SOUTH):
+        flash('無效區域值', 'danger')
+        return redirect(url_for('settings'))
+    if u.zone != new_zone:
+        old_zone = u.zone
+        u.zone = new_zone
+        add_audit(current_user.id, 'USER_EDIT',
+                  f'變更帳戶「{u.display_name}」所屬區域：{old_zone} → {new_zone}')
+        db.session.commit()
+        flash(f'已將「{u.display_name}」區域設為{new_zone}', 'success')
     return redirect(url_for('settings'))
 
 
@@ -1481,12 +1763,15 @@ def summary():
         for r in reports:
             uid = r.user_id
             if uid not in user_totals:
-                uname = users_dict[uid].display_name if uid in users_dict else '(已刪除)'
-                user_totals[uid] = {'username': uname,
-                                    'totals': {k: 0 for k, _ in REPORT_FIELDS},
+                u_obj = users_dict.get(uid)
+                uname = u_obj.display_name if u_obj else '(已刪除)'
+                zone  = u_obj.zone if u_obj else ZONE_WEST
+                user_totals[uid] = {'username': uname, 'zone': zone,
+                                    'totals': {k: 0.0 for k, _ in REPORT_FIELDS},
                                     'count': 0}
+            _n = float(r.collab_count or 1)
             for k, _ in REPORT_FIELDS:
-                user_totals[uid]['totals'][k] += getattr(r, k, 0)
+                user_totals[uid]['totals'][k] += float(getattr(r, k, 0) or 0) / _n
             user_totals[uid]['count'] += 1
 
         grand = {k: sum(d['totals'][k] for d in user_totals.values()) for k, _ in REPORT_FIELDS}
@@ -1711,7 +1996,8 @@ def salary():
         start_str = request.form.get('start_date', '')
         end_str = request.form.get('end_date', '')
 
-        prices = item_prices  # 單價固定由 SystemConfig 讀取，USER/ADMIN 無法從表單修改
+        west_prices  = get_item_prices_for_zone(ZONE_WEST)
+        south_prices = get_item_prices_for_zone(ZONE_SOUTH)
 
         is_10th_payday = request.form.get('is_10th_payday') == '1'
         form_data = {'start_date': start_str, 'end_date': end_str,
@@ -1734,95 +2020,126 @@ def salary():
                 Report.report_date <= ed
             ).all()
 
-            # 一次查詢涵蓋全年：pre-period 上限計算 + YTD 保留金（消除 N 次 per-user 查詢）
+            users_dict = {u.id: u for u in User.query.all()}
+
+            # ── 一次查詢涵蓋全年（pre-period + YTD）──
             today = date.today()
-            pre_year_start = date(sd.year, 1, 1)      # 保留金上限計算基準年
-            ytd_year_start = date(today.year, 1, 1)   # YTD 顯示基準年（今年）
+            pre_year_start = date(sd.year, 1, 1)
+            ytd_year_start = date(today.year, 1, 1)
             query_start = min(pre_year_start, ytd_year_start)
             year_confirmed = Report.query.filter(
                 Report.is_confirmed == True,
                 Report.report_date >= query_start,
                 Report.report_date <= today
             ).all()
+
             pre_ret_by_user: dict = {}
             ytd_totals_by_user: dict = {}
-            for _r in year_confirmed:
-                _uid = _r.user_id
-                # YTD：今年的累積保留金（含本期）
-                if _r.report_date >= ytd_year_start:
-                    if _uid not in ytd_totals_by_user:
-                        ytd_totals_by_user[_uid] = {f: 0 for f in RETENTION_FIELDS}
-                    for f in RETENTION_FIELDS:
-                        ytd_totals_by_user[_uid][f] += getattr(_r, f, 0)
-                # Pre-period：計薪年度 Jan 1 到 sd 之前（用於保留金上限）
-                if pre_year_start <= _r.report_date < sd:
-                    if _uid not in pre_ret_by_user:
-                        pre_ret_by_user[_uid] = {f: 0 for f in RETENTION_FIELDS}
-                    for f in RETENTION_FIELDS:
-                        pre_ret_by_user[_uid][f] += getattr(_r, f, 0)
 
-            users_dict = {u.id: u for u in User.query.all()}
+            def _accum_ret(ret_dict, uid, rpt, divisor):
+                u_obj = users_dict.get(uid)
+                if not u_obj:
+                    return
+                rfields = get_zone_retention_fields(u_obj.zone)
+                if uid not in ret_dict:
+                    ret_dict[uid] = {f: 0.0 for f in rfields}
+                for f in rfields:
+                    ret_dict[uid][f] = ret_dict[uid].get(f, 0.0) + float(getattr(rpt, f, 0) or 0) / divisor
+
+            import json as _json
+            for _r in year_confirmed:
+                _n = float(_r.collab_count or 1)
+                if _r.report_date >= ytd_year_start:
+                    _accum_ret(ytd_totals_by_user, _r.user_id, _r, _n)
+                    if _r.collab_json:
+                        for _cuid in _json.loads(_r.collab_json):
+                            _accum_ret(ytd_totals_by_user, _cuid, _r, _n)
+                if pre_year_start <= _r.report_date < sd:
+                    _accum_ret(pre_ret_by_user, _r.user_id, _r, _n)
+                    if _r.collab_json:
+                        for _cuid in _json.loads(_r.collab_json):
+                            _accum_ret(pre_ret_by_user, _cuid, _r, _n)
+
+            # ── 初始化 user_data ──
+            def _init_user(uid):
+                if uid in user_data:
+                    return
+                u_obj = users_dict.get(uid)
+                if not u_obj:
+                    return
+                zone = u_obj.zone
+                user_data[uid] = {
+                    'username':       u_obj.display_name,
+                    'zone':           zone,
+                    'is_deactivated': not u_obj.is_active,
+                    'totals':         {k: 0.0 for k, _ in get_zone_fields(zone)},
+                }
 
             user_data = {}
             for r in reports:
+                _n = float(r.collab_count or 1)
+                _init_user(r.user_id)
                 uid = r.user_id
-                # 包含停用帳戶：已確認的回報代表公司應支付的工作成果
-                if uid not in user_data:
-                    u_obj = users_dict.get(uid)
-                    uname = u_obj.display_name if u_obj else '(已刪除)'
-                    is_deact = (not u_obj.is_active) if u_obj else False
-                    user_data[uid] = {'username': uname,
-                                      'is_deactivated': is_deact,
-                                      'totals': {k: 0 for k, _ in REPORT_FIELDS}}
-                for k, _ in REPORT_FIELDS:
-                    user_data[uid]['totals'][k] += getattr(r, k, 0)
+                if uid in user_data:
+                    for k, _ in get_zone_fields(user_data[uid]['zone']):
+                        user_data[uid]['totals'][k] = user_data[uid]['totals'].get(k, 0.0) + float(getattr(r, k, 0) or 0) / _n
+                # 共同作業者
+                if r.collab_json:
+                    for _cuid in _json.loads(r.collab_json):
+                        _init_user(_cuid)
+                        if _cuid in user_data:
+                            for k, _ in get_zone_fields(user_data[_cuid]['zone']):
+                                user_data[_cuid]['totals'][k] = user_data[_cuid]['totals'].get(k, 0.0) + float(getattr(r, k, 0) or 0) / _n
 
-            # 所有帳戶（含停用）有固定薪資但本期無回報者也納入計算
+            # 有固定薪資但本期無回報者也納入
             for u in users_dict.values():
                 if u.id not in user_data and u.fixed_salary > 0:
-                    user_data[u.id] = {'username': u.display_name,
-                                       'is_deactivated': not u.is_active,
-                                       'totals': {k: 0 for k, _ in REPORT_FIELDS}}
+                    zone = u.zone
+                    user_data[u.id] = {
+                        'username':       u.display_name,
+                        'zone':           zone,
+                        'is_deactivated': not u.is_active,
+                        'totals':         {k: 0.0 for k, _ in get_zone_fields(zone)},
+                    }
 
             tax_rate = get_tax_rate()
-            # 批次載入所有帳戶的客製保留金費率
-            batch_rates = get_users_all_retention_rates(list(user_data.keys()))
+            batch_rates = get_users_all_retention_rates(list(user_data.keys()), users_dict)
             for uid, data in user_data.items():
-                subtotals = {k: data['totals'][k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
-                data['subtotals'] = subtotals
+                zone = data['zone']
+                prices = south_prices if zone == ZONE_SOUTH else west_prices
+                zone_fields   = get_zone_fields(zone)
+                ret_fields    = get_zone_retention_fields(zone)
+                global_rate   = get_retention_rate()
+
+                subtotals = {k: float(data['totals'].get(k, 0)) * prices.get(k, 0) for k, _ in zone_fields}
+                data['subtotals']    = subtotals
+                data['zone_fields']  = zone_fields
                 data['gross_salary'] = sum(subtotals.values())
 
-                # 保留金上限邏輯（使用帳戶客製費率）
                 u = users_dict.get(uid)
-                user_rates = batch_rates[uid]
+                user_rates = batch_rates.get(uid, {f: global_rate for f in ret_fields})
                 ret_offset = u.retention_offset if u else 0
-                pre_totals = pre_ret_by_user.get(uid, {f: 0 for f in RETENTION_FIELDS})
-                pre_calc = sum(pre_totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
+                pre_totals = pre_ret_by_user.get(uid, {})
+                pre_calc = sum(pre_totals.get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
                 ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + ret_offset))
-                period_ret_raw = sum(data['totals'].get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
+                period_ret_raw = sum(data['totals'].get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
                 data['period_retention'] = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
 
                 data['net_salary'] = data['gross_salary'] - data['period_retention']
-                # YTD 保留金：使用已批次載入的全年回報（不再逐帳戶發 DB 查詢）
                 _ytd_totals = ytd_totals_by_user.get(uid, {})
-                _ytd_calc = sum(_ytd_totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
-                data['ytd_retention'] = min(float(RETENTION_CAP),
-                                            max(0.0, _ytd_calc + ret_offset))
+                _ytd_calc = sum(_ytd_totals.get(f, 0.0) * user_rates.get(f, global_rate) for f in ret_fields)
+                data['ytd_retention'] = min(float(RETENTION_CAP), max(0.0, _ytd_calc + ret_offset))
+
                 data['payment_method'] = u.payment_method if u else 'TRANSFER'
                 data['bank_account']   = decrypt_bank(u.bank_account) if u else None
 
-                # 勞健保：10 號發薪時扣（下期），已投保帳戶
-                # 勞健保與固定薪資僅在10號發薪時計入
                 ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if is_10th_payday else 0
                 data['insurance_deduction'] = ins
-
                 fixed = (u.fixed_salary if u else 0) if is_10th_payday else 0
                 data['fixed_salary'] = fixed
-
-                # 稅務支出：未投保且未設免稅者
                 not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt) if u else True
                 data['tax_deduction'] = round(data['gross_salary'] * tax_rate / 100) if not_enrolled else 0
-                data['final_salary'] = data['net_salary'] + fixed - ins - data['tax_deduction']
+                data['final_salary']  = data['net_salary'] + fixed - ins - data['tax_deduction']
 
             grand_gross = sum(d['gross_salary'] for d in user_data.values())
             grand_period_retention = sum(d['period_retention'] for d in user_data.values())
@@ -1835,7 +2152,6 @@ def salary():
                                  if d['payment_method'] == 'TRANSFER')
             cash_total = sum(d['final_salary'] for d in user_data.values()
                              if d['payment_method'] == 'CASH')
-            # 提現面額：各人分開計算後再相加，避免合並面額被拆分（例如 500+500 ≠ 1000）
             cash_bills = {}
             for _d in user_data.values():
                 if _d['payment_method'] == 'CASH' and _d['final_salary'] > 0:
@@ -1854,7 +2170,8 @@ def salary():
                               'transfer_total': transfer_total,
                               'cash_total': cash_total,
                               'cash_bills': cash_bills,
-                              'prices': prices}
+                              'west_prices': west_prices,
+                              'south_prices': south_prices}
 
             if action == 'export-excel':
                 return _export_salary_excel(salary_results)
@@ -1893,8 +2210,9 @@ def _export_salary_excel(results):
     row = 3
     for uid, data in results['user_data'].items():
         method_label = '領現 (CASH)' if data['payment_method'] == 'CASH' else '轉帳 (TRANSFER)'
+        zone_label = '南區' if data.get('zone') == ZONE_SOUTH else '西區'
         name_cell = ws.cell(row=row, column=1,
-                            value=f'帳戶：{data["username"]}　　發薪方式：{method_label}')
+                            value=f'帳戶：{data["username"]}（{zone_label}）　　發薪方式：{method_label}')
         name_cell.font = Font(bold=True, size=12)
         row += 1
 
@@ -1906,11 +2224,12 @@ def _export_salary_excel(results):
             cell.alignment = Alignment(horizontal='center')
         row += 1
 
-        for k, label in REPORT_FIELDS:
+        z_prices = results.get('south_prices', {}) if data.get('zone') == ZONE_SOUTH else results.get('west_prices', {})
+        for k, label in data.get('zone_fields', REPORT_FIELDS):
             ws.cell(row=row, column=1, value=label)
-            ws.cell(row=row, column=2, value=data['totals'][k])
-            ws.cell(row=row, column=3, value=results['prices'].get(k, 0))
-            ws.cell(row=row, column=4, value=round(data['subtotals'][k], 2))
+            ws.cell(row=row, column=2, value=float(data['totals'].get(k, 0)))
+            ws.cell(row=row, column=3, value=z_prices.get(k, 0))
+            ws.cell(row=row, column=4, value=round(float(data['subtotals'].get(k, 0)), 2))
             row += 1
 
         # 薪資小結
@@ -2103,20 +2422,22 @@ def _export_salary_pdf(results):
         f'薪資明細  {results["start_date"]} ～ {results["end_date"]}',
         style('title', fontSize=16, alignment=1, spaceAfter=16)))
 
-    n_fields = len(REPORT_FIELDS)
-
     for uid, data in results['user_data'].items():
+        zone_label = '南區' if data.get('zone') == ZONE_SOUTH else '西區'
         method_label = '領現 (CASH)' if data['payment_method'] == 'CASH' else '轉帳 (TRANSFER)'
         story.append(Paragraph(
-            f'帳戶：{data["username"]}　　發薪方式：{method_label}',
+            f'帳戶：{data["username"]}（{zone_label}）　　發薪方式：{method_label}',
             style('h2', fontSize=12, spaceBefore=10, spaceAfter=4)))
 
+        z_fields = data.get('zone_fields', REPORT_FIELDS)
+        z_prices = results.get('south_prices', {}) if data.get('zone') == ZONE_SOUTH else results.get('west_prices', {})
+        n_fields = len(z_fields)
         tdata = [['工項', '只數', '單價(NTD)', '小計(NTD)']]
-        for k, label in REPORT_FIELDS:
+        for k, label in z_fields:
             tdata.append([label,
-                          str(data['totals'][k]),
-                          f'{results["prices"].get(k, 0):,.0f}',
-                          f'{data["subtotals"][k]:,.0f}'])
+                          str(float(data['totals'].get(k, 0))),
+                          f'{z_prices.get(k, 0):,.0f}',
+                          f'{float(data["subtotals"].get(k, 0)):,.0f}'])
         # 小結行
         tdata.append(['計薪小計（稅前）', '', '', f'{data["gross_salary"]:,.0f}'])
         tdata.append(['本期保留金（扣除）', '', '', f'-{data["period_retention"]:,.0f}'])
@@ -2633,6 +2954,8 @@ def _export_salary_transfer_doc(results):
 @app.route('/personal-stats', methods=['GET', 'POST'])
 @login_required
 def personal_stats():
+    if current_user.role == 'ADMIN':
+        return redirect(url_for('summary'))
     totals_result = None
     salary_result = None
     form = request.form if request.method == 'POST' else {}
@@ -2644,8 +2967,17 @@ def personal_stats():
     salary_end    = form.get('salary_end',    '')
     deduct_ins_checked = form.get('deduct_insurance') == '1'
 
+    zone = current_user.zone
+    zone_fields   = get_zone_fields(zone)
+    ret_fields    = get_zone_retention_fields(zone)
+    global_rate   = get_retention_rate()
+
     ytd_retention = get_ytd_retention(current_user.id)
     my_ret_rates  = get_users_all_retention_rates([current_user.id])[current_user.id]
+    # Ensure all zone-specific retention fields have a rate entry
+    for f in ret_fields:
+        if f not in my_ret_rates:
+            my_ret_rates[f] = global_rate
 
     # ── 工項總和查詢：只要日期有填就計算（不依賴 action）──────────────────
     if stats_start and stats_end:
@@ -2660,11 +2992,12 @@ def personal_stats():
             elif stats_confirm == 'unconfirmed':
                 q = q.filter_by(is_confirmed=False)
             _reports_s = q.all()
-            totals_s = {k: 0 for k, _ in REPORT_FIELDS}
+            totals_s = {k: 0.0 for k, _ in zone_fields}
             for r in _reports_s:
-                for k, _ in REPORT_FIELDS:
-                    totals_s[k] += getattr(r, k, 0)
-            period_ret_s = sum(totals_s.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
+                _n = float(r.collab_count or 1)
+                for k, _ in zone_fields:
+                    totals_s[k] += float(getattr(r, k, 0) or 0) / _n
+            period_ret_s = sum(totals_s.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
             totals_result = {'start': stats_start, 'end': stats_end,
                              'confirm_filter': stats_confirm,
                              'totals': totals_s, 'count': len(_reports_s),
@@ -2673,7 +3006,7 @@ def personal_stats():
             pass
 
     # ── 薪資試算：只要日期有填就計算，單價唯讀來自 SystemConfig ─────────
-    item_prices = get_item_prices()
+    item_prices = get_item_prices_for_zone(zone)
     if salary_start and salary_end:
         try:
             prices = item_prices
@@ -2685,11 +3018,12 @@ def personal_stats():
                 Report.report_date >= sd_ps,
                 Report.report_date <= ed_ps
             ).all()
-            totals_p = {k: 0 for k, _ in REPORT_FIELDS}
+            totals_p = {k: 0.0 for k, _ in zone_fields}
             for r in _reports_p:
-                for k, _ in REPORT_FIELDS:
-                    totals_p[k] += getattr(r, k, 0)
-            subtotals  = {k: totals_p[k] * prices.get(k, 0) for k, _ in REPORT_FIELDS}
+                _n = float(r.collab_count or 1)
+                for k, _ in zone_fields:
+                    totals_p[k] += float(getattr(r, k, 0) or 0) / _n
+            subtotals  = {k: totals_p[k] * prices.get(k, 0) for k, _ in zone_fields}
             grand_total = sum(subtotals.values())
 
             year_start  = date(sd_ps.year, 1, 1)
@@ -2699,16 +3033,15 @@ def personal_stats():
                 Report.report_date >= year_start,
                 Report.report_date < sd_ps
             ).all()
-            pre_totals = {f: sum(getattr(r, f, 0) for r in pre_reports) for f in RETENTION_FIELDS}
-            pre_calc   = sum(pre_totals.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
+            pre_totals = {f: sum(float(getattr(r, f, 0) or 0) / float(r.collab_count or 1) for r in pre_reports) for f in ret_fields}
+            pre_calc   = sum(pre_totals.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
             ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + current_user.retention_offset))
-            period_ret_raw  = sum(totals_p.get(f, 0) * my_ret_rates[f] for f in RETENTION_FIELDS)
+            period_ret_raw  = sum(totals_p.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
             period_retention = max(0.0, min(period_ret_raw, RETENTION_CAP - ytd_before))
 
             ins_amount   = current_user.insurance_deduction if deduct_ins_checked else 0
             not_enrolled = (current_user.insurance_deduction == 0 and not current_user.tax_exempt)
             tax_rate_val = get_tax_rate()
-            # 未投保需扣稅者，僅在勾選checkbox時才計算稅務支出
             tax_amount   = round(grand_total * tax_rate_val / 100) if (not_enrolled and deduct_ins_checked) else 0
             salary_result = {'start': salary_start, 'end': salary_end,
                              'totals': totals_p, 'prices': prices,
@@ -2726,7 +3059,8 @@ def personal_stats():
             pass
 
     return render_template('personal_stats.html',
-                           report_fields=REPORT_FIELDS,
+                           zone=zone,
+                           report_fields=zone_fields,
                            default_prices=item_prices,
                            totals_result=totals_result,
                            salary_result=salary_result,
@@ -3090,7 +3424,7 @@ def _report_get_font():
 
 
 def _report_excel(report_type, label, start_date, end_date,
-                  users, reports, ledger_entries, materials, prices):
+                  users, reports, ledger_entries, materials, prices=None):
     """生成多 Sheet Excel，回傳 BytesIO。"""
     import openpyxl
     from openpyxl.styles import Font as XFont, PatternFill, Alignment
@@ -3128,43 +3462,84 @@ def _report_excel(report_type, label, start_date, end_date,
             ws.column_dimensions[col_letter].width = max(8, min(round(w / 0.7), 60))
 
     wb = openpyxl.Workbook()
-    udict = {u.id: u.display_name for u in users}
+    udict  = {u.id: u for u in users}            # User objects (for zone, salary fields)
+    unames = {u.id: u.display_name for u in users}  # display names for ledger lookups
 
-    # ── Sheet 1: 工項彙總 ───────────────────────────────────────────────
+    # ── 工項彙總：依區域分組，含共同作業分配 ────────────────────────────
+    u_zone_map = {u.id: u.zone for u in users}
+    user_totals_west  = {}   # uid → {k: float}
+    user_totals_south = {}   # uid → {k: float}
+    import json as _json_r
+    for r in reports:
+        uid = r.user_id
+        _n  = float(r.collab_count or 1)
+        zone = u_zone_map.get(uid, ZONE_WEST)
+        z_fields = get_zone_fields(zone)
+        z_map = user_totals_south if zone == ZONE_SOUTH else user_totals_west
+        if uid not in z_map:
+            z_map[uid] = {k: 0.0 for k, _ in z_fields}
+        for k, _ in z_fields:
+            z_map[uid][k] += float(getattr(r, k, 0) or 0) / _n
+        # 共同作業者
+        if r.collab_json:
+            for _cuid in _json_r.loads(r.collab_json):
+                _czone = u_zone_map.get(_cuid, zone)
+                _cfields = get_zone_fields(_czone)
+                _cmap = user_totals_south if _czone == ZONE_SOUTH else user_totals_west
+                if _cuid not in _cmap:
+                    _cmap[_cuid] = {k: 0.0 for k, _ in _cfields}
+                for k, _ in _cfields:
+                    _cmap[_cuid][k] += float(getattr(r, k, 0) or 0) / _n
+
+    def _write_zone_block(ws, row_start, zone_label, z_fields, z_totals):
+        if not z_totals:
+            return row_start
+        n_f = len(z_fields)
+        span_letter = chr(65 + n_f + 1) if n_f + 1 < 26 else 'AH'
+        ws.merge_cells(f'A{row_start}:{span_letter}{row_start}')
+        zone_cell = ws.cell(row_start, 1, f'── {zone_label} ──')
+        zone_cell.font = XFont(bold=True, color='FFFFFF')
+        zone_cell.fill = PatternFill('solid', fgColor='7030A0' if zone_label == '南區' else '2F75B6')
+        zone_cell.alignment = Alignment(horizontal='center')
+        row_start += 1
+        set_hdr(ws, row_start, ['帳戶'] + [lbl for _, lbl in z_fields] + ['合計'])
+        row_start += 1
+        grand = {k: 0.0 for k, _ in z_fields}
+        for uid, tots in z_totals.items():
+            u_obj = udict.get(uid)
+            uname = u_obj.display_name if u_obj else f'UID {uid}'
+            row_vals = [uname] + [round(tots.get(k, 0), 1) for k, _ in z_fields]
+            row_vals.append(round(sum(tots.values()), 1))
+            for ci, v in enumerate(row_vals, 1):
+                c = ws.cell(row_start, ci, v)
+                if row_start % 2 == 0: c.fill = ALT_FILL
+                if ci > 1: c.alignment = Alignment(horizontal='center')
+            for k, _ in z_fields:
+                grand[k] += tots.get(k, 0.0)
+            row_start += 1
+        total_row = ['總計'] + [round(grand[k], 1) for k, _ in z_fields] + [round(sum(grand.values()), 1)]
+        for ci, v in enumerate(total_row, 1):
+            c = ws.cell(row_start, ci, v); c.font = BOLD; c.fill = GRN_FILL
+        return row_start + 2
+
     ws1 = wb.active
     ws1.title = '工項彙總'
-    span = chr(65 + len(REPORT_FIELDS) + 1)
-    ws1.merge_cells(f'A1:{span}1')
+    ws1.merge_cells('A1:Z1')
     ws1['A1'] = f'{"日報" if report_type == "DAILY" else "月報"}　{label}　期間：{start_date} ～ {end_date}'
     ws1['A1'].font = XFont(bold=True, size=13)
     ws1['A1'].alignment = Alignment(horizontal='center')
 
-    set_hdr(ws1, 2, ['帳戶'] + [lbl for _, lbl in REPORT_FIELDS] + ['合計'])
-
-    user_totals = {}
-    for r in reports:
-        uid = r.user_id
-        if uid not in user_totals:
-            user_totals[uid] = {k: 0 for k, _ in REPORT_FIELDS}
-        for k, _ in REPORT_FIELDS:
-            user_totals[uid][k] += getattr(r, k, 0) or 0
-
-    grand = {k: 0 for k, _ in REPORT_FIELDS}
     ri = 3
-    for uid, tots in user_totals.items():
-        row_sum = sum(tots.values())
-        row_vals = [udict.get(uid, f'UID {uid}')] + [tots[k] for k, _ in REPORT_FIELDS] + [row_sum]
-        for ci, v in enumerate(row_vals, 1):
-            c = ws1.cell(ri, ci, v)
-            if ri % 2 == 0: c.fill = ALT_FILL
-            if ci > 1: c.alignment = Alignment(horizontal='center')
-        for k, _ in REPORT_FIELDS:
-            grand[k] += tots[k]
-        ri += 1
-    total_row = ['總計'] + [grand[k] for k, _ in REPORT_FIELDS] + [sum(grand.values())]
-    for ci, v in enumerate(total_row, 1):
-        c = ws1.cell(ri, ci, v); c.font = BOLD; c.fill = GRN_FILL
+    ri = _write_zone_block(ws1, ri, '西區', WEST_REPORT_FIELDS, user_totals_west)
+    ri = _write_zone_block(ws1, ri, '南區', SOUTH_REPORT_FIELDS, user_totals_south)
     auto_w(ws1)
+
+    # user_totals for monthly salary sheet (combine both zones)
+    user_totals = {}
+    for uid, tots in user_totals_west.items():
+        user_totals[uid] = tots
+    for uid, tots in user_totals_south.items():
+        user_totals[uid] = tots
 
     # ── Sheet 2: 流水帳 ─────────────────────────────────────────────────
     ws2 = wb.create_sheet('流水帳')
@@ -3181,10 +3556,10 @@ def _report_excel(report_type, label, start_date, end_date,
             ac.font = GRN_FONT; inc_total += e.amount
         else:
             ac.font = RED_FONT; exp_total += e.amount
-        payer_name = '-' if e.entry_type == 'INCOME' else (udict.get(e.payer_id, '?') if e.payer_id else '公司')
+        payer_name = '-' if e.entry_type == 'INCOME' else (unames.get(e.payer_id, '?') if e.payer_id else '公司')
         ws2.cell(ri2, 6, payer_name)
         ws2.cell(ri2, 7, e.note or '')
-        ws2.cell(ri2, 8, udict.get(e.created_by, '?'))
+        ws2.cell(ri2, 8, unames.get(e.created_by, '?'))
         if ri2 % 2 == 0:
             for ci in range(1, 9): ws2.cell(ri2, ci).fill = ALT_FILL
     sr = len(ledger_entries) + 2
@@ -3224,33 +3599,46 @@ def _report_excel(report_type, label, start_date, end_date,
                 Report.report_date <= pre_period_end
             ).all()
         pre_totals_by_user: dict = {}
+        global_rate = get_retention_rate()
         for _r in _pre_reports:
             _uid = _r.user_id
+            _n2  = float(_r.collab_count or 1)
+            _u2  = udict.get(_uid)
+            _zone2 = _u2.zone if _u2 else ZONE_WEST
+            _rfields = get_zone_retention_fields(_zone2)
             if _uid not in pre_totals_by_user:
-                pre_totals_by_user[_uid] = {f: 0 for f in RETENTION_FIELDS}
-            for f in RETENTION_FIELDS:
-                pre_totals_by_user[_uid][f] += getattr(_r, f, 0)
+                pre_totals_by_user[_uid] = {f: 0.0 for f in _rfields}
+            for f in _rfields:
+                pre_totals_by_user[_uid][f] = pre_totals_by_user[_uid].get(f, 0.0) + float(getattr(_r, f, 0) or 0) / _n2
+
+        west_p  = get_item_prices_for_zone(ZONE_WEST)
+        south_p = get_item_prices_for_zone(ZONE_SOUTH)
 
         sal_ri = 2
         total_net = 0
         for u in users:
-            tots = user_totals.get(u.id, {k: 0 for k, _ in REPORT_FIELDS})
-            gross = sum(tots.get(k, 0) * prices.get(k, 0) for k, _ in REPORT_FIELDS)
+            zone = u.zone
+            z_fields = get_zone_fields(zone)
+            ret_fields = get_zone_retention_fields(zone)
+            z_prices = south_p if zone == ZONE_SOUTH else west_p
+            tots = user_totals.get(u.id, {k: 0.0 for k, _ in z_fields})
+            gross = sum(tots.get(k, 0.0) * z_prices.get(k, 0) for k, _ in z_fields)
             if gross == 0 and u.fixed_salary == 0:
                 continue
             u_rates = get_user_all_retention_rates(u.id)
-            pre_totals = pre_totals_by_user.get(u.id, {f: 0 for f in RETENTION_FIELDS})
-            pre_calc = sum(pre_totals.get(f, 0) * u_rates[f] for f in RETENTION_FIELDS)
+            pre_totals = pre_totals_by_user.get(u.id, {})
+            pre_calc = sum(pre_totals.get(f, 0.0) * u_rates.get(f, global_rate) for f in ret_fields)
             ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + u.retention_offset))
-            ret_raw = sum(tots.get(f, 0) * u_rates[f] for f in RETENTION_FIELDS)
+            ret_raw = sum(tots.get(f, 0.0) * u_rates.get(f, global_rate) for f in ret_fields)
             retention = max(0.0, min(ret_raw, RETENTION_CAP - ytd_before))
             insurance = u.insurance_deduction
             not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt)
             tax = round(gross * tax_v / 100) if not_enrolled else 0
             net = int(gross - retention - insurance - tax + u.fixed_salary)
             total_net += net
+            zone_badge = '南區' if zone == ZONE_SOUTH else '西區'
             dname = u.display_name if u.is_active else f'{u.display_name}（停用）'
-            row_vals = [dname, '領現' if u.payment_method == 'CASH' else '轉帳',
+            row_vals = [f'{dname}（{zone_badge}）', '領現' if u.payment_method == 'CASH' else '轉帳',
                         int(gross), int(retention), insurance, tax, u.fixed_salary, net]
             for ci, v in enumerate(row_vals, 1):
                 c = ws4.cell(sal_ri, ci, v)

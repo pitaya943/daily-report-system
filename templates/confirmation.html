@@ -61,8 +61,8 @@
           {% for r in pending_reports %}
           <tr>
             <td class="text-muted">{{ r.id }}</td>
-            <td>{{ users_dict.get(r.user_id).display_name if users_dict.get(r.user_id) else '?' }}</td>
-            <td>{{ r.report_date }}</td>
+            <td>{% set _cu = users_dict.get(r.user_id) %}{{ _cu.display_name if _cu else '?' }}{% if _cu and _cu.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}</td>
+            <td>{{ r.report_date }}{% if r.collab_count and r.collab_count > 1 %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>{% endif %}</td>
             {% for key, _ in report_fields %}
             <td class="text-center">{{ r[key] if r[key] else '' }}</td>
             {% endfor %}

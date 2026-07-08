@@ -136,7 +136,7 @@
         <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
           <thead>
             <tr>
-              <th>#</th><th>名稱</th><th>角色</th><th>發薪方式</th><th>銀行帳號</th><th>投保狀態</th>
+              <th>#</th><th>名稱</th><th>角色</th><th>區域</th><th>發薪方式</th><th>銀行帳號</th><th>投保狀態</th>
               <th class="text-end">固定薪資/月</th>
               <th class="text-end">今年累積保留金</th>
               <th>狀態</th><th>建立時間</th><th>操作</th>
@@ -157,6 +157,17 @@
                   <span class="badge bg-danger">ADMIN</span>
                 {% else %}
                   <span class="badge bg-primary">USER</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if u.role == 'USER' %}
+                  {% if u.zone == '南區' %}
+                    <span class="badge bg-warning text-dark">南區</span>
+                  {% else %}
+                    <span class="badge bg-info text-dark">西區</span>
+                  {% endif %}
+                {% else %}
+                  <span class="text-muted">—</span>
                 {% endif %}
               </td>
               <td>
@@ -239,6 +250,13 @@
                         title="{% if user_ret_rates[u.id]['is_custom'] %}已自訂保留金費率{% else %}設定各工項保留金費率{% endif %}">
                   <i class="bi bi-sliders2"></i>
                 </button>
+                {% if u.role == 'USER' %}
+                <button class="btn btn-outline-secondary btn-sm py-0 px-2 ms-1"
+                        onclick="openZone({{ u.id }}, '{{ u.display_name|e }}', '{{ u.zone }}')"
+                        title="切換區域（西區/南區）">
+                  <i class="bi bi-geo-alt"></i>
+                </button>
+                {% endif %}
                 <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
                         onclick="openResetPwd({{ u.id }}, '{{ u.display_name|e }}')"
                         title="重設密碼">
@@ -392,26 +410,102 @@
     <i class="bi bi-currency-dollar me-1"></i>各工項單位計薪設定（NTD/只）
   </div>
   <div class="card-body">
-    <form method="POST" action="{{ url_for('settings_item_prices') }}"
-          onsubmit="return confirm('確定更新各工項單位計薪？此變更將影響後續所有薪資計算。')">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="row g-2 mb-3">
-        {% for key, label in report_fields %}
-        <div class="col-sm-6 col-lg-4">
-          <label class="form-label small mb-1" title="{{ label }}">{{ label }}</label>
-          <div class="input-group input-group-sm">
-            <input type="number" name="price_{{ key }}" class="form-control"
-                   value="{{ item_prices.get(key, 0) | int }}"
-                   min="0" step="1" required>
-            <span class="input-group-text">NTD</span>
+    <ul class="nav nav-tabs mb-3" id="priceZoneTabs">
+      <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="tab" href="#priceWest">
+          <span class="badge bg-info text-dark me-1">西區</span> 西區計薪
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#priceSouth">
+          <span class="badge bg-warning text-dark me-1">南區</span> 南區計薪
+        </a>
+      </li>
+    </ul>
+    <div class="tab-content">
+      <!-- West Zone -->
+      <div class="tab-pane fade show active" id="priceWest">
+        <form method="POST" action="{{ url_for('settings_item_prices') }}"
+              onsubmit="return confirm('確定更新西區各工項單位計薪？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="row g-2 mb-3">
+            {% for key, label in west_fields %}
+            <div class="col-sm-6 col-lg-4">
+              <label class="form-label small mb-1" title="{{ label }}">{{ label }}</label>
+              <div class="input-group input-group-sm">
+                <input type="number" name="price_{{ key }}" class="form-control"
+                       value="{{ west_prices.get(key, 0) | int }}"
+                       min="0" step="1" required>
+                <span class="input-group-text">NTD</span>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <button type="submit" class="btn btn-info btn-sm text-dark">
+            <i class="bi bi-check-lg me-1"></i>儲存西區計薪
+          </button>
+        </form>
+      </div>
+      <!-- South Zone -->
+      <div class="tab-pane fade" id="priceSouth">
+        <form method="POST" action="{{ url_for('settings_item_prices_south') }}"
+              onsubmit="return confirm('確定更新南區各工項單位計薪？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="row g-2 mb-3">
+            {% for key, label in south_fields %}
+            <div class="col-sm-6 col-lg-4">
+              <label class="form-label small mb-1" title="{{ label }}">{{ label }}</label>
+              <div class="input-group input-group-sm">
+                <input type="number" name="price_south_{{ key }}" class="form-control"
+                       value="{{ south_prices.get(key, 0) | int }}"
+                       min="0" step="1" required>
+                <span class="input-group-text">NTD</span>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <button type="submit" class="btn btn-warning btn-sm text-dark">
+            <i class="bi bi-check-lg me-1"></i>儲存南區計薪
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Zone Modal -->
+<div class="modal fade" id="zoneModal" tabindex="-1">
+  <div class="modal-dialog" style="max-width:340px">
+    <div class="modal-content">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title"><i class="bi bi-geo-alt me-2"></i>切換所屬區域</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="zoneForm" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <p class="small mb-2">帳戶：<strong id="zoneUsername"></strong></p>
+          <div class="d-flex gap-3">
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="zone" id="zoneWest" value="西區">
+              <label class="form-check-label" for="zoneWest">
+                <span class="badge bg-info text-dark">西區</span>
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="zone" id="zoneSouth" value="南區">
+              <label class="form-check-label" for="zoneSouth">
+                <span class="badge bg-warning text-dark">南區</span>
+              </label>
+            </div>
           </div>
         </div>
-        {% endfor %}
-      </div>
-      <button type="submit" class="btn btn-primary btn-sm">
-        <i class="bi bi-check-lg me-1"></i>儲存單位計薪
-      </button>
-    </form>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-primary btn-sm">儲存</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -939,6 +1033,12 @@ function openRetention(id, name, current) {
   document.getElementById('retentionResetForm').action = url;
   document.getElementById('retentionSetForm').action = url;
   new bootstrap.Modal(document.getElementById('retentionModal')).show();
+}
+function openZone(id, name, current) {
+  document.getElementById('zoneUsername').textContent = name;
+  document.getElementById('zoneForm').action = `/settings/users/${id}/zone`;
+  document.getElementById(current === '南區' ? 'zoneSouth' : 'zoneWest').checked = true;
+  new bootstrap.Modal(document.getElementById('zoneModal')).show();
 }
 </script>
 {% endif %}

@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 {% block title %}個人統計{% endblock %}
-{% block page_title %}<i class="bi bi-bar-chart-line me-2"></i>個人統計{% endblock %}
+{% block page_title %}<i class="bi bi-bar-chart-line me-2"></i>個人統計
+  {% if zone == '南區' %}<span class="badge bg-warning text-dark ms-2">南區</span>{% else %}<span class="badge bg-info text-dark ms-2">西區</span>{% endif %}
+{% endblock %}
 
 {% block content %}
 <div class="alert alert-info alert-sm mb-3 py-2" style="font-size:.85rem">

@@ -164,6 +164,11 @@
         {% for uid, data in salary_results.user_data.items() %}
         <h6 class="fw-semibold mb-1">
           {{ data.username }}
+          {% if data.zone == '南區' %}
+            <span class="badge bg-warning text-dark ms-1">南區</span>
+          {% else %}
+            <span class="badge bg-info text-dark ms-1">西區</span>
+          {% endif %}
           {% if data.is_deactivated %}
             <span class="badge bg-secondary ms-1" title="此帳戶已停用，但有已確認回報，公司仍需支付薪資">停用</span>
           {% endif %}
@@ -174,6 +179,7 @@
           {% endif %}
         </h6>
         <div class="table-responsive mb-4">
+          {% set z_prices = salary_results.south_prices if data.zone == '南區' else salary_results.west_prices %}
           <table class="table table-sm table-bordered" style="font-size:.82rem">
             <thead class="table-secondary">
               <tr>
@@ -184,12 +190,12 @@
               </tr>
             </thead>
             <tbody>
-              {% for key, label in report_fields %}
+              {% for key, label in data.zone_fields %}
               <tr>
                 <td>{{ label }}</td>
-                <td class="text-end">{{ data.totals[key] | money }}</td>
-                <td class="text-end">{{ salary_results.prices.get(key,0) | money }}</td>
-                <td class="text-end">{{ data.subtotals[key] | money }}</td>
+                <td class="text-end">{{ data.totals.get(key, 0) | money }}</td>
+                <td class="text-end">{{ z_prices.get(key, 0) | money }}</td>
+                <td class="text-end">{{ data.subtotals.get(key, 0) | money }}</td>
               </tr>
               {% endfor %}
             </tbody>
