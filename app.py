@@ -2139,14 +2139,24 @@ def confirmation():
 
     url_args = {k: v for k, v in request.args.items() if k not in ('page', 'mat_page')}
 
+    # Split pending reports by submitter zone for zone-aware column display
+    west_reports  = [r for r in pending_pagination.items
+                     if users_dict.get(r.user_id) and users_dict[r.user_id].zone == ZONE_WEST]
+    south_reports = [r for r in pending_pagination.items
+                     if users_dict.get(r.user_id) and users_dict[r.user_id].zone == ZONE_SOUTH]
+
     return render_template('confirmation.html',
                            pending_pagination=pending_pagination,
                            pending_reports=pending_pagination.items,
+                           west_reports=west_reports,
+                           south_reports=south_reports,
                            mat_pagination=mat_pagination,
                            pending_materials=mat_pagination.items,
                            users_dict=users_dict,
                            materials_dict=materials_dict,
                            report_fields=REPORT_FIELDS,
+                           west_fields=WEST_REPORT_FIELDS,
+                           south_fields=SOUTH_REPORT_FIELDS,
                            url_args=url_args,
                            filter_start=filter_start,
                            filter_end=filter_end,

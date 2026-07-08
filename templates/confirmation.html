@@ -54,6 +54,12 @@
 
     {{ paginate(pending_pagination, 'confirmation', url_args) }}
 
+    {# ── Macro: render one zone's report table ── #}
+    {% macro report_table(zone_reports, zone_fields, zone_label, zone_badge_class) %}
+    {% if zone_reports %}
+    <div class="px-3 pt-3 pb-1">
+      <span class="badge {{ zone_badge_class }} fs-6 mb-2">{{ zone_label }}</span>
+    </div>
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0 align-middle" style="font-size:.8rem">
         <thead class="table-light">
@@ -61,30 +67,30 @@
             <th style="min-width:28px">#</th>
             <th style="min-width:90px">帳戶</th>
             <th style="min-width:80px">日期</th>
-            {% for key, label in report_fields %}
+            {% for key, label in zone_fields %}
             <th class="text-center" style="min-width:42px; max-width:52px; font-size:.68rem; word-break:break-all; line-height:1.2; padding:3px 2px" title="{{ label }}">{{ label }}</th>
             {% endfor %}
             <th class="text-center" style="min-width:130px">操作</th>
           </tr>
         </thead>
         <tbody>
-          {% for r in pending_reports %}
+          {% for r in zone_reports %}
           {% set _cu = users_dict.get(r.user_id) %}
           <tr>
             <td class="text-muted">{{ r.id }}</td>
             <td>
               <span class="fw-semibold">{{ _cu.display_name if _cu else '?' }}</span>
-              {% if _cu and _cu.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}
               {% if r.collab_count and r.collab_count > 1 %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>{% endif %}
             </td>
             <td class="text-nowrap">{{ r.report_date }}</td>
-            {% for key, _ in report_fields %}
+            {% for key, _ in zone_fields %}
             <td class="text-center px-1">{{ r[key] | qty }}</td>
             {% endfor %}
             <td class="text-center text-nowrap">
               <button type="button" class="btn btn-outline-info btn-sm py-0 px-2"
                       data-report='{{ r | report_json }}'
                       data-username="{{ _cu.display_name if _cu else '?' }}"
+                      data-zone="{{ _cu.zone if _cu else '西區' }}"
                       onclick="openReportDetail(this)"
                       title="查看詳情">
                 <i class="bi bi-eye me-1"></i>詳情
@@ -123,6 +129,11 @@
         </tbody>
       </table>
     </div>
+    {% endif %}
+    {% endmacro %}
+
+    {{ report_table(west_reports,  west_fields,  '西區回報', 'bg-info text-dark') }}
+    {{ report_table(south_reports, south_fields, '南區回報', 'bg-warning text-dark') }}
 
     {{ paginate(pending_pagination, 'confirmation', url_args) }}
 
@@ -239,14 +250,18 @@
 
 {% block scripts %}
 <script>
-const CONFIRM_FIELDS = {{ report_fields | tojson }};
+const WEST_FIELDS  = {{ west_fields  | tojson }};
+const SOUTH_FIELDS = {{ south_fields | tojson }};
 const CONFIRM_USERS = {
   {% for uid, u in users_dict.items() %}{{ uid }}: "{{ u.display_name | e }}"{% if not loop.last %}, {% endif %}{% endfor %}
 };
 
 function openReportDetail(btn) {
-  const data = JSON.parse(btn.dataset.report);
+  const data     = JSON.parse(btn.dataset.report);
   const username = btn.dataset.username;
+  const zone     = btn.dataset.zone || '西區';
+  const fields   = zone === '南區' ? SOUTH_FIELDS : WEST_FIELDS;
+
   document.getElementById('detailModalTitle').innerHTML =
     '<i class="bi bi-file-text me-2"></i>' + username + '　' + data.report_date + '　#' + data.id;
 
@@ -264,7 +279,7 @@ function openReportDetail(btn) {
   const tbody = document.getElementById('detailModalBody');
   tbody.innerHTML = '';
   let total = 0;
-  for (const [key, label] of CONFIRM_FIELDS) {
+  for (const [key, label] of fields) {
     const val = data[key] || 0;
     if (val > 0) {
       total += val;
