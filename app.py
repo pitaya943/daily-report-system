@@ -788,9 +788,12 @@ def calc_retention_from_totals(totals: dict) -> float:
 
 
 def get_user_all_retention_rates(user_id: int) -> dict:
-    """回傳 {field: rate}，未自訂的欄位使用全域費率。"""
-    global_rate = get_retention_rate()
-    result = {f: global_rate for f in RETENTION_FIELDS}
+    """回傳 {field: rate}，未自訂的欄位使用該區域全域費率。"""
+    u = db.session.get(User, user_id)
+    zone = u.zone if u else ZONE_WEST
+    global_rate = get_retention_rate_for_zone(zone)
+    ret_fields = get_zone_retention_fields(zone)
+    result = {f: global_rate for f in ret_fields}
     for cr in UserRetentionRate.query.filter_by(user_id=user_id).all():
         if cr.field in result:
             result[cr.field] = float(cr.rate)
@@ -800,7 +803,8 @@ def get_user_all_retention_rates(user_id: int) -> dict:
 def get_users_all_retention_rates(user_ids, users_dict: dict = None) -> dict:
     """批次載入多帳戶費率，回傳 {uid: {field: rate}}，支援南/西區不同欄位。"""
     ids = list(user_ids)
-    global_rate = get_retention_rate()
+    west_rate  = get_retention_rate()
+    south_rate = get_retention_rate_for_zone(ZONE_SOUTH)
     result = {}
     for uid in ids:
         zone = ZONE_WEST
@@ -808,7 +812,8 @@ def get_users_all_retention_rates(user_ids, users_dict: dict = None) -> dict:
             u = users_dict.get(uid)
             if u:
                 zone = u.zone
-        result[uid] = {f: global_rate for f in get_zone_retention_fields(zone)}
+        zone_rate = south_rate if zone == ZONE_SOUTH else west_rate
+        result[uid] = {f: zone_rate for f in get_zone_retention_fields(zone)}
     if ids:
         for cr in UserRetentionRate.query.filter(
             UserRetentionRate.user_id.in_(ids)
@@ -2014,7 +2019,6 @@ def summary():
     selected_user_id = request.args.get('user_id', '')
     selected_zone = request.args.get('zone', '')
     confirm_filter = request.args.get('confirm_filter', 'all')
-    selected_fields = request.args.getlist('fields') or [k for k, _ in REPORT_FIELDS]
 
     all_users = User.query.order_by(User.display_name).all()
     results = None
@@ -2043,12 +2047,13 @@ def summary():
             u_obj = users_dict.get(tgt_uid)
             if not u_obj:
                 return
+            zone_f = get_zone_fields(u_obj.zone)
             if tgt_uid not in user_totals:
                 user_totals[tgt_uid] = {
                     'username': u_obj.display_name, 'zone': u_obj.zone,
-                    'totals': {k: 0.0 for k, _ in REPORT_FIELDS}, 'count': 0,
+                    'totals': {k: 0.0 for k, _ in zone_f}, 'count': 0,
                 }
-            for k, _ in REPORT_FIELDS:
+            for k, _ in zone_f:
                 qty = float(getattr(rpt, k, 0) or 0)
                 user_totals[tgt_uid]['totals'][k] += qty / n
             user_totals[tgt_uid]['count'] += 1
@@ -2060,12 +2065,18 @@ def summary():
                 for _cuid in json.loads(r.collab_json):
                     _summary_accum(_cuid, r, _n)
 
-        grand = {k: sum(d['totals'][k] for d in user_totals.values()) for k, _ in REPORT_FIELDS}
+        west_grand  = {k: sum(d['totals'].get(k, 0) for d in user_totals.values() if d['zone'] == ZONE_WEST)  for k, _ in WEST_REPORT_FIELDS}
+        south_grand = {k: sum(d['totals'].get(k, 0) for d in user_totals.values() if d['zone'] == ZONE_SOUTH) for k, _ in SOUTH_REPORT_FIELDS}
         page = request.args.get('page', 1, type=int)
         summary_pagination = SimplePagination(list(user_totals.items()), page, 20)
-        results = {'user_totals': dict(summary_pagination.items),
-                   'grand_total': grand,
-                   'total_reports': len(reports)}
+        page_dict = dict(summary_pagination.items)
+        results = {
+            'west_user_totals':  {uid: d for uid, d in page_dict.items() if d['zone'] == ZONE_WEST},
+            'south_user_totals': {uid: d for uid, d in page_dict.items() if d['zone'] == ZONE_SOUTH},
+            'west_grand':   west_grand,
+            'south_grand':  south_grand,
+            'total_reports': len(reports),
+        }
     else:
         summary_pagination = None
 
@@ -2074,8 +2085,8 @@ def summary():
                            results=results,
                            summary_pagination=summary_pagination,
                            all_users=all_users,
-                           report_fields=REPORT_FIELDS,
-                           selected_fields=selected_fields,
+                           west_fields=WEST_REPORT_FIELDS,
+                           south_fields=SOUTH_REPORT_FIELDS,
                            start_date=start_date,
                            end_date=end_date,
                            selected_user_id=selected_user_id,

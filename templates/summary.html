@@ -63,44 +63,58 @@
 
   {{ paginate(summary_pagination, 'summary', url_args) }}
 
-  <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table table-bordered table-sm mb-0 align-middle" style="font-size:.8rem">
-        <thead class="table-dark">
-          <tr class="align-bottom">
-            <th class="text-nowrap" style="min-width:90px">帳戶</th>
-            <th class="text-center text-nowrap" style="min-width:36px">筆數</th>
-            {% for key, label in report_fields %}
-            <th class="text-center" style="min-width:42px; max-width:52px; font-size:.68rem; word-break:break-all; line-height:1.2; padding:3px 2px" title="{{ label }}">{{ label }}</th>
-            {% endfor %}
-          </tr>
-        </thead>
-        <tbody>
-          {% for uid, data in results.user_totals.items() %}
-          <tr>
-            <td class="fw-semibold">{{ data.username }}
-              {% if data.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.65rem">南</span>{% else %}<span class="badge bg-info text-dark ms-1" style="font-size:.65rem">西</span>{% endif %}
-            </td>
-            <td class="text-center">{{ data.count }}</td>
-            {% for key, _ in report_fields %}
-            <td class="text-center px-1">
-              {% if data.totals[key] > 0 %}{{ data.totals[key] | qty }}{% endif %}
-            </td>
-            {% endfor %}
-          </tr>
+  {# ── Macro: render one zone's summary table ── #}
+  {% macro summary_table(user_totals, zone_fields, grand, zone_label, zone_badge_class) %}
+  {% if user_totals %}
+  <div class="px-3 pt-3 pb-1">
+    <span class="badge {{ zone_badge_class }} fs-6 mb-2">{{ zone_label }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-bordered table-sm mb-0 align-middle" style="font-size:.8rem">
+      <thead class="table-dark">
+        <tr class="align-bottom">
+          <th class="text-nowrap" style="min-width:90px">帳戶</th>
+          <th class="text-center text-nowrap" style="min-width:36px">筆數</th>
+          {% for key, label in zone_fields %}
+          <th class="text-center" style="width:26px; min-width:22px; padding:6px 1px; font-size:.72rem; writing-mode:vertical-lr; text-orientation:upright; white-space:nowrap; vertical-align:bottom;" title="{{ label }}">{{ label }}</th>
           {% endfor %}
-        </tbody>
-        <tfoot>
-          <tr class="table-success fw-bold">
-            <td class="text-nowrap">全體合計</td>
-            <td class="text-center">{{ results.total_reports }}</td>
-            {% for key, _ in report_fields %}
-            <td class="text-center px-1">{{ results.grand_total[key] | qty if results.grand_total[key] else '' }}</td>
-            {% endfor %}
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+        </tr>
+      </thead>
+      <tbody>
+        {% for uid, data in user_totals.items() %}
+        <tr>
+          <td class="fw-semibold">{{ data.username }}</td>
+          <td class="text-center">{{ data.count }}</td>
+          {% for key, _ in zone_fields %}
+          <td class="text-center px-1">
+            {% if data.totals.get(key, 0) > 0 %}{{ data.totals[key] | qty }}{% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="table-success fw-bold">
+          <td class="text-nowrap">合計</td>
+          <td class="text-center">—</td>
+          {% for key, _ in zone_fields %}
+          <td class="text-center px-1">{{ grand.get(key, 0) | qty if grand.get(key, 0) else '' }}</td>
+          {% endfor %}
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% endif %}
+  {% endmacro %}
+
+  <div class="card-body p-0">
+    {{ summary_table(results.west_user_totals,  west_fields,  results.west_grand,  '西區', 'bg-info text-dark') }}
+    {{ summary_table(results.south_user_totals, south_fields, results.south_grand, '南區', 'bg-warning text-dark') }}
+    {% if not results.west_user_totals and not results.south_user_totals %}
+    <p class="text-center text-muted py-3 mb-0">
+      <i class="bi bi-info-circle me-1"></i>查詢範圍內無資料。
+    </p>
+    {% endif %}
   </div>
 
   {{ paginate(summary_pagination, 'summary', url_args) }}
