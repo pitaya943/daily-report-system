@@ -530,7 +530,9 @@ def qty_filter(value):
 
 @app.template_filter('report_json')
 def report_json_filter(r):
-    all_keys = {k for k, _ in WEST_REPORT_FIELDS} | {k for k, _ in SOUTH_REPORT_FIELDS}
+    all_keys = ({k for k, _ in WEST_REPORT_FIELDS}
+                | {k for k, _ in SOUTH_REPORT_FIELDS}
+                | {k for k, _ in BIG_METER_FIELDS})
     data = {k: float(getattr(r, k, 0) or 0) for k in all_keys}
     data['id'] = r.id
     data['user_id'] = r.user_id
