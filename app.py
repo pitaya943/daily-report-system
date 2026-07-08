@@ -942,8 +942,10 @@ def login():
         flash('密碼錯誤，請重試', 'danger')
     if login_type == 'admin':
         active_users = User.query.filter_by(is_active=True, role='ADMIN').order_by(User.display_name).all()
-    elif login_type == 'user':
-        active_users = User.query.filter_by(is_active=True, role='USER').order_by(User.display_name).all()
+    elif login_type == 'west':
+        active_users = User.query.filter_by(is_active=True, role='USER', zone=ZONE_WEST).order_by(User.display_name).all()
+    elif login_type == 'south':
+        active_users = User.query.filter_by(is_active=True, role='USER', zone=ZONE_SOUTH).order_by(User.display_name).all()
     else:
         active_users = []
     return render_template('login.html', active_users=active_users, login_type=login_type)

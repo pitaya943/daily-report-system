@@ -41,6 +41,7 @@
     }
     .btn-choose:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.15); }
     .btn-choose-user  { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .btn-choose-south { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
     .btn-choose-admin { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
     .btn-choose i { font-size: 1.5rem; }
     .back-link { font-size: .82rem; text-align: center; margin-top: .75rem; }
@@ -100,11 +101,11 @@
       </div>
     </div>
 
-    {% elif login_type == 'user' %}
-    <!-- ── USER 登入 ── -->
+    {% elif login_type in ('west', 'south') %}
+    <!-- ── USER 登入（西區 or 南區）── -->
     <div class="login-header type-user">
       <i class="bi bi-clipboard-data-fill"></i>
-      <h4>一般用戶登入</h4>
+      <h4>{% if login_type == 'south' %}南區{% else %}西區{% endif %}用戶登入</h4>
       <p>宇丞 — 員工日報回報系統</p>
     </div>
     <div class="login-body">
@@ -115,9 +116,9 @@
         </div>
         {% endfor %}
       {% endwith %}
-      <form method="POST" action="{{ url_for('login', type='user') }}">
+      <form method="POST" action="{{ url_for('login', type=login_type) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="login_type" value="user">
+        <input type="hidden" name="login_type" value="{{ login_type }}">
         <div class="mb-3">
           <label class="form-label fw-semibold">請選擇姓名</label>
           <select name="user_id" id="userSelect" class="form-select" required
@@ -166,11 +167,18 @@
       {% endwith %}
       <p class="text-muted small mb-3 text-center">請選擇登入身份</p>
       <div class="d-flex flex-column gap-3">
-        <a href="{{ url_for('login', type='user') }}" class="btn-choose btn-choose-user">
+        <a href="{{ url_for('login', type='west') }}" class="btn-choose btn-choose-user">
           <i class="bi bi-person-fill"></i>
           <div>
-            <div>一般用戶登入</div>
-            <div style="font-size:.78rem;font-weight:400;opacity:.7">回報工項、查詢個人統計</div>
+            <div>西區用戶登入</div>
+            <div style="font-size:.78rem;font-weight:400;opacity:.7">回報工項、查詢個人統計（西區）</div>
+          </div>
+        </a>
+        <a href="{{ url_for('login', type='south') }}" class="btn-choose btn-choose-south">
+          <i class="bi bi-person-fill"></i>
+          <div>
+            <div>南區用戶登入</div>
+            <div style="font-size:.78rem;font-weight:400;opacity:.7">回報工項、查詢個人統計（南區）</div>
           </div>
         </a>
         <a href="{{ url_for('login', type='admin') }}" class="btn-choose btn-choose-admin">
