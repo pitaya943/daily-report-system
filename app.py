@@ -1898,9 +1898,10 @@ def summary():
         users_dict = {u.id: u for u in all_users}
 
         import json as _sjson
+        import math as _math
         user_totals = {}
 
-        def _summary_accum(tgt_uid, rpt, n):
+        def _summary_accum(tgt_uid, rpt, n, is_submitter):
             u_obj = users_dict.get(tgt_uid)
             if not u_obj:
                 return
@@ -1910,16 +1911,18 @@ def summary():
                     'totals': {k: 0 for k, _ in REPORT_FIELDS}, 'count': 0,
                 }
             for k, _ in REPORT_FIELDS:
-                # 四捨五入為整數，避免統計頁出現小數點
-                user_totals[tgt_uid]['totals'][k] += round(float(getattr(rpt, k, 0) or 0) / n)
+                qty = float(getattr(rpt, k, 0) or 0)
+                # 提交者取 ceil，共作者取 floor，保證各欄加總 = 原始值（無失真）
+                share = _math.ceil(qty / n) if is_submitter else _math.floor(qty / n)
+                user_totals[tgt_uid]['totals'][k] += share
             user_totals[tgt_uid]['count'] += 1
 
         for r in reports:
             _n = r.collab_count or 1
-            _summary_accum(r.user_id, r, _n)
+            _summary_accum(r.user_id, r, _n, True)
             if r.collab_json:
                 for _cuid in _sjson.loads(r.collab_json):
-                    _summary_accum(_cuid, r, _n)
+                    _summary_accum(_cuid, r, _n, False)
 
         grand = {k: sum(d['totals'][k] for d in user_totals.values()) for k, _ in REPORT_FIELDS}
         page = request.args.get('page', 1, type=int)
@@ -2594,7 +2597,7 @@ def _export_salary_pdf(results):
         tdata = [['工項', '只數', '單價(NTD)', '小計(NTD)']]
         for k, label in z_fields:
             tdata.append([label,
-                          str(float(data['totals'].get(k, 0))),
+                          str(round(float(data['totals'].get(k, 0)), 1)),
                           f'{z_prices.get(k, 0):,.0f}',
                           f'{float(data["subtotals"].get(k, 0)):,.0f}'])
         # 小結行
@@ -3154,12 +3157,14 @@ def personal_stats():
             elif stats_confirm == 'unconfirmed':
                 q = q.filter(Report.is_confirmed == False)
             _reports_s = q.all()
+            import math as _math_s
             totals_s = {k: 0 for k, _ in zone_fields}
             for r in _reports_s:
                 _n = r.collab_count or 1
+                _is_sub = (r.user_id == _me_id)
                 for k, _ in zone_fields:
-                    # 四捨五入為整數顯示，薪資保留金仍以整數乘費率計算
-                    totals_s[k] += round(float(getattr(r, k, 0) or 0) / _n)
+                    qty = float(getattr(r, k, 0) or 0)
+                    totals_s[k] += _math_s.ceil(qty / _n) if _is_sub else _math_s.floor(qty / _n)
             period_ret_s = sum(totals_s.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
             totals_result = {'start': stats_start, 'end': stats_end,
                              'confirm_filter': stats_confirm,
