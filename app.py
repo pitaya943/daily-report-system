@@ -34,8 +34,8 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True,
     'pool_recycle': 1800,
-    'pool_size': 3,
-    'max_overflow': 3,
+    'pool_size': 5,
+    'max_overflow': 10,
 }
 
 db.init_app(app)
@@ -1156,20 +1156,53 @@ def settings():
     south_global_rate = float(get_retention_rate_for_zone(ZONE_SOUTH))
     west_global_rate  = float(get_retention_rate())
 
-    # 1 query: 當年全部已確認回報（供 YTD 保留金計算）
+    # ── ADMIN YTD（優化：非共作用 SQL GROUP BY，共作用精確欄位 fetch）───────
     ytd_by_user: dict = {}
     user_ret_rates: dict = {}
     if uid_list:
+        from sqlalchemy import func as _sa_func, or_ as _sa_or
         year_start = date(date.today().year, 1, 1)
-        ytd_reports = (Report.query
-                       .filter(Report.is_confirmed == True,
-                               Report.report_date >= year_start,
-                               Report.report_date <= date.today())
-                       .all())
+        today_d    = date.today()
         users_dict_all = {u.id: u for u in all_users}
+
+        # South 是 West 的超集，用 South 欄位涵蓋兩區
+        _ret_union = SOUTH_RETENTION_FIELDS  # 28 欄
+
+        # Query 1: 非共作回報 → SQL SUM GROUP BY user_id（O(1) vs Python O(n)）
+        _agg_cols = [_sa_func.coalesce(
+                         _sa_func.sum(getattr(Report, f)), 0).label(f)
+                     for f in _ret_union]
+        non_collab_rows = (db.session.query(Report.user_id, *_agg_cols)
+                           .filter(
+                               Report.is_confirmed == True,
+                               Report.report_date >= year_start,
+                               Report.report_date <= today_d,
+                               _sa_or(Report.collab_count.is_(None),
+                                      Report.collab_count <= 1)
+                           )
+                           .group_by(Report.user_id)
+                           .all())
         ytd_totals: dict = {}
-        for r in ytd_reports:
-            _n = float(r.collab_count or 1)
+        for row in non_collab_rows:
+            _u = users_dict_all.get(row.user_id)
+            if not _u:
+                continue
+            _zf = get_zone_retention_fields(_u.zone)
+            ytd_totals[row.user_id] = {f: float(getattr(row, f)) for f in _zf}
+
+        # Query 2: 共作回報（少數）→ 只取保留金欄位 + collab meta
+        _collab_sel = [Report.user_id, Report.collab_count, Report.collab_json,
+                       *[getattr(Report, f).label(f) for f in _ret_union]]
+        collab_rows = (db.session.query(*_collab_sel)
+                       .filter(
+                           Report.is_confirmed == True,
+                           Report.report_date >= year_start,
+                           Report.report_date <= today_d,
+                           Report.collab_count > 1
+                       )
+                       .all())
+        for r in collab_rows:
+            _n = float(r.collab_count)
             for _uid in [r.user_id] + (json.loads(r.collab_json) if r.collab_json else []):
                 _u = users_dict_all.get(_uid)
                 if not _u:
@@ -1178,7 +1211,7 @@ def settings():
                 if _uid not in ytd_totals:
                     ytd_totals[_uid] = {f: 0.0 for f in _zf}
                 for f in _zf:
-                    ytd_totals[_uid][f] = ytd_totals[_uid].get(f, 0.0) + float(getattr(r, f, 0) or 0) / _n
+                    ytd_totals[_uid][f] = ytd_totals[_uid].get(f, 0.0) + float(getattr(r, f) or 0) / _n
 
         # 1 query: 所有帳戶客製費率
         all_custom = (UserRetentionRate.query
@@ -1208,22 +1241,44 @@ def settings():
     my_ret_rates = {}
     my_retention_labeled = RETENTION_FIELDS_LABELED
     if current_user.role != 'ADMIN':
+        from sqlalchemy import func as _sa_func_u, or_ as _sa_or_u
         _my_zone = current_user.zone
         _my_ret_fields = get_zone_retention_fields(_my_zone)
         my_retention_labeled = (SOUTH_RETENTION_FIELDS_LABELED
                                 if _my_zone == ZONE_SOUTH else RETENTION_FIELDS_LABELED)
         year_start = date(date.today().year, 1, 1)
-        my_reports = (Report.query
-                      .filter(Report.user_id == current_user.id,
-                              Report.is_confirmed == True,
-                              Report.report_date >= year_start,
-                              Report.report_date <= date.today())
-                      .all())
-        my_totals = {f: 0.0 for f in _my_ret_fields}
-        for r in my_reports:
-            _n = float(r.collab_count or 1)
+        today_d = date.today()
+
+        # Query 1: 非共作 → SQL SUM（單列結果）
+        _u_agg = [_sa_func_u.coalesce(
+                      _sa_func_u.sum(getattr(Report, f)), 0).label(f)
+                  for f in _my_ret_fields]
+        _nc_row = (db.session.query(*_u_agg)
+                   .filter(
+                       Report.user_id == current_user.id,
+                       Report.is_confirmed == True,
+                       Report.report_date >= year_start,
+                       Report.report_date <= today_d,
+                       _sa_or_u(Report.collab_count.is_(None), Report.collab_count <= 1)
+                   ).one())
+        my_totals = {f: float(getattr(_nc_row, f)) for f in _my_ret_fields}
+
+        # Query 2: 共作（提交者）→ 只取保留金欄位
+        _u_col_sel = [Report.collab_count,
+                      *[getattr(Report, f).label(f) for f in _my_ret_fields]]
+        collab_sub = (db.session.query(*_u_col_sel)
+                      .filter(
+                          Report.user_id == current_user.id,
+                          Report.is_confirmed == True,
+                          Report.report_date >= year_start,
+                          Report.report_date <= today_d,
+                          Report.collab_count > 1
+                      ).all())
+        for r in collab_sub:
+            _n = float(r.collab_count)
             for f in _my_ret_fields:
-                my_totals[f] = my_totals.get(f, 0.0) + float(getattr(r, f, 0) or 0) / _n
+                my_totals[f] += float(getattr(r, f) or 0) / _n
+
         my_custom = {cr.field: float(cr.rate)
                      for cr in UserRetentionRate.query.filter_by(user_id=current_user.id).all()}
         _my_gr = float(get_retention_rate_for_zone(_my_zone))
