@@ -80,19 +80,13 @@
             <td>
               <span class="fw-semibold">{{ submitter.display_name if submitter else '(已刪除)' }}</span>
               {% if submitter and submitter.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}
-              {% if r.collab_count and r.collab_count > 1 and r.collab_json %}
-              <div class="text-muted" style="font-size:.7rem">
-                共作:{% for cid in r.collab_json | from_json %}{% set cu = users_dict.get(cid) %}{% if cu %} {{ cu.display_name }}{% endif %}{% endfor %}
-              </div>
-              {% endif %}
+              {% if r.collab_count and r.collab_count > 1 %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>{% endif %}
             </td>
             {% endif %}
             <td class="text-nowrap">
               {{ r.report_date }}
               {% if is_collab_report %}
               <br><small class="text-primary" style="font-size:.68rem"><i class="bi bi-people me-1"></i>共作({{ submitter.display_name if submitter else '?' }}回報)</small>
-              {% elif r.collab_count and r.collab_count > 1 %}
-              <span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>
               {% endif %}
             </td>
             {% for key, _ in report_fields %}
@@ -164,6 +158,9 @@
       <form id="editForm" method="POST" onsubmit="return confirm('確定儲存修改？')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
+          <div id="editCollabInfo" class="alert alert-info py-2 mb-3 d-none" style="font-size:.85rem">
+            <i class="bi bi-people me-1"></i>共同作業人員：<span id="editCollabNames"></span>
+          </div>
           <div id="editFields" class="row g-3"></div>
         </div>
         <div class="modal-footer">
@@ -186,11 +183,27 @@
 <script>
 const WEST_FIELDS  = {{ west_fields | tojson }};
 const SOUTH_FIELDS = {{ south_fields | tojson }};
+const USERS = {
+  {% for uid, u in users_dict.items() %}{{ uid }}: "{{ u.display_name | e }}"{% if not loop.last %}, {% endif %}{% endfor %}
+};
 
 function getVal(r, k) { return r[k] ?? 0; }
 
 function openEdit(id, r, zone) {
   document.getElementById('editForm').action = `/history/${id}/edit`;
+
+  // Collab info
+  const collabIds = JSON.parse(r.collab_json || '[]');
+  const collabDiv = document.getElementById('editCollabInfo');
+  if (collabIds.length > 0) {
+    document.getElementById('editCollabNames').textContent =
+      collabIds.map(cid => USERS[cid] || '?').join('、');
+    collabDiv.classList.remove('d-none');
+  } else {
+    collabDiv.classList.add('d-none');
+  }
+
+  // Fields
   const fields = zone === '南區' ? SOUTH_FIELDS : WEST_FIELDS;
   const container = document.getElementById('editFields');
   container.innerHTML = '';

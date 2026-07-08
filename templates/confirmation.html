@@ -75,18 +75,9 @@
             <td>
               <span class="fw-semibold">{{ _cu.display_name if _cu else '?' }}</span>
               {% if _cu and _cu.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}
-              {% if r.collab_count and r.collab_count > 1 and r.collab_json %}
-              <div class="text-muted" style="font-size:.7rem">
-                共作:{% for cid in r.collab_json | from_json %}{% set cu2 = users_dict.get(cid) %}{% if cu2 %} {{ cu2.display_name }}{% endif %}{% endfor %}
-              </div>
-              {% endif %}
+              {% if r.collab_count and r.collab_count > 1 %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>{% endif %}
             </td>
-            <td class="text-nowrap">
-              {{ r.report_date }}
-              {% if r.collab_count and r.collab_count > 1 %}
-              <span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>
-              {% endif %}
-            </td>
+            <td class="text-nowrap">{{ r.report_date }}</td>
             {% for key, _ in report_fields %}
             <td class="text-center px-1">{{ r[key] | qty }}</td>
             {% endfor %}
@@ -203,6 +194,9 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        <div id="detailCollabInfo" class="alert alert-info py-2 mb-3 d-none" style="font-size:.85rem">
+          <i class="bi bi-people me-1"></i>共同作業人員：<span id="detailCollabNames"></span>
+        </div>
         <table class="table table-sm table-bordered">
           <thead class="table-secondary">
             <tr><th>工項</th><th class="text-end">只數</th></tr>
@@ -226,12 +220,27 @@
 {% block scripts %}
 <script>
 const CONFIRM_FIELDS = {{ report_fields | tojson }};
+const CONFIRM_USERS = {
+  {% for uid, u in users_dict.items() %}{{ uid }}: "{{ u.display_name | e }}"{% if not loop.last %}, {% endif %}{% endfor %}
+};
 
 function openReportDetail(btn) {
   const data = JSON.parse(btn.dataset.report);
   const username = btn.dataset.username;
   document.getElementById('detailModalTitle').innerHTML =
     '<i class="bi bi-file-text me-2"></i>' + username + '　' + data.report_date + '　#' + data.id;
+
+  // Collab info
+  const collabIds = JSON.parse(data.collab_json || '[]');
+  const collabDiv = document.getElementById('detailCollabInfo');
+  if (collabIds.length > 0) {
+    document.getElementById('detailCollabNames').textContent =
+      collabIds.map(cid => CONFIRM_USERS[cid] || '?').join('、');
+    collabDiv.classList.remove('d-none');
+  } else {
+    collabDiv.classList.add('d-none');
+  }
+
   const tbody = document.getElementById('detailModalBody');
   tbody.innerHTML = '';
   let total = 0;
