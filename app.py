@@ -1288,6 +1288,23 @@ def settings():
             for f in _my_ret_fields:
                 my_totals[f] += float(getattr(r, f) or 0) / _n
 
+        # Query 3: 共作（成員）→ 此 USER 在 collab_json 中但非提交者
+        from sqlalchemy import text as _sa_t_ret
+        _me_int = int(current_user.id)
+        collab_mem = (db.session.query(Report.collab_count,
+                                       *[getattr(Report, f).label(f) for f in _my_ret_fields])
+                      .filter(
+                          _sa_t_ret(f"collab_json::jsonb @> '[{_me_int}]'"),
+                          Report.is_confirmed == True,
+                          Report.report_date >= year_start,
+                          Report.report_date <= today_d,
+                          Report.collab_count > 1
+                      ).all())
+        for r in collab_mem:
+            _n = float(r.collab_count)
+            for f in _my_ret_fields:
+                my_totals[f] += float(getattr(r, f) or 0) / _n
+
         my_custom = {cr.field: float(cr.rate)
                      for cr in UserRetentionRate.query.filter_by(user_id=current_user.id).all()}
         _my_gr = float(get_retention_rate_for_zone(_my_zone))
@@ -3288,14 +3305,11 @@ def personal_stats():
             elif stats_confirm == 'unconfirmed':
                 q = q.filter(Report.is_confirmed == False)
             _reports_s = q.all()
-            import math as _math_s
-            totals_s = {k: 0 for k, _ in zone_fields}
+            totals_s = {k: 0.0 for k, _ in zone_fields}
             for r in _reports_s:
-                _n = r.collab_count or 1
-                _is_sub = (r.user_id == _me_id)
+                _n = float(r.collab_count or 1)
                 for k, _ in zone_fields:
-                    qty = float(getattr(r, k, 0) or 0)
-                    totals_s[k] += _math_s.ceil(qty / _n) if _is_sub else _math_s.floor(qty / _n)
+                    totals_s[k] += float(getattr(r, k, 0) or 0) / _n
             period_ret_s = sum(totals_s.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
             totals_result = {'start': stats_start, 'end': stats_end,
                              'confirm_filter': stats_confirm,
