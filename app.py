@@ -1031,7 +1031,11 @@ def history():
             _sa_t(f"collab_json::jsonb @> '[{_uid}]'")
         ))
     elif selected_user_id:
-        q = q.filter_by(user_id=int(selected_user_id))
+        _sid = int(selected_user_id)
+        q = q.filter(or_(
+            Report.user_id == _sid,
+            _sa_t(f"collab_json::jsonb @> '[{_sid}]'")
+        ))
 
     # Zone filter (ADMIN only — filter by submitter's zone)
     if current_user.role == 'ADMIN' and selected_zone in (ZONE_WEST, ZONE_SOUTH):

@@ -86,7 +86,7 @@
             <td class="text-nowrap">
               {{ r.report_date }}
               {% if is_collab_report %}
-              <br><small class="text-primary" style="font-size:.68rem"><i class="bi bi-people me-1"></i>共作({{ submitter.display_name if submitter else '?' }}回報)</small>
+              <br><small class="text-primary" style="font-size:.68rem"><i class="bi bi-people me-1"></i>共作-{{ r.collab_count }}({{ submitter.display_name if submitter else '?' }}回報)</small>
               {% endif %}
             </td>
             {% for key, _ in report_fields %}
