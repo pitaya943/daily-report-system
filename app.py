@@ -2042,7 +2042,12 @@ def summary():
             Report.report_date <= date.fromisoformat(end_date)
         )
         if selected_user_id:
-            q = q.filter_by(user_id=int(selected_user_id))
+            _sid_sum = int(selected_user_id)
+            from sqlalchemy import or_, text as _sa_t_sum
+            q = q.filter(or_(
+                Report.user_id == _sid_sum,
+                _sa_t_sum(f"collab_json::jsonb @> '[{_sid_sum}]'")
+            ))
         elif selected_zone in (ZONE_WEST, ZONE_SOUTH):
             _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone).scalar_subquery()
             q = q.filter(Report.user_id.in_(_zone_ids))
@@ -2073,10 +2078,14 @@ def summary():
 
         for r in reports:
             _n = float(r.collab_count or 1)
-            _summary_accum(r.user_id, r, _n)
-            if r.collab_json:
-                for _cuid in json.loads(r.collab_json):
-                    _summary_accum(_cuid, r, _n)
+            if selected_user_id:
+                # Single-user view: only accumulate the selected user's share
+                _summary_accum(int(selected_user_id), r, _n)
+            else:
+                _summary_accum(r.user_id, r, _n)
+                if r.collab_json:
+                    for _cuid in json.loads(r.collab_json):
+                        _summary_accum(_cuid, r, _n)
 
         west_grand  = {k: sum(d['totals'].get(k, 0) for d in user_totals.values() if d['zone'] == ZONE_WEST)  for k, _ in WEST_REPORT_FIELDS}
         south_grand = {k: sum(d['totals'].get(k, 0) for d in user_totals.values() if d['zone'] == ZONE_SOUTH) for k, _ in SOUTH_REPORT_FIELDS}
