@@ -267,7 +267,8 @@ def _init_db():
         pass
     # Seed / correct default SystemConfig entries
     try:
-        for _key, _default in [('retention_rate', '20'), ('tax_rate', '3')]:
+        for _key, _default in [('retention_rate', '20'), ('tax_rate', '3'),
+                                ('retention_rate_south', '20'), ('tax_rate_south', '3')]:
             cfg = db.session.get(SystemConfig, _key)
             if not cfg:
                 db.session.add(SystemConfig(key=_key, value=_default))
@@ -456,14 +457,41 @@ def money_filter(value):
         return str(value)
 
 
+@app.template_filter('from_json')
+def from_json_filter(s):
+    import json
+    if not s:
+        return []
+    try:
+        return json.loads(s)
+    except (ValueError, TypeError):
+        return []
+
+
+@app.template_filter('qty')
+def qty_filter(value):
+    """Display work-item quantity: empty for 0, integer if whole, else 1 decimal."""
+    if not value:
+        return ''
+    try:
+        v = float(value)
+        if v == 0:
+            return ''
+        return str(int(v)) if v == int(v) else f'{v:.1f}'
+    except (TypeError, ValueError):
+        return ''
+
+
 @app.template_filter('report_json')
 def report_json_filter(r):
     import json
     all_keys = {k for k, _ in WEST_REPORT_FIELDS} | {k for k, _ in SOUTH_REPORT_FIELDS}
     data = {k: float(getattr(r, k, 0) or 0) for k in all_keys}
     data['id'] = r.id
+    data['user_id'] = r.user_id
     data['report_date'] = str(r.report_date)
     data['collab_count'] = r.collab_count or 1
+    data['collab_json'] = r.collab_json or '[]'
     return json.dumps(data, ensure_ascii=False)
 
 login_manager = LoginManager(app)
@@ -651,6 +679,24 @@ def get_tax_rate() -> float:
     """未在公司保勞健者適用的稅務支出比率（%），預設 3"""
     cfg = db.session.get(SystemConfig, 'tax_rate')
     return float(cfg.value) if cfg else 3.0
+
+
+def get_retention_rate_for_zone(zone: str) -> float:
+    """南區有獨立設定時回傳南區費率，否則 fallback 至西區全域費率。"""
+    if zone == ZONE_SOUTH:
+        cfg = db.session.get(SystemConfig, 'retention_rate_south')
+        if cfg:
+            return float(cfg.value)
+    return get_retention_rate()
+
+
+def get_tax_rate_for_zone(zone: str) -> float:
+    """南區有獨立設定時回傳南區稅率，否則 fallback 至西區全域稅率。"""
+    if zone == ZONE_SOUTH:
+        cfg = db.session.get(SystemConfig, 'tax_rate_south')
+        if cfg:
+            return float(cfg.value)
+    return get_tax_rate()
 
 
 _price_cache_west: dict = {}
@@ -939,15 +985,27 @@ def api_collab_users():
 @app.route('/history')
 @login_required
 def history():
+    from sqlalchemy import or_, text as _sa_t
     start_date = request.args.get('start_date', '')
     end_date = request.args.get('end_date', '')
     selected_user_id = request.args.get('user_id', '')
+    selected_zone = request.args.get('zone', '')
 
     q = Report.query
     if current_user.role == 'USER':
-        q = q.filter_by(user_id=current_user.id)
+        # Include own reports AND collab reports where this user is a collaborator
+        _uid = int(current_user.id)
+        q = q.filter(or_(
+            Report.user_id == _uid,
+            _sa_t(f"collab_json::jsonb @> '[{_uid}]'")
+        ))
     elif selected_user_id:
         q = q.filter_by(user_id=int(selected_user_id))
+
+    # Zone filter (ADMIN only — filter by submitter's zone)
+    if current_user.role == 'ADMIN' and selected_zone in (ZONE_WEST, ZONE_SOUTH):
+        _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone).scalar_subquery()
+        q = q.filter(Report.user_id.in_(_zone_ids))
 
     if start_date:
         q = q.filter(Report.report_date >= date.fromisoformat(start_date))
@@ -962,15 +1020,22 @@ def history():
     all_users = _all_users_list if current_user.role == 'ADMIN' else []
     url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
+    # USER sees their zone's fields; ADMIN sees all using west+south combined for detail modal
+    report_fields = (get_zone_fields(current_user.zone)
+                     if current_user.role == 'USER' else REPORT_FIELDS)
+
     return render_template('history.html',
                            reports=pagination.items,
                            pagination=pagination,
                            users_dict=users_dict,
                            all_users=all_users,
-                           report_fields=REPORT_FIELDS,
+                           report_fields=report_fields,
+                           west_fields=WEST_REPORT_FIELDS,
+                           south_fields=SOUTH_REPORT_FIELDS,
                            start_date=start_date,
                            end_date=end_date,
                            selected_user_id=selected_user_id,
+                           selected_zone=selected_zone,
                            url_args=url_args)
 
 
@@ -1048,6 +1113,8 @@ def settings():
 
     # ── 3 queries total ───────────────────────────────────────────────
     global_rate = int(get_retention_rate())
+    south_global_rate = float(get_retention_rate_for_zone(ZONE_SOUTH))
+    west_global_rate  = float(get_retention_rate())
 
     # 1 query: 當年全部已確認回報（供 YTD 保留金計算）
     ytd_by_user: dict = {}
@@ -1084,7 +1151,8 @@ def settings():
         for u in all_users:
             custom = custom_map.get(u.id, {})
             z_ret_fields = get_zone_retention_fields(u.zone)
-            user_rates = {f: float(custom.get(f, global_rate)) for f in z_ret_fields}
+            _zone_gr = south_global_rate if u.zone == ZONE_SOUTH else west_global_rate
+            user_rates = {f: float(custom.get(f, _zone_gr)) for f in z_ret_fields}
             user_ret_rates[u.id] = {
                 'rates': {f: int(v) for f, v in user_rates.items()},
                 'is_custom': bool(custom),
@@ -1119,7 +1187,8 @@ def settings():
                 my_totals[f] = my_totals.get(f, 0.0) + float(getattr(r, f, 0) or 0) / _n
         my_custom = {cr.field: float(cr.rate)
                      for cr in UserRetentionRate.query.filter_by(user_id=current_user.id).all()}
-        my_rates = {f: float(my_custom.get(f, global_rate)) for f in _my_ret_fields}
+        _my_gr = float(get_retention_rate_for_zone(_my_zone))
+        my_rates = {f: float(my_custom.get(f, _my_gr)) for f in _my_ret_fields}
         my_ret_rates = my_rates
         calculated = sum(my_totals.get(f, 0.0) * my_rates[f] for f in _my_ret_fields)
         my_ytd = min(float(RETENTION_CAP),
@@ -1130,7 +1199,9 @@ def settings():
 
     return render_template('settings.html', all_users=all_users,
                            retention_rate=global_rate,
+                           retention_rate_south=int(get_retention_rate_for_zone(ZONE_SOUTH)),
                            tax_rate=get_tax_rate(),
+                           tax_rate_south=int(get_tax_rate_for_zone(ZONE_SOUTH)),
                            ytd_by_user=ytd_by_user,
                            user_ret_rates=user_ret_rates,
                            west_ret_labeled=RETENTION_FIELDS_LABELED,
@@ -1377,6 +1448,45 @@ def settings_retention_rate():
               f'更新保留金費率：{rate} NTD/只')
     db.session.commit()
     flash(f'保留金費率已更新為 {rate} NTD/只', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/retention-rate-south', methods=['POST'])
+@admin_required
+def settings_retention_rate_south():
+    try:
+        rate = max(0, int(request.form.get('rate', 20)))
+    except (ValueError, TypeError):
+        flash('請輸入有效的整數', 'danger')
+        return redirect(url_for('settings'))
+    cfg = db.session.get(SystemConfig, 'retention_rate_south')
+    if cfg:
+        cfg.value = str(rate)
+    else:
+        db.session.add(SystemConfig(key='retention_rate_south', value=str(rate)))
+    add_audit(current_user.id, 'SYSTEM_CONFIG', f'更新南區保留金費率：{rate} NTD/只')
+    db.session.commit()
+    flash(f'南區保留金費率已更新為 {rate} NTD/只', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/tax-rate-south', methods=['POST'])
+@admin_required
+def settings_tax_rate_south():
+    try:
+        rate_str = request.form.get('rate', '').strip()
+        rate = max(0, min(100, int(float(rate_str))))
+    except (ValueError, TypeError):
+        flash('請輸入有效的數值', 'danger')
+        return redirect(url_for('settings'))
+    cfg = db.session.get(SystemConfig, 'tax_rate_south')
+    if cfg:
+        cfg.value = str(rate)
+    else:
+        db.session.add(SystemConfig(key='tax_rate_south', value=str(rate)))
+    add_audit(current_user.id, 'SYSTEM_CONFIG', f'更新南區稅務支出費率：{rate}%')
+    db.session.commit()
+    flash(f'南區稅務支出費率已更新為 {rate}%', 'success')
     return redirect(url_for('settings'))
 
 
@@ -1758,6 +1868,7 @@ def summary():
     start_date = request.args.get('start_date', '')
     end_date = request.args.get('end_date', '')
     selected_user_id = request.args.get('user_id', '')
+    selected_zone = request.args.get('zone', '')
     confirm_filter = request.args.get('confirm_filter', 'all')
     selected_fields = request.args.getlist('fields') or [k for k, _ in REPORT_FIELDS]
 
@@ -1771,6 +1882,9 @@ def summary():
         )
         if selected_user_id:
             q = q.filter_by(user_id=int(selected_user_id))
+        elif selected_zone in (ZONE_WEST, ZONE_SOUTH):
+            _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone).scalar_subquery()
+            q = q.filter(Report.user_id.in_(_zone_ids))
         if confirm_filter == 'confirmed':
             q = q.filter_by(is_confirmed=True)
         elif confirm_filter == 'unconfirmed':
@@ -1813,6 +1927,7 @@ def summary():
                            start_date=start_date,
                            end_date=end_date,
                            selected_user_id=selected_user_id,
+                           selected_zone=selected_zone,
                            confirm_filter=confirm_filter,
                            url_args=url_args)
 
@@ -1839,11 +1954,17 @@ def confirmation():
         filter_start  = sd.isoformat()
         filter_end    = ed.isoformat()
 
-    pending_pagination = (Report.query
-                          .filter(Report.is_confirmed == False,
-                                  Report.is_rejected  == False,
-                                  Report.report_date  >= sd,
-                                  Report.report_date  <= ed)
+    selected_zone = request.args.get('zone', '')
+    pending_q = Report.query.filter(
+        Report.is_confirmed == False,
+        Report.is_rejected  == False,
+        Report.report_date  >= sd,
+        Report.report_date  <= ed
+    )
+    if selected_zone in (ZONE_WEST, ZONE_SOUTH):
+        _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone).scalar_subquery()
+        pending_q = pending_q.filter(Report.user_id.in_(_zone_ids))
+    pending_pagination = (pending_q
                           .order_by(Report.report_date.asc(), Report.id.asc())
                           .paginate(page=page, per_page=20, error_out=False))
     mat_page = request.args.get('mat_page', 1, type=int)
@@ -1864,7 +1985,8 @@ def confirmation():
                            report_fields=REPORT_FIELDS,
                            url_args=url_args,
                            filter_start=filter_start,
-                           filter_end=filter_end)
+                           filter_end=filter_end,
+                           selected_zone=selected_zone)
 
 
 @app.route('/confirmation/report/<int:report_id>/confirm', methods=['POST'])
@@ -2122,14 +2244,18 @@ def salary():
                         'totals':         {k: 0.0 for k, _ in get_zone_fields(zone)},
                     }
 
-            tax_rate = get_tax_rate()
-            batch_rates = get_users_all_retention_rates(list(user_data.keys()), users_dict)
+            _west_tax    = get_tax_rate()
+            _south_tax   = get_tax_rate_for_zone(ZONE_SOUTH)
+            _west_gr     = get_retention_rate()
+            _south_gr    = get_retention_rate_for_zone(ZONE_SOUTH)
+            batch_rates  = get_users_all_retention_rates(list(user_data.keys()), users_dict)
             for uid, data in user_data.items():
                 zone = data['zone']
-                prices = south_prices if zone == ZONE_SOUTH else west_prices
-                zone_fields   = get_zone_fields(zone)
-                ret_fields    = get_zone_retention_fields(zone)
-                global_rate   = get_retention_rate()
+                prices      = south_prices if zone == ZONE_SOUTH else west_prices
+                zone_fields = get_zone_fields(zone)
+                ret_fields  = get_zone_retention_fields(zone)
+                global_rate = _south_gr if zone == ZONE_SOUTH else _west_gr
+                zone_tax    = _south_tax if zone == ZONE_SOUTH else _west_tax
 
                 subtotals = {k: float(data['totals'].get(k, 0)) * prices.get(k, 0) for k, _ in zone_fields}
                 data['subtotals']    = subtotals
@@ -2158,7 +2284,7 @@ def salary():
                 fixed = (u.fixed_salary if u else 0) if is_10th_payday else 0
                 data['fixed_salary'] = fixed
                 not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt) if u else True
-                data['tax_deduction'] = round(data['gross_salary'] * tax_rate / 100) if not_enrolled else 0
+                data['tax_deduction'] = round(data['gross_salary'] * zone_tax / 100) if not_enrolled else 0
                 data['final_salary']  = data['net_salary'] + fixed - ins - data['tax_deduction']
 
             grand_gross = sum(d['gross_salary'] for d in user_data.values())
@@ -2186,7 +2312,7 @@ def salary():
                               'grand_insurance': grand_insurance,
                               'grand_fixed': grand_fixed,
                               'grand_tax': grand_tax,
-                              'tax_rate': tax_rate,
+                              'tax_rate': _west_tax,
                               'transfer_total': transfer_total,
                               'cash_total': cash_total,
                               'cash_bills': cash_bills,
@@ -3000,17 +3126,20 @@ def personal_stats():
             my_ret_rates[f] = global_rate
 
     # ── 工項總和查詢：只要日期有填就計算（不依賴 action）──────────────────
+    from sqlalchemy import or_, text as _sa_t2
+    _me_id = int(current_user.id)
     if stats_start and stats_end:
         try:
             q = Report.query.filter(
-                Report.user_id == current_user.id,
+                or_(Report.user_id == _me_id,
+                    _sa_t2(f"collab_json::jsonb @> '[{_me_id}]'")),
                 Report.report_date >= date.fromisoformat(stats_start),
                 Report.report_date <= date.fromisoformat(stats_end)
             )
             if stats_confirm == 'confirmed':
-                q = q.filter_by(is_confirmed=True)
+                q = q.filter(Report.is_confirmed == True)
             elif stats_confirm == 'unconfirmed':
-                q = q.filter_by(is_confirmed=False)
+                q = q.filter(Report.is_confirmed == False)
             _reports_s = q.all()
             totals_s = {k: 0.0 for k, _ in zone_fields}
             for r in _reports_s:
@@ -3033,7 +3162,8 @@ def personal_stats():
             sd_ps  = date.fromisoformat(salary_start)
             ed_ps  = date.fromisoformat(salary_end)
             _reports_p = Report.query.filter(
-                Report.user_id == current_user.id,
+                or_(Report.user_id == _me_id,
+                    _sa_t2(f"collab_json::jsonb @> '[{_me_id}]'")),
                 Report.is_confirmed == True,
                 Report.report_date >= sd_ps,
                 Report.report_date <= ed_ps
@@ -3048,7 +3178,8 @@ def personal_stats():
 
             year_start  = date(sd_ps.year, 1, 1)
             pre_reports = Report.query.filter(
-                Report.user_id == current_user.id,
+                or_(Report.user_id == _me_id,
+                    _sa_t2(f"collab_json::jsonb @> '[{_me_id}]'")),
                 Report.is_confirmed == True,
                 Report.report_date >= year_start,
                 Report.report_date < sd_ps
@@ -3061,7 +3192,7 @@ def personal_stats():
 
             ins_amount   = current_user.insurance_deduction if deduct_ins_checked else 0
             not_enrolled = (current_user.insurance_deduction == 0 and not current_user.tax_exempt)
-            tax_rate_val = get_tax_rate()
+            tax_rate_val = get_tax_rate_for_zone(zone)
             tax_amount   = round(grand_total * tax_rate_val / 100) if (not_enrolled and deduct_ins_checked) else 0
             salary_result = {'start': salary_start, 'end': salary_end,
                              'totals': totals_p, 'prices': prices,

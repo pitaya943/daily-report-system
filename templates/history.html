@@ -9,7 +9,7 @@
   <div class="card-body py-3">
     <form method="GET" class="row g-2 align-items-end">
       {% if current_user.role == 'ADMIN' %}
-      <div class="col-md-3">
+      <div class="col-6 col-md-2">
         <label class="form-label small mb-1">帳戶</label>
         <select name="user_id" class="form-select form-select-sm">
           <option value="">全部帳戶</option>
@@ -20,21 +20,25 @@
           {% endfor %}
         </select>
       </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-1">區域</label>
+        <select name="zone" class="form-select form-select-sm">
+          <option value="">全部區域</option>
+          <option value="西區" {% if selected_zone == '西區' %}selected{% endif %}>西區</option>
+          <option value="南區" {% if selected_zone == '南區' %}selected{% endif %}>南區</option>
+        </select>
+      </div>
       {% endif %}
-      <div class="col-md-3">
+      <div class="col-6 col-md-2">
         <label class="form-label small mb-1">開始日期</label>
-        <input type="date" name="start_date" class="form-control form-control-sm"
-               value="{{ start_date }}">
+        <input type="date" name="start_date" class="form-control form-control-sm" value="{{ start_date }}">
       </div>
-      <div class="col-md-3">
+      <div class="col-6 col-md-2">
         <label class="form-label small mb-1">結束日期</label>
-        <input type="date" name="end_date" class="form-control form-control-sm"
-               value="{{ end_date }}">
+        <input type="date" name="end_date" class="form-control form-control-sm" value="{{ end_date }}">
       </div>
-      <div class="col-md-auto">
-        <button type="submit" class="btn btn-primary btn-sm">
-          <i class="bi bi-search me-1"></i>查詢
-        </button>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search me-1"></i>查詢</button>
         <a href="{{ url_for('history') }}" class="btn btn-outline-secondary btn-sm ms-1">清除</a>
       </div>
     </form>
@@ -52,38 +56,47 @@
   <div class="card-body p-0">
     <div class="table-responsive">
       <table class="table table-hover table-sm mb-0 align-middle" style="font-size:.8rem">
-        <thead>
+        <thead class="table-light">
           <tr class="align-bottom">
-            <th class="text-nowrap" style="min-width:28px">#</th>
-            {% if current_user.role == 'ADMIN' %}<th class="text-nowrap" style="min-width:72px">帳戶</th>{% endif %}
-            <th class="text-nowrap" style="min-width:80px">日期</th>
+            <th style="min-width:32px">#</th>
+            {% if current_user.role == 'ADMIN' %}
+            <th style="min-width:90px">帳戶</th>
+            {% endif %}
+            <th style="min-width:82px">日期</th>
             {% for key, label in report_fields %}
-            <th class="text-center p-0" style="min-width:28px; width:28px" title="{{ label }}">
-              <div style="writing-mode:vertical-lr;transform:rotate(180deg);white-space:nowrap;font-size:.65rem;padding:4px 2px">{{ label }}</div>
-            </th>
+            <th class="text-center" style="min-width:42px; max-width:52px; font-size:.68rem; word-break:break-all; line-height:1.2; padding:3px 2px" title="{{ label }}">{{ label }}</th>
             {% endfor %}
-            <th class="text-center text-nowrap" style="min-width:68px">狀態</th>
-            <th class="text-center text-nowrap" style="min-width:72px">操作</th>
+            <th class="text-center" style="min-width:60px">狀態</th>
+            <th class="text-center" style="min-width:70px">操作</th>
           </tr>
         </thead>
         <tbody>
           {% for r in reports %}
-          <tr>
+          {% set is_collab_report = (current_user.role == 'USER' and r.user_id != current_user.id) %}
+          {% set submitter = users_dict.get(r.user_id) %}
+          <tr {% if is_collab_report %}class="table-info bg-opacity-25"{% endif %}>
             <td class="text-muted">{{ r.id }}</td>
             {% if current_user.role == 'ADMIN' %}
-            <td class="text-nowrap">
-              {% set u = users_dict.get(r.user_id) %}
-              {{ u.display_name if u else '(已刪除)' }}
-              {% if u and u.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}
+            <td>
+              <span class="fw-semibold">{{ submitter.display_name if submitter else '(已刪除)' }}</span>
+              {% if submitter and submitter.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}
+              {% if r.collab_count and r.collab_count > 1 and r.collab_json %}
+              <div class="text-muted" style="font-size:.7rem">
+                共作:{% for cid in r.collab_json | from_json %}{% set cu = users_dict.get(cid) %}{% if cu %} {{ cu.display_name }}{% endif %}{% endfor %}
+              </div>
+              {% endif %}
             </td>
             {% endif %}
-            <td class="text-nowrap">{{ r.report_date }}
-              {% if r.collab_count and r.collab_count > 1 %}
-                <span class="badge bg-secondary ms-1" style="font-size:.6rem" title="共同作業">共{{ r.collab_count }}人</span>
+            <td class="text-nowrap">
+              {{ r.report_date }}
+              {% if is_collab_report %}
+              <br><small class="text-primary" style="font-size:.68rem"><i class="bi bi-people me-1"></i>共作({{ submitter.display_name if submitter else '?' }}回報)</small>
+              {% elif r.collab_count and r.collab_count > 1 %}
+              <span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>
               {% endif %}
             </td>
             {% for key, _ in report_fields %}
-            <td class="text-center px-0">{{ r[key] if r[key] else '' }}</td>
+            <td class="text-center px-1">{{ r[key] | qty }}</td>
             {% endfor %}
             <td class="text-center">
               {% if r.is_confirmed %}
@@ -94,28 +107,37 @@
               <span class="badge bg-secondary">未確認</span>
               {% endif %}
             </td>
-            <td class="text-center">
-              {% if r.is_confirmed and current_user.role != 'ADMIN' %}
-              <button class="btn btn-outline-secondary btn-sm py-0 px-2"
-                      disabled title="已確認的回報無法修改">
+            <td class="text-center text-nowrap">
+              {% if is_collab_report %}
+              <button class="btn btn-outline-secondary btn-sm py-0 px-2" disabled title="共同作業回報，無法修改">
                 <i class="bi bi-pencil"></i>
               </button>
-              {% else %}
-              <button class="btn btn-outline-primary btn-sm py-0 px-2"
-                      onclick="openEdit({{ r.id }}, {{ r | report_json }})">
-                <i class="bi bi-pencil"></i>
-              </button>
-              {% endif %}
-              {% if not r.is_confirmed or current_user.role == 'ADMIN' %}
-              <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
-                      onclick="confirmDelete({{ r.id }}, '{{ r.report_date }}')">
+              <button class="btn btn-outline-secondary btn-sm py-0 px-2 ms-1" disabled title="共同作業回報，無法刪除">
                 <i class="bi bi-trash"></i>
               </button>
               {% else %}
-              <button class="btn btn-outline-secondary btn-sm py-0 px-2 ms-1"
-                      disabled title="已確認的回報只能由管理員刪除">
-                <i class="bi bi-trash"></i>
-              </button>
+                {% if r.is_confirmed and current_user.role != 'ADMIN' %}
+                <button class="btn btn-outline-secondary btn-sm py-0 px-2" disabled title="已確認的回報無法修改">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                {% else %}
+                {% set _rzone = submitter.zone if submitter else '西區' %}
+                <button class="btn btn-outline-primary btn-sm py-0 px-2"
+                        onclick="openEdit({{ r.id }}, {{ r | report_json }}, '{{ _rzone }}')">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                {% endif %}
+                {% if not r.is_confirmed or current_user.role == 'ADMIN' %}
+                <button class="btn btn-outline-danger btn-sm py-0 px-2 ms-1"
+                        onclick="confirmDelete({{ r.id }}, '{{ r.report_date }}')">
+                  <i class="bi bi-trash"></i>
+                </button>
+                {% else %}
+                <button class="btn btn-outline-secondary btn-sm py-0 px-2 ms-1"
+                        disabled title="已確認的回報只能由管理員刪除">
+                  <i class="bi bi-trash"></i>
+                </button>
+                {% endif %}
               {% endif %}
             </td>
           </tr>
@@ -139,8 +161,7 @@
         <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>修改回報</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <form id="editForm" method="POST"
-            onsubmit="return confirm('確定儲存修改？')">
+      <form id="editForm" method="POST" onsubmit="return confirm('確定儲存修改？')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <div id="editFields" class="row g-3"></div>
@@ -163,22 +184,22 @@
 
 {% block scripts %}
 <script>
-const FIELDS = {{ report_fields | tojson }};
+const WEST_FIELDS  = {{ west_fields | tojson }};
+const SOUTH_FIELDS = {{ south_fields | tojson }};
 
-function getVal(r, k) {
-  return r[k] ?? 0;
-}
+function getVal(r, k) { return r[k] ?? 0; }
 
-function openEdit(id, r) {
+function openEdit(id, r, zone) {
   document.getElementById('editForm').action = `/history/${id}/edit`;
+  const fields = zone === '南區' ? SOUTH_FIELDS : WEST_FIELDS;
   const container = document.getElementById('editFields');
   container.innerHTML = '';
-  FIELDS.forEach(([k, label]) => {
+  fields.forEach(([k, label]) => {
     container.innerHTML += `
       <div class="col-6 col-md-3">
         <label class="form-label small text-muted">${label}</label>
         <input type="number" class="form-control form-control-sm"
-               name="${k}" value="${getVal(r, k)}" min="0">
+               name="${k}" value="${getVal(r, k)}" min="0" step="0.1">
       </div>`;
   });
   new bootstrap.Modal(document.getElementById('editModal')).show();

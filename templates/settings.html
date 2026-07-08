@@ -310,7 +310,7 @@
         <p class="small mb-1">帳戶：<strong id="retRatesUsername"></strong></p>
         <p class="small text-muted mb-3">
           設定此帳戶各工項的保留金費率（NTD/只）。<br>
-          設為 <strong>0</strong> 表示該工項不扣除保留金。未自訂時使用全域費率（目前：<strong>{{ retention_rate }} NTD/只</strong>）。
+          設為 <strong>0</strong> 表示該工項不扣除保留金。未自訂時使用全域費率（目前：<strong id="retRatesGlobalRate">— NTD/只</strong>）。
         </p>
         <form id="retRatesForm" method="POST">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -327,7 +327,7 @@
       </div>
       <div class="modal-footer justify-content-between">
         <form id="retRatesResetForm" method="POST"
-              onsubmit="return confirm('確定將此帳戶所有保留金費率重置為全域費率（{{ retention_rate }} NTD/只）？')">
+              onsubmit="return confirmRetRatesReset()">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="reset">
           <button type="submit" class="btn btn-outline-secondary btn-sm">
@@ -346,14 +346,15 @@
   </div>
 </div>
 
-<!-- Retention Rate Card -->
+<!-- West Zone Retention Rate Card -->
 <div class="card mt-4">
   <div class="card-header bg-warning bg-opacity-25 border-warning">
     <i class="bi bi-piggy-bank me-1"></i>保留金費率設定
+    <span class="badge bg-info text-dark ms-1">西區</span>
   </div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('settings_retention_rate') }}"
-          onsubmit="return confirm('確定更新保留金費率？此變更影響後續所有保留金計算。')">
+          onsubmit="return confirm('確定更新西區保留金費率？此變更影響後續所有西區保留金計算。')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="d-flex align-items-center gap-3">
         <div>
@@ -375,14 +376,45 @@
   </div>
 </div>
 
-<!-- Tax Rate Card -->
+<!-- South Zone Retention Rate Card -->
+<div class="card mt-3">
+  <div class="card-header bg-warning bg-opacity-25 border-warning">
+    <i class="bi bi-piggy-bank me-1"></i>保留金費率設定
+    <span class="badge bg-warning text-dark ms-1">南區</span>
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('settings_retention_rate_south') }}"
+          onsubmit="return confirm('確定更新南區保留金費率？此變更影響後續所有南區保留金計算。')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="d-flex align-items-center gap-3">
+        <div>
+          <label class="form-label mb-1 small">每只抽取金額（適用南區 28 個工項欄位）</label>
+          <div class="input-group" style="max-width:220px">
+            <input type="number" name="rate" class="form-control"
+                   value="{{ retention_rate_south }}" min="0" step="1" required>
+            <span class="input-group-text">NTD / 只</span>
+          </div>
+        </div>
+        <div class="mt-3">
+          <button type="submit" class="btn btn-warning btn-sm">
+            <i class="bi bi-check-lg me-1"></i>儲存費率
+          </button>
+        </div>
+      </div>
+      <div class="form-text mt-1">目前費率：<strong>{{ retention_rate_south }} NTD/只</strong></div>
+    </form>
+  </div>
+</div>
+
+<!-- West Zone Tax Rate Card -->
 <div class="card mt-3">
   <div class="card-header bg-danger bg-opacity-10 border-danger">
     <i class="bi bi-receipt me-1"></i>稅務支出費率設定（未投保勞健者適用）
+    <span class="badge bg-info text-dark ms-1">西區</span>
   </div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('settings_tax_rate') }}"
-          onsubmit="return confirm('確定更新稅務支出費率？')">
+          onsubmit="return confirm('確定更新西區稅務支出費率？')">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="d-flex align-items-center gap-3">
         <div>
@@ -400,6 +432,36 @@
         </div>
       </div>
       <div class="form-text mt-1">目前費率：<strong>{{ tax_rate }}%</strong>（四捨五入成整數）</div>
+    </form>
+  </div>
+</div>
+
+<!-- South Zone Tax Rate Card -->
+<div class="card mt-3">
+  <div class="card-header bg-danger bg-opacity-10 border-danger">
+    <i class="bi bi-receipt me-1"></i>稅務支出費率設定（未投保勞健者適用）
+    <span class="badge bg-warning text-dark ms-1">南區</span>
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('settings_tax_rate_south') }}"
+          onsubmit="return confirm('確定更新南區稅務支出費率？')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="d-flex align-items-center gap-3">
+        <div>
+          <label class="form-label mb-1 small">未在公司保勞健的員工，計薪時依計薪小計扣除此百分比</label>
+          <div class="input-group" style="max-width:180px">
+            <input type="number" name="rate" class="form-control"
+                   value="{{ tax_rate_south }}" min="0" max="100" step="0.1" required>
+            <span class="input-group-text">%</span>
+          </div>
+        </div>
+        <div class="mt-3">
+          <button type="submit" class="btn btn-danger btn-sm">
+            <i class="bi bi-check-lg me-1"></i>儲存費率
+          </button>
+        </div>
+      </div>
+      <div class="form-text mt-1">目前費率：<strong>{{ tax_rate_south }}%</strong>（四捨五入成整數）</div>
     </form>
   </div>
 </div>
@@ -886,6 +948,8 @@ const WEST_RET_FIELDS = {{ west_ret_labeled | tojson }};
 const SOUTH_RET_FIELDS = {{ south_ret_labeled | tojson }};
 const USER_RET_RATES = {{ user_ret_rates | tojson }};
 const GLOBAL_RATE = {{ retention_rate }};
+const SOUTH_GLOBAL_RATE = {{ retention_rate_south }};
+let _currentGlobalRate = GLOBAL_RATE;
 
 function validateResetPwd() {
   var pw = document.getElementById('resetPwdNew').value;
@@ -939,17 +1003,22 @@ function submitBankAccount() {
   document.getElementById('bankAccountFull').value = branch + main;
   return confirm('確定儲存以下銀行帳號？\n\n分行代碼：' + branch + '\n帳號主碼：' + main + '\n完整帳號：' + branch + '-' + main);
 }
+function confirmRetRatesReset() {
+  return confirm('確定將此帳戶所有保留金費率重置為全域費率（' + _currentGlobalRate + ' NTD/只）？');
+}
 function openRetRates(userId, name) {
   const url = '/settings/users/' + userId + '/retention-rates';
   document.getElementById('retRatesUsername').textContent = name;
   document.getElementById('retRatesForm').action = url;
   document.getElementById('retRatesResetForm').action = url;
   const info = USER_RET_RATES[userId] || { rates: {}, is_custom: false, zone: '西區' };
+  _currentGlobalRate = info.zone === '南區' ? SOUTH_GLOBAL_RATE : GLOBAL_RATE;
+  document.getElementById('retRatesGlobalRate').textContent = _currentGlobalRate + ' NTD/只';
   const retFields = info.zone === '南區' ? SOUTH_RET_FIELDS : WEST_RET_FIELDS;
   const tbody = document.getElementById('retRatesBody');
   tbody.innerHTML = '';
   retFields.forEach(function([field, label]) {
-    const rate = info.rates[field] !== undefined ? info.rates[field] : GLOBAL_RATE;
+    const rate = info.rates[field] !== undefined ? info.rates[field] : _currentGlobalRate;
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td>' + label + '</td>' +

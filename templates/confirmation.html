@@ -5,7 +5,7 @@
 
 {% block content %}
 
-<!-- Date filter -->
+<!-- Filter -->
 <div class="card mb-3">
   <div class="card-body py-2">
     <form method="GET" action="{{ url_for('confirmation') }}" class="row g-2 align-items-end">
@@ -20,6 +20,14 @@
                value="{{ filter_end }}">
       </div>
       <div class="col-auto">
+        <label class="form-label mb-0 small fw-semibold">區域</label>
+        <select name="zone" class="form-select form-select-sm" style="min-width:100px">
+          <option value="">全部區域</option>
+          <option value="西區" {% if selected_zone == '西區' %}selected{% endif %}>西區</option>
+          <option value="南區" {% if selected_zone == '南區' %}selected{% endif %}>南區</option>
+        </select>
+      </div>
+      <div class="col-auto">
         <button type="submit" class="btn btn-primary btn-sm">
           <i class="bi bi-search me-1"></i>篩選
         </button>
@@ -28,7 +36,7 @@
         </a>
       </div>
       <div class="col-auto text-muted small align-self-center">
-        顯示 {{ filter_start }} 至 {{ filter_end }} 的未確認回報
+        顯示 {{ filter_start }} 至 {{ filter_end }} 的未確認回報{% if selected_zone %}（{{ selected_zone }}）{% endif %}
       </div>
     </form>
   </div>
@@ -50,30 +58,42 @@
       <table class="table table-sm table-hover mb-0 align-middle" style="font-size:.8rem">
         <thead class="table-light">
           <tr class="align-bottom">
-            <th class="text-nowrap" style="min-width:28px">#</th>
-            <th class="text-nowrap" style="min-width:72px">帳戶</th>
-            <th class="text-nowrap" style="min-width:80px">日期</th>
+            <th style="min-width:28px">#</th>
+            <th style="min-width:90px">帳戶</th>
+            <th style="min-width:80px">日期</th>
             {% for key, label in report_fields %}
-            <th class="text-center p-0" style="min-width:28px; width:28px" title="{{ label }}">
-              <div style="writing-mode:vertical-lr;transform:rotate(180deg);white-space:nowrap;font-size:.65rem;padding:4px 2px">{{ label }}</div>
-            </th>
+            <th class="text-center" style="min-width:42px; max-width:52px; font-size:.68rem; word-break:break-all; line-height:1.2; padding:3px 2px" title="{{ label }}">{{ label }}</th>
             {% endfor %}
-            <th class="text-center text-nowrap" style="min-width:120px">操作</th>
+            <th class="text-center" style="min-width:130px">操作</th>
           </tr>
         </thead>
         <tbody>
           {% for r in pending_reports %}
+          {% set _cu = users_dict.get(r.user_id) %}
           <tr>
             <td class="text-muted">{{ r.id }}</td>
-            <td class="text-nowrap">{% set _cu = users_dict.get(r.user_id) %}{{ _cu.display_name if _cu else '?' }}{% if _cu and _cu.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}</td>
-            <td class="text-nowrap">{{ r.report_date }}{% if r.collab_count and r.collab_count > 1 %}<span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>{% endif %}</td>
+            <td>
+              <span class="fw-semibold">{{ _cu.display_name if _cu else '?' }}</span>
+              {% if _cu and _cu.zone == '南區' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">南</span>{% endif %}
+              {% if r.collab_count and r.collab_count > 1 and r.collab_json %}
+              <div class="text-muted" style="font-size:.7rem">
+                共作:{% for cid in r.collab_json | from_json %}{% set cu2 = users_dict.get(cid) %}{% if cu2 %} {{ cu2.display_name }}{% endif %}{% endfor %}
+              </div>
+              {% endif %}
+            </td>
+            <td class="text-nowrap">
+              {{ r.report_date }}
+              {% if r.collab_count and r.collab_count > 1 %}
+              <span class="badge bg-secondary ms-1" style="font-size:.6rem">共{{ r.collab_count }}人</span>
+              {% endif %}
+            </td>
             {% for key, _ in report_fields %}
-            <td class="text-center px-0">{{ r[key] if r[key] else '' }}</td>
+            <td class="text-center px-1">{{ r[key] | qty }}</td>
             {% endfor %}
             <td class="text-center text-nowrap">
               <button type="button" class="btn btn-outline-info btn-sm py-0 px-2"
                       data-report='{{ r | report_json }}'
-                      data-username="{{ users_dict.get(r.user_id).display_name if users_dict.get(r.user_id) else '?' }}"
+                      data-username="{{ _cu.display_name if _cu else '?' }}"
                       onclick="openReportDetail(this)"
                       title="查看詳情">
                 <i class="bi bi-eye me-1"></i>詳情
@@ -90,7 +110,7 @@
               <form method="POST"
                     action="{{ url_for('reject_report', report_id=r.id) }}"
                     style="display:inline"
-                    onsubmit="return confirm('確定駁回 {{ r.report_date }} 的回報 #{{ r.id }}？回報者將在歷史紀錄中看到「已駁回」狀態。')">
+                    onsubmit="return confirm('確定駁回 {{ r.report_date }} 的回報 #{{ r.id }}？')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-danger btn-sm py-0 px-2 ms-1">
                   <i class="bi bi-x-lg me-1"></i>駁回
