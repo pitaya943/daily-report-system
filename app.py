@@ -1086,9 +1086,18 @@ def history():
 
     url_args = {k: v for k, v in request.args.items() if k != 'page'}
 
-    # USER sees their zone's fields; ADMIN sees all using west+south combined for detail modal
-    report_fields = (get_zone_fields(current_user.zone)
-                     if current_user.role == 'USER' else REPORT_FIELDS)
+    # USER sees their zone's fields; ADMIN uses zone-split tables
+    report_fields = get_zone_fields(current_user.zone) if current_user.role == 'USER' else None
+
+    if current_user.role == 'ADMIN':
+        west_reports  = [r for r in pagination.items
+                         if not users_dict.get(r.user_id)
+                         or users_dict[r.user_id].zone != ZONE_SOUTH]
+        south_reports = [r for r in pagination.items
+                         if users_dict.get(r.user_id)
+                         and users_dict[r.user_id].zone == ZONE_SOUTH]
+    else:
+        west_reports = south_reports = None
 
     return render_template('history.html',
                            reports=pagination.items,
@@ -1098,6 +1107,8 @@ def history():
                            report_fields=report_fields,
                            west_fields=WEST_REPORT_FIELDS,
                            south_fields=SOUTH_REPORT_FIELDS,
+                           west_reports=west_reports,
+                           south_reports=south_reports,
                            start_date=start_date,
                            end_date=end_date,
                            selected_user_id=selected_user_id,
