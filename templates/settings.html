@@ -639,10 +639,27 @@
           </div>
           <div class="mb-3">
             <label class="form-label">帳戶類型</label>
-            <select name="role" class="form-select">
+            <select name="role" id="createRole" class="form-select" onchange="toggleCreateZone(this.value)">
               <option value="USER">USER（一般使用者）</option>
               <option value="ADMIN">ADMIN（管理者）</option>
             </select>
+          </div>
+          <div class="mb-3" id="createZoneSection">
+            <label class="form-label">所屬區域</label>
+            <div class="d-flex gap-3">
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="zone" id="createZoneWest" value="西區" checked>
+                <label class="form-check-label" for="createZoneWest">
+                  <span class="badge bg-info text-dark">西區</span>
+                </label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="zone" id="createZoneSouth" value="南區">
+                <label class="form-check-label" for="createZoneSouth">
+                  <span class="badge bg-warning text-dark">南區</span>
+                </label>
+              </div>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label">發薪方式</label>
@@ -951,6 +968,9 @@ const GLOBAL_RATE = {{ retention_rate }};
 const SOUTH_GLOBAL_RATE = {{ retention_rate_south }};
 let _currentGlobalRate = GLOBAL_RATE;
 
+function toggleCreateZone(role) {
+  document.getElementById('createZoneSection').style.display = role === 'USER' ? '' : 'none';
+}
 function validateResetPwd() {
   var pw = document.getElementById('resetPwdNew').value;
   var cpw = document.getElementById('resetPwdConfirm').value;

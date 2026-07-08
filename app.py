@@ -1201,7 +1201,7 @@ def settings():
                            retention_rate=global_rate,
                            retention_rate_south=int(get_retention_rate_for_zone(ZONE_SOUTH)),
                            tax_rate=get_tax_rate(),
-                           tax_rate_south=int(get_tax_rate_for_zone(ZONE_SOUTH)),
+                           tax_rate_south=get_tax_rate_for_zone(ZONE_SOUTH),
                            ytd_by_user=ytd_by_user,
                            user_ret_rates=user_ret_rates,
                            west_ret_labeled=RETENTION_FIELDS_LABELED,
@@ -1273,9 +1273,13 @@ def settings_create_user():
                 flash('銀行帳號格式錯誤（需為 14 位數字：3碼分行代碼 + 11碼帳號主碼）', 'danger')
                 ba_ok = False
         if ba_ok:
+            _zone = request.form.get('zone', '西區') if role == 'USER' else '西區'
+            if _zone not in (ZONE_WEST, ZONE_SOUTH):
+                _zone = ZONE_WEST
             u = User(display_name=display_name,
                      password_hash=generate_password_hash(password),
                      role=role, is_active=True,
+                     zone=_zone,
                      payment_method=payment_method,
                      bank_account=encrypt_bank(bank_account_raw) if bank_account_raw else None)
             db.session.add(u)
@@ -1893,20 +1897,29 @@ def summary():
         reports = q.all()
         users_dict = {u.id: u for u in all_users}
 
+        import json as _sjson
         user_totals = {}
-        for r in reports:
-            uid = r.user_id
-            if uid not in user_totals:
-                u_obj = users_dict.get(uid)
-                uname = u_obj.display_name if u_obj else '(已刪除)'
-                zone  = u_obj.zone if u_obj else ZONE_WEST
-                user_totals[uid] = {'username': uname, 'zone': zone,
-                                    'totals': {k: 0.0 for k, _ in REPORT_FIELDS},
-                                    'count': 0}
-            _n = float(r.collab_count or 1)
+
+        def _summary_accum(tgt_uid, rpt, n):
+            u_obj = users_dict.get(tgt_uid)
+            if not u_obj:
+                return
+            if tgt_uid not in user_totals:
+                user_totals[tgt_uid] = {
+                    'username': u_obj.display_name, 'zone': u_obj.zone,
+                    'totals': {k: 0 for k, _ in REPORT_FIELDS}, 'count': 0,
+                }
             for k, _ in REPORT_FIELDS:
-                user_totals[uid]['totals'][k] += float(getattr(r, k, 0) or 0) / _n
-            user_totals[uid]['count'] += 1
+                # 四捨五入為整數，避免統計頁出現小數點
+                user_totals[tgt_uid]['totals'][k] += round(float(getattr(rpt, k, 0) or 0) / n)
+            user_totals[tgt_uid]['count'] += 1
+
+        for r in reports:
+            _n = r.collab_count or 1
+            _summary_accum(r.user_id, r, _n)
+            if r.collab_json:
+                for _cuid in _sjson.loads(r.collab_json):
+                    _summary_accum(_cuid, r, _n)
 
         grand = {k: sum(d['totals'][k] for d in user_totals.values()) for k, _ in REPORT_FIELDS}
         page = request.args.get('page', 1, type=int)
@@ -2373,7 +2386,7 @@ def _export_salary_excel(results):
         z_prices = results.get('south_prices', {}) if data.get('zone') == ZONE_SOUTH else results.get('west_prices', {})
         for k, label in data.get('zone_fields', REPORT_FIELDS):
             ws.cell(row=row, column=1, value=label)
-            ws.cell(row=row, column=2, value=float(data['totals'].get(k, 0)))
+            ws.cell(row=row, column=2, value=round(float(data['totals'].get(k, 0)), 1))
             ws.cell(row=row, column=3, value=z_prices.get(k, 0))
             ws.cell(row=row, column=4, value=round(float(data['subtotals'].get(k, 0)), 2))
             row += 1
@@ -3141,11 +3154,12 @@ def personal_stats():
             elif stats_confirm == 'unconfirmed':
                 q = q.filter(Report.is_confirmed == False)
             _reports_s = q.all()
-            totals_s = {k: 0.0 for k, _ in zone_fields}
+            totals_s = {k: 0 for k, _ in zone_fields}
             for r in _reports_s:
-                _n = float(r.collab_count or 1)
+                _n = r.collab_count or 1
                 for k, _ in zone_fields:
-                    totals_s[k] += float(getattr(r, k, 0) or 0) / _n
+                    # 四捨五入為整數顯示，薪資保留金仍以整數乘費率計算
+                    totals_s[k] += round(float(getattr(r, k, 0) or 0) / _n)
             period_ret_s = sum(totals_s.get(f, 0.0) * my_ret_rates.get(f, global_rate) for f in ret_fields)
             totals_result = {'start': stats_start, 'end': stats_end,
                              'confirm_filter': stats_confirm,
