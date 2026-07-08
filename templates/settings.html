@@ -703,6 +703,16 @@
               </div>
             </div>
           </div>
+          <div class="mb-3" id="createBigMeterSection">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="is_big_meter"
+                     id="createIsBigMeter" value="1">
+              <label class="form-check-label" for="createIsBigMeter">
+                <i class="bi bi-speedometer2 me-1"></i>大表帳戶
+                <span class="text-muted small">（工項改用大表計費）</span>
+              </label>
+            </div>
+          </div>
           <div class="mb-3">
             <label class="form-label">發薪方式</label>
             <select name="payment_method" id="createPaymentMethod" class="form-select"
@@ -1011,7 +1021,10 @@ const SOUTH_GLOBAL_RATE = {{ retention_rate_south }};
 let _currentGlobalRate = GLOBAL_RATE;
 
 function toggleCreateZone(role) {
-  document.getElementById('createZoneSection').style.display = role === 'USER' ? '' : 'none';
+  const isUser = role === 'USER';
+  document.getElementById('createZoneSection').style.display = isUser ? '' : 'none';
+  document.getElementById('createBigMeterSection').style.display = isUser ? '' : 'none';
+  if (!isUser) document.getElementById('createIsBigMeter').checked = false;
 }
 function validateResetPwd() {
   var pw = document.getElementById('resetPwdNew').value;

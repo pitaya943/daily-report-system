@@ -1557,15 +1557,17 @@ def settings_create_user():
             _zone = request.form.get('zone', '西區') if role == 'USER' else '西區'
             if _zone not in (ZONE_WEST, ZONE_SOUTH):
                 _zone = ZONE_WEST
+            _is_bm = (request.form.get('is_big_meter') == '1') if role == 'USER' else False
             u = User(display_name=display_name,
                      password_hash=generate_password_hash(password),
                      role=role, is_active=True,
                      zone=_zone,
+                     is_big_meter=_is_bm,
                      payment_method=payment_method,
                      bank_account=encrypt_bank(bank_account_raw) if bank_account_raw else None)
             db.session.add(u)
             add_audit(current_user.id, 'ACCOUNT_CREATE',
-                      f'建立帳戶「{display_name}」（角色：{role}）')
+                      f'建立帳戶「{display_name}」（角色：{role}{"，大表" if _is_bm else ""}）')
             db.session.commit()
             flash(f'帳戶「{display_name}」已建立', 'success')
     return redirect(url_for('settings'))

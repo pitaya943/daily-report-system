@@ -8,7 +8,9 @@
     <div class="card">
       <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between">
         <span>填寫工作回報（所有數量單位：只）</span>
-        {% if zone == '南區' %}
+        {% if is_big_meter %}
+          <span class="badge bg-dark">大表</span>
+        {% elif zone == '南區' %}
           <span class="badge bg-warning text-dark">南區</span>
         {% else %}
           <span class="badge bg-info text-dark">西區</span>
@@ -24,6 +26,50 @@
                    value="{{ today }}" required style="max-width:200px">
           </div>
 
+          {% if is_big_meter %}
+          <!-- BM: 下 -->
+          <h6 class="text-dark border-bottom pb-1 mb-3">
+            <i class="bi bi-arrow-down-circle me-1"></i>下
+          </h6>
+          <div class="row g-3 mb-4">
+            {% for key, label in report_fields[:7] %}
+            <div class="col-6 col-md-3">
+              <label class="form-label small text-muted">{{ label }}</label>
+              <input type="number" class="form-control field-input"
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- BM: 上 -->
+          <h6 class="text-secondary border-bottom pb-1 mb-3">
+            <i class="bi bi-arrow-up-circle me-1"></i>上
+          </h6>
+          <div class="row g-3 mb-4">
+            {% for key, label in report_fields[7:13] %}
+            <div class="col-6 col-md-3">
+              <label class="form-label small text-muted">{{ label }}</label>
+              <input type="number" class="form-control field-input"
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- BM: 其他工項 -->
+          <h6 class="text-warning border-bottom pb-1 mb-3">
+            <i class="bi bi-star me-1"></i>其他工項
+          </h6>
+          <div class="row g-3 mb-4">
+            {% for key, label in report_fields[13:] %}
+            <div class="col-6 col-md-4">
+              <label class="form-label small text-muted">{{ label }}</label>
+              <input type="number" class="form-control field-input"
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+            </div>
+            {% endfor %}
+          </div>
+
+          {% else %}
           <!-- Direct totals -->
           <h6 class="text-primary border-bottom pb-1 mb-3">
             <i class="bi bi-arrow-right-circle me-1"></i>直總類
@@ -65,6 +111,7 @@
             </div>
             {% endfor %}
           </div>
+          {% endif %}
 
           <!-- 共同作業人員 -->
           <div class="border rounded p-3 mb-4 bg-light">

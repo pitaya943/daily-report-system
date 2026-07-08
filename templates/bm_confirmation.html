@@ -62,7 +62,14 @@
             <td class="text-center px-1">{{ r[key] | qty }}</td>
             {% endfor %}
             <td class="text-center text-nowrap">
-              <form method="POST" action="{{ url_for('bm_confirm_report', report_id=r.id) }}" class="d-inline">
+              <button type="button" class="btn btn-outline-info btn-sm py-0 px-2"
+                      data-report='{{ r | report_json }}'
+                      data-username="{{ submitter.display_name if submitter else '?' }}"
+                      onclick="openReportDetail(this)"
+                      title="查看詳情">
+                <i class="bi bi-eye"></i>
+              </button>
+              <form method="POST" action="{{ url_for('bm_confirm_report', report_id=r.id) }}" class="d-inline ms-1">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% for k, v in url_args.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
                 <button type="submit" class="btn btn-success btn-sm py-0 px-2"
@@ -93,4 +100,83 @@
 
   {{ paginate(pending_pagination, 'bm_confirmation', url_args) }}
 </div>
+
+<!-- Report Detail Modal (read-only) -->
+<div class="modal fade" id="reportDetailModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title" id="detailModalTitle">
+          <i class="bi bi-file-text me-2"></i>回報詳情
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="detailCollabInfo" class="alert alert-info py-2 mb-3 d-none" style="font-size:.85rem">
+          <i class="bi bi-people me-1"></i>共同作業人員：<span id="detailCollabNames"></span>
+        </div>
+        <table class="table table-sm table-bordered">
+          <thead class="table-secondary">
+            <tr><th>工項</th><th class="text-end">只數</th></tr>
+          </thead>
+          <tbody id="detailModalBody"></tbody>
+          <tfoot class="table-light fw-semibold">
+            <tr>
+              <td>合計</td>
+              <td class="text-end" id="detailModalTotal"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BM_FIELDS = {{ bm_fields | tojson }};
+const BM_USERS = {
+  {% for uid, u in users_dict.items() %}{{ uid }}: "{{ u.display_name | e }}"{% if not loop.last %}, {% endif %}{% endfor %}
+};
+
+function openReportDetail(btn) {
+  const data     = JSON.parse(btn.dataset.report);
+  const username = btn.dataset.username;
+
+  document.getElementById('detailModalTitle').innerHTML =
+    '<i class="bi bi-file-text me-2"></i>' + username + '　' + data.report_date + '　#' + data.id;
+
+  const collabIds = JSON.parse(data.collab_json || '[]');
+  const collabDiv = document.getElementById('detailCollabInfo');
+  if (collabIds.length > 0) {
+    document.getElementById('detailCollabNames').textContent =
+      collabIds.map(cid => BM_USERS[cid] || '?').join('、');
+    collabDiv.classList.remove('d-none');
+  } else {
+    collabDiv.classList.add('d-none');
+  }
+
+  const tbody = document.getElementById('detailModalBody');
+  tbody.innerHTML = '';
+  let total = 0;
+  for (const [key, label] of BM_FIELDS) {
+    const val = data[key] || 0;
+    if (val > 0) {
+      total += val;
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + label + '</td><td class="text-end fw-semibold">' + val + '</td>';
+      tbody.appendChild(tr);
+    }
+  }
+  if (!tbody.hasChildNodes()) {
+    tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted">所有欄位均為 0</td></tr>';
+  }
+  document.getElementById('detailModalTotal').textContent = total;
+  new bootstrap.Modal(document.getElementById('reportDetailModal')).show();
+}
+</script>
 {% endblock %}
