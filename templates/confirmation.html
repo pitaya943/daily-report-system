@@ -94,6 +94,11 @@
                     style="display:inline"
                     onsubmit="return confirm('確定確認 {{ r.report_date }} 的回報 #{{ r.id }}？此操作無法撤銷。')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="start_date" value="{{ filter_start }}">
+                <input type="hidden" name="end_date"   value="{{ filter_end }}">
+                <input type="hidden" name="zone"       value="{{ selected_zone }}">
+                <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
+                <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
                 <button type="submit" class="btn btn-success btn-sm py-0 px-2 ms-1">
                   <i class="bi bi-check-lg me-1"></i>確認
                 </button>
@@ -103,6 +108,11 @@
                     style="display:inline"
                     onsubmit="return confirm('確定駁回 {{ r.report_date }} 的回報 #{{ r.id }}？')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="start_date" value="{{ filter_start }}">
+                <input type="hidden" name="end_date"   value="{{ filter_end }}">
+                <input type="hidden" name="zone"       value="{{ selected_zone }}">
+                <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
+                <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
                 <button type="submit" class="btn btn-danger btn-sm py-0 px-2 ms-1">
                   <i class="bi bi-x-lg me-1"></i>駁回
                 </button>
@@ -156,6 +166,11 @@
                   style="display:inline"
                   onsubmit="return confirm('確定核准 #{{ req.id }} 申請？庫存將扣除 {{ req.requested_quantity }}{{ m.unit if m else '' }}。')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="start_date" value="{{ filter_start }}">
+              <input type="hidden" name="end_date"   value="{{ filter_end }}">
+              <input type="hidden" name="zone"       value="{{ selected_zone }}">
+              <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
+              <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
               <button type="submit" class="btn btn-success btn-sm py-0 px-2">
                 <i class="bi bi-check-lg me-1"></i>核准
               </button>
@@ -165,6 +180,11 @@
                   style="display:inline"
                   onsubmit="return confirm('確定駁回 #{{ req.id }} 申請？')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="start_date" value="{{ filter_start }}">
+              <input type="hidden" name="end_date"   value="{{ filter_end }}">
+              <input type="hidden" name="zone"       value="{{ selected_zone }}">
+              <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
+              <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
               <button type="submit" class="btn btn-danger btn-sm py-0 px-2 ms-1">
                 <i class="bi bi-x-lg me-1"></i>駁回
               </button>

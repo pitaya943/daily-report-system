@@ -1053,9 +1053,14 @@ def history():
         users_dict = {u.id: u for u in _all_users_list}
         all_users  = _all_users_list
     else:
-        # USER: only load users referenced by the current page (submitters of collab rows)
-        _page_uids = {r.user_id for r in pagination.items}
-        users_dict = {u.id: u for u in User.query.filter(User.id.in_(_page_uids)).all()} if _page_uids else {}
+        # USER: load submitters + collab members on this page so modal can resolve all names
+        _page_uids   = {r.user_id for r in pagination.items}
+        _page_collab = set()
+        for _r in pagination.items:
+            if _r.collab_json:
+                _page_collab.update(json.loads(_r.collab_json))
+        _page_all = _page_uids | _page_collab
+        users_dict = {u.id: u for u in User.query.filter(User.id.in_(_page_all)).all()} if _page_all else {}
         all_users  = []
 
     url_args = {k: v for k, v in request.args.items() if k != 'page'}
@@ -2090,9 +2095,14 @@ def confirmation():
                       .paginate(page=mat_page, per_page=20, error_out=False))
 
     # Only load users/materials referenced on this page (not the entire table)
-    _report_uids = {r.user_id for r in pending_pagination.items}
-    _mat_uids    = {req.user_id for req in mat_pagination.items}
-    _all_uids    = _report_uids | _mat_uids
+    # Include collab member IDs so the detail modal can resolve their display names
+    _report_uids  = {r.user_id for r in pending_pagination.items}
+    _mat_uids     = {req.user_id for req in mat_pagination.items}
+    _collab_uids  = set()
+    for _r in pending_pagination.items:
+        if _r.collab_json:
+            _collab_uids.update(json.loads(_r.collab_json))
+    _all_uids    = _report_uids | _mat_uids | _collab_uids
     users_dict   = {u.id: u for u in User.query.filter(User.id.in_(_all_uids)).all()} if _all_uids else {}
     _mat_ids     = {req.material_id for req in mat_pagination.items}
     materials_dict = {m.id: m for m in Material.query.filter(Material.id.in_(_mat_ids)).all()} if _mat_ids else {}
@@ -2129,7 +2139,9 @@ def confirm_report(report_id):
               f'確認 {uname} 的回報 #{r.id}（{r.report_date}）')
     db.session.commit()
     flash('回報已確認', 'success')
-    return redirect(url_for('confirmation'))
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page')
+            if request.form.get(k)}
+    return redirect(url_for('confirmation', **_flt))
 
 
 @app.route('/confirmation/report/<int:report_id>/reject', methods=['POST'])
@@ -2146,7 +2158,9 @@ def reject_report(report_id):
               f'駁回 {uname} 的回報 #{r.id}（{r.report_date}）')
     db.session.commit()
     flash('回報已駁回，回報者可在歷史紀錄中查看', 'warning')
-    return redirect(url_for('confirmation'))
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page')
+            if request.form.get(k)}
+    return redirect(url_for('confirmation', **_flt))
 
 
 @app.route('/confirmation/material/<int:req_id>/approve', methods=['POST'])
@@ -2175,7 +2189,9 @@ def approve_material(req_id):
               f'庫存 {old_qty} → {m.remaining_quantity if m else "?"}')
     db.session.commit()
     flash('材料申請已核准', 'success')
-    return redirect(url_for('confirmation'))
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page')
+            if request.form.get(k)}
+    return redirect(url_for('confirmation', **_flt))
 
 
 @app.route('/confirmation/material/<int:req_id>/reject', methods=['POST'])
@@ -2198,7 +2214,9 @@ def reject_material(req_id):
               f'駁回 {uname} 申請的「{mname}」{req.requested_quantity}{munit}')
     db.session.commit()
     flash('材料申請已駁回', 'success')
-    return redirect(url_for('confirmation'))
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page')
+            if request.form.get(k)}
+    return redirect(url_for('confirmation', **_flt))
 
 
 # ---------------------------------------------------------------------------
