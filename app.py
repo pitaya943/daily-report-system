@@ -2025,31 +2025,28 @@ def summary():
         reports = q.all()
         users_dict = {u.id: u for u in all_users}
 
-        import math as _math
         user_totals = {}
 
-        def _summary_accum(tgt_uid, rpt, n, is_submitter):
+        def _summary_accum(tgt_uid, rpt, n):
             u_obj = users_dict.get(tgt_uid)
             if not u_obj:
                 return
             if tgt_uid not in user_totals:
                 user_totals[tgt_uid] = {
                     'username': u_obj.display_name, 'zone': u_obj.zone,
-                    'totals': {k: 0 for k, _ in REPORT_FIELDS}, 'count': 0,
+                    'totals': {k: 0.0 for k, _ in REPORT_FIELDS}, 'count': 0,
                 }
             for k, _ in REPORT_FIELDS:
                 qty = float(getattr(rpt, k, 0) or 0)
-                # 提交者取 ceil，共作者取 floor，保證各欄加總 = 原始值（無失真）
-                share = _math.ceil(qty / n) if is_submitter else _math.floor(qty / n)
-                user_totals[tgt_uid]['totals'][k] += share
+                user_totals[tgt_uid]['totals'][k] += qty / n
             user_totals[tgt_uid]['count'] += 1
 
         for r in reports:
-            _n = r.collab_count or 1
-            _summary_accum(r.user_id, r, _n, True)
+            _n = float(r.collab_count or 1)
+            _summary_accum(r.user_id, r, _n)
             if r.collab_json:
                 for _cuid in json.loads(r.collab_json):
-                    _summary_accum(_cuid, r, _n, False)
+                    _summary_accum(_cuid, r, _n)
 
         grand = {k: sum(d['totals'][k] for d in user_totals.values()) for k, _ in REPORT_FIELDS}
         page = request.args.get('page', 1, type=int)
