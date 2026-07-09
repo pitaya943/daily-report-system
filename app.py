@@ -3022,7 +3022,12 @@ def _export_salary_excel(results):
     row = 3
     for uid, data in results['user_data'].items():
         method_label = '領現 (CASH)' if data['payment_method'] == 'CASH' else '轉帳 (TRANSFER)'
-        zone_label = '南區' if data.get('zone') == ZONE_SOUTH else '西區'
+        if data.get('is_big_meter'):
+            zone_label = '大表'
+        elif data.get('zone') == ZONE_SOUTH:
+            zone_label = '南區'
+        else:
+            zone_label = '西區'
         name_cell = ws.cell(row=row, column=1,
                             value=f'帳戶：{data["username"]}（{zone_label}）　　發薪方式：{method_label}')
         name_cell.font = Font(bold=True, size=12)
@@ -3036,7 +3041,12 @@ def _export_salary_excel(results):
             cell.alignment = Alignment(horizontal='center')
         row += 1
 
-        z_prices = results.get('south_prices', {}) if data.get('zone') == ZONE_SOUTH else results.get('west_prices', {})
+        if data.get('is_big_meter'):
+            z_prices = results.get('bm_prices', {})
+        elif data.get('zone') == ZONE_SOUTH:
+            z_prices = results.get('south_prices', {})
+        else:
+            z_prices = results.get('west_prices', {})
         for k, label in data.get('zone_fields', REPORT_FIELDS):
             ws.cell(row=row, column=1, value=label)
             ws.cell(row=row, column=2, value=round(float(data['totals'].get(k, 0)), 1))
@@ -3235,14 +3245,24 @@ def _export_salary_pdf(results):
         style('title', fontSize=16, alignment=1, spaceAfter=16)))
 
     for uid, data in results['user_data'].items():
-        zone_label = '南區' if data.get('zone') == ZONE_SOUTH else '西區'
+        if data.get('is_big_meter'):
+            zone_label = '大表'
+        elif data.get('zone') == ZONE_SOUTH:
+            zone_label = '南區'
+        else:
+            zone_label = '西區'
         method_label = '領現 (CASH)' if data['payment_method'] == 'CASH' else '轉帳 (TRANSFER)'
         story.append(Paragraph(
             f'帳戶：{data["username"]}（{zone_label}）　　發薪方式：{method_label}',
             style('h2', fontSize=12, spaceBefore=10, spaceAfter=4)))
 
         z_fields = data.get('zone_fields', REPORT_FIELDS)
-        z_prices = results.get('south_prices', {}) if data.get('zone') == ZONE_SOUTH else results.get('west_prices', {})
+        if data.get('is_big_meter'):
+            z_prices = results.get('bm_prices', {})
+        elif data.get('zone') == ZONE_SOUTH:
+            z_prices = results.get('south_prices', {})
+        else:
+            z_prices = results.get('west_prices', {})
         n_fields = len(z_fields)
         tdata = [['工項', '只數', '單價(NTD)', '小計(NTD)']]
         for k, label in z_fields:
