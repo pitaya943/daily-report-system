@@ -2973,6 +2973,9 @@ def salary():
                 data['tax_deduction'] = round(data['gross_salary'] * zone_tax / 100) if not_enrolled else 0
                 data['final_salary']  = data['net_salary'] + fixed - ins - data['tax_deduction']
 
+            user_data = {uid: d for uid, d in user_data.items()
+                         if d['gross_salary'] != 0 or d['final_salary'] != 0}
+
             grand_gross = sum(d['gross_salary'] for d in user_data.values())
             grand_period_retention = sum(d['period_retention'] for d in user_data.values())
             grand_ytd_retention = sum(d['ytd_retention'] for d in user_data.values())
