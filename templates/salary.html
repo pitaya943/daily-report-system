@@ -207,7 +207,7 @@
                 <td colspan="3">計薪小計（稅前）</td>
                 <td class="text-end">{{ data.gross_salary | money }} NTD</td>
               </tr>
-              {% if not data.get('is_big_meter') %}
+              {% if not data.get('is_big_meter') and not data.get('is_admin') %}
               <tr class="fw-semibold" style="background:#fff3cd">
                 <td colspan="3">
                   <i class="bi bi-piggy-bank me-1 text-warning"></i>本期保留金（扣除）
@@ -246,7 +246,7 @@
                 </td>
                 <td class="text-end text-success fs-6">{{ data.final_salary | money }} NTD</td>
               </tr>
-              {% if not data.get('is_big_meter') %}
+              {% if not data.get('is_big_meter') and not data.get('is_admin') %}
               <tr class="fw-semibold" style="background:#fff8e1">
                 <td colspan="3">
                   <i class="bi bi-piggy-bank-fill me-1 text-warning"></i>今年度累積保留金

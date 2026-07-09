@@ -2869,6 +2869,7 @@ def salary():
                     'username':       u_obj.display_name,
                     'zone':           u_obj.zone,
                     'is_big_meter':   u_obj.is_big_meter,
+                    'is_admin':       u_obj.role == 'ADMIN',
                     'is_deactivated': not u_obj.is_active,
                     'totals':         {k: 0.0 for k, _ in fields},
                 }
@@ -2901,6 +2902,7 @@ def salary():
                         'username':       u.display_name,
                         'zone':           u.zone,
                         'is_big_meter':   u.is_big_meter,
+                        'is_admin':       u.role == 'ADMIN',
                         'is_deactivated': not u.is_active,
                         'totals':         {k: 0.0 for k, _ in fields},
                     }
@@ -2913,7 +2915,8 @@ def salary():
             batch_rates  = get_users_all_retention_rates(list(user_data.keys()), users_dict)
             for uid, data in user_data.items():
                 zone  = data['zone']
-                is_bm = data.get('is_big_meter', False)
+                is_bm    = data.get('is_big_meter', False)
+                is_admin = data.get('is_admin', False)
                 if is_bm:
                     prices      = bm_prices
                     zone_fields = BIG_METER_FIELDS
@@ -2921,7 +2924,7 @@ def salary():
                 else:
                     prices      = south_prices if zone == ZONE_SOUTH else west_prices
                     zone_fields = get_zone_fields(zone)
-                    ret_fields  = get_zone_retention_fields(zone)
+                    ret_fields  = [] if is_admin else get_zone_retention_fields(zone)
                 global_rate = _south_gr if zone == ZONE_SOUTH else _west_gr
                 zone_tax    = _south_tax if zone == ZONE_SOUTH else _west_tax
 
@@ -2931,7 +2934,7 @@ def salary():
                 data['gross_salary'] = sum(subtotals.values())
 
                 u = users_dict.get(uid)
-                if is_bm:
+                if is_bm or is_admin:
                     data['period_retention'] = 0.0
                     data['ytd_retention']    = 0.0
                 else:
@@ -2952,7 +2955,7 @@ def salary():
 
                 ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if is_10th_payday else 0
                 data['insurance_deduction'] = ins
-                fixed = (u.fixed_salary if u else 0) if is_10th_payday else 0
+                fixed = (u.fixed_salary if u else 0) if (is_10th_payday or is_admin) else 0
                 data['fixed_salary'] = fixed
                 not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt) if u else True
                 data['tax_deduction'] = round(data['gross_salary'] * zone_tax / 100) if not_enrolled else 0
@@ -4484,14 +4487,14 @@ def _report_excel(report_type, label, start_date, end_date,
             else:
                 zone       = u.zone
                 z_fields   = get_zone_fields(zone)
-                ret_fields = get_zone_retention_fields(zone)
+                ret_fields = [] if u.role == 'ADMIN' else get_zone_retention_fields(zone)
                 z_prices   = south_p if zone == ZONE_SOUTH else west_p
                 tots       = user_totals.get(u.id, {k: 0.0 for k, _ in z_fields})
                 zone_badge = '南區' if zone == ZONE_SOUTH else '西區'
             gross = sum(tots.get(k, 0.0) * z_prices.get(k, 0) for k, _ in z_fields)
             if gross == 0 and u.fixed_salary == 0:
                 continue
-            if u.is_big_meter:
+            if u.is_big_meter or u.role == 'ADMIN':
                 retention = 0.0
             else:
                 u_rates = get_user_all_retention_rates(u.id)
