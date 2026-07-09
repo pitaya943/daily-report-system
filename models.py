@@ -126,6 +126,7 @@ class Report(db.Model):
     bm_mobilization  = db.Column(db.Numeric(8, 1), default=0)
     bm_recheck       = db.Column(db.Numeric(8, 1), default=0)
     bm_app           = db.Column(db.Numeric(8, 1), default=0)
+    bm_40_fen        = db.Column(db.Numeric(8, 1), default=0)
     # ── 共同作業
     collab_count = db.Column(db.Integer, nullable=False, default=1)   # 含提交者的總人數
     collab_json  = db.Column(db.Text, nullable=True)                   # JSON list of additional collab user_ids

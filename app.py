@@ -451,7 +451,7 @@ def _init_db():
         'bm_rm_screw50', 'bm_rm_noscrew50',
         'bm_rm_75', 'bm_rm_100', 'bm_rm_150', 'bm_rm_200',
         'bm_hole', 'bm_clean_big', 'bm_truck',
-        'bm_mobilization', 'bm_recheck', 'bm_app',
+        'bm_mobilization', 'bm_recheck', 'bm_app', 'bm_40_fen',
     ]:
         try:
             with db.engine.connect() as conn:
@@ -728,7 +728,8 @@ BIG_METER_FIELDS = [
     ('bm_mobilization', '動員'),
     ('bm_recheck',      '復查'),
     ('bm_app',          'APP'),
-]  # 25 欄
+    ('bm_40_fen',       '40MM分'),
+]  # 26 欄
 
 DEFAULT_PRICES_BM = {
     'bm_50_down':1100.0,'bm_75_down':1800.0,'bm_100_down':2000.0,
@@ -739,6 +740,7 @@ DEFAULT_PRICES_BM = {
     'bm_rm_75':1600.0,'bm_rm_100':1900.0,'bm_rm_150':2100.0,'bm_rm_200':3000.0,
     'bm_hole':500.0,'bm_clean_big':700.0,'bm_truck':700.0,
     'bm_mobilization':1200.0,'bm_recheck':70.0,'bm_app':10.0,
+    'bm_40_fen':150.0,
 }
 
 # 向後相容別名
@@ -1316,7 +1318,11 @@ def history_delete(report_id):
 @login_required
 def settings():
     _all_users_raw = User.query.order_by(User.id).all() if current_user.role == 'ADMIN' else []
-    all_users = sorted(_all_users_raw, key=lambda u: (0 if u.role == 'ADMIN' else 1, u.id))
+    all_users = sorted(_all_users_raw, key=lambda u: (
+        0 if u.role == 'ADMIN' else
+        (1 if u.zone == ZONE_WEST else 2),
+        u.display_name
+    ))
     uid_list = [u.id for u in all_users]
 
     # ── 3 queries total ───────────────────────────────────────────────
@@ -4310,30 +4316,35 @@ def _report_excel(report_type, label, start_date, end_date,
     udict  = {u.id: u for u in users}            # User objects (for zone, salary fields)
     unames = {u.id: u.display_name for u in users}  # display names for ledger lookups
 
-    # ── 工項彙總：依區域分組，含共同作業分配 ────────────────────────────
-    u_zone_map = {u.id: u.zone for u in users}
+    # ── 工項彙總：依區域/大表分組，含共同作業分配 ───────────────────────
+    u_zone_map  = {u.id: u.zone         for u in users}
+    u_is_bm_map = {u.id: u.is_big_meter for u in users}
     user_totals_west  = {}   # uid → {k: float}
     user_totals_south = {}   # uid → {k: float}
+    user_totals_bm    = {}   # uid → {k: float}  大表用戶
+
+    def _accum(tgt_uid, rpt, divisor):
+        _is_bm = u_is_bm_map.get(tgt_uid, False)
+        if _is_bm:
+            if tgt_uid not in user_totals_bm:
+                user_totals_bm[tgt_uid] = {k: 0.0 for k, _ in BIG_METER_FIELDS}
+            for k, _ in BIG_METER_FIELDS:
+                user_totals_bm[tgt_uid][k] += float(getattr(rpt, k, 0) or 0) / divisor
+        else:
+            _z = u_zone_map.get(tgt_uid, ZONE_WEST)
+            _zf = get_zone_fields(_z)
+            _zm = user_totals_south if _z == ZONE_SOUTH else user_totals_west
+            if tgt_uid not in _zm:
+                _zm[tgt_uid] = {k: 0.0 for k, _ in _zf}
+            for k, _ in _zf:
+                _zm[tgt_uid][k] += float(getattr(rpt, k, 0) or 0) / divisor
+
     for r in reports:
-        uid = r.user_id
-        _n  = float(r.collab_count or 1)
-        zone = u_zone_map.get(uid, ZONE_WEST)
-        z_fields = get_zone_fields(zone)
-        z_map = user_totals_south if zone == ZONE_SOUTH else user_totals_west
-        if uid not in z_map:
-            z_map[uid] = {k: 0.0 for k, _ in z_fields}
-        for k, _ in z_fields:
-            z_map[uid][k] += float(getattr(r, k, 0) or 0) / _n
-        # 共同作業者
+        _n = float(r.collab_count or 1)
+        _accum(r.user_id, r, _n)
         if r.collab_json:
             for _cuid in json.loads(r.collab_json):
-                _czone = u_zone_map.get(_cuid, zone)
-                _cfields = get_zone_fields(_czone)
-                _cmap = user_totals_south if _czone == ZONE_SOUTH else user_totals_west
-                if _cuid not in _cmap:
-                    _cmap[_cuid] = {k: 0.0 for k, _ in _cfields}
-                for k, _ in _cfields:
-                    _cmap[_cuid][k] += float(getattr(r, k, 0) or 0) / _n
+                _accum(_cuid, r, _n)
 
     def _write_zone_block(ws, row_start, zone_label, z_fields, z_totals):
         if not z_totals:
@@ -4343,7 +4354,8 @@ def _report_excel(report_type, label, start_date, end_date,
         ws.merge_cells(f'A{row_start}:{span_letter}{row_start}')
         zone_cell = ws.cell(row_start, 1, f'── {zone_label} ──')
         zone_cell.font = XFont(bold=True, color='FFFFFF')
-        zone_cell.fill = PatternFill('solid', fgColor='7030A0' if zone_label == '南區' else '2F75B6')
+        _zbg = '7030A0' if zone_label == '南區' else ('1F5C2E' if zone_label == '大表' else '2F75B6')
+        zone_cell.fill = PatternFill('solid', fgColor=_zbg)
         zone_cell.alignment = Alignment(horizontal='center')
         row_start += 1
         set_hdr(ws, row_start, ['帳戶'] + [lbl for _, lbl in z_fields] + ['合計'])
@@ -4376,9 +4388,10 @@ def _report_excel(report_type, label, start_date, end_date,
     ri = 3
     ri = _write_zone_block(ws1, ri, '西區', WEST_REPORT_FIELDS, user_totals_west)
     ri = _write_zone_block(ws1, ri, '南區', SOUTH_REPORT_FIELDS, user_totals_south)
+    ri = _write_zone_block(ws1, ri, '大表', BIG_METER_FIELDS, user_totals_bm)
     auto_w(ws1)
 
-    # user_totals for monthly salary sheet (combine both zones)
+    # user_totals for monthly salary sheet (west+south only; BM handled via user_totals_bm)
     user_totals = {}
     for uid, tots in user_totals_west.items():
         user_totals[uid] = tots
@@ -4457,30 +4470,41 @@ def _report_excel(report_type, label, start_date, end_date,
 
         west_p  = get_item_prices_for_zone(ZONE_WEST)
         south_p = get_item_prices_for_zone(ZONE_SOUTH)
+        bm_p    = get_item_prices_bm()
 
         sal_ri = 2
         total_net = 0
         for u in users:
-            zone = u.zone
-            z_fields = get_zone_fields(zone)
-            ret_fields = get_zone_retention_fields(zone)
-            z_prices = south_p if zone == ZONE_SOUTH else west_p
-            tots = user_totals.get(u.id, {k: 0.0 for k, _ in z_fields})
+            if u.is_big_meter:
+                z_fields   = BIG_METER_FIELDS
+                z_prices   = bm_p
+                ret_fields = []
+                tots       = user_totals_bm.get(u.id, {k: 0.0 for k, _ in BIG_METER_FIELDS})
+                zone_badge = '大表'
+            else:
+                zone       = u.zone
+                z_fields   = get_zone_fields(zone)
+                ret_fields = get_zone_retention_fields(zone)
+                z_prices   = south_p if zone == ZONE_SOUTH else west_p
+                tots       = user_totals.get(u.id, {k: 0.0 for k, _ in z_fields})
+                zone_badge = '南區' if zone == ZONE_SOUTH else '西區'
             gross = sum(tots.get(k, 0.0) * z_prices.get(k, 0) for k, _ in z_fields)
             if gross == 0 and u.fixed_salary == 0:
                 continue
-            u_rates = get_user_all_retention_rates(u.id)
-            pre_totals = pre_totals_by_user.get(u.id, {})
-            pre_calc = sum(pre_totals.get(f, 0.0) * u_rates.get(f, global_rate) for f in ret_fields)
-            ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + u.retention_offset))
-            ret_raw = sum(tots.get(f, 0.0) * u_rates.get(f, global_rate) for f in ret_fields)
-            retention = max(0.0, min(ret_raw, RETENTION_CAP - ytd_before))
+            if u.is_big_meter:
+                retention = 0.0
+            else:
+                u_rates = get_user_all_retention_rates(u.id)
+                pre_totals = pre_totals_by_user.get(u.id, {})
+                pre_calc = sum(pre_totals.get(f, 0.0) * u_rates.get(f, global_rate) for f in ret_fields)
+                ytd_before = min(RETENTION_CAP, max(0.0, pre_calc + u.retention_offset))
+                ret_raw = sum(tots.get(f, 0.0) * u_rates.get(f, global_rate) for f in ret_fields)
+                retention = max(0.0, min(ret_raw, RETENTION_CAP - ytd_before))
             insurance = u.insurance_deduction
             not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt)
             tax = round(gross * tax_v / 100) if not_enrolled else 0
             net = int(gross - retention - insurance - tax + u.fixed_salary)
             total_net += net
-            zone_badge = '南區' if zone == ZONE_SOUTH else '西區'
             dname = u.display_name if u.is_active else f'{u.display_name}（停用）'
             row_vals = [f'{dname}（{zone_badge}）', '領現' if u.payment_method == 'CASH' else '轉帳',
                         int(gross), int(retention), insurance, tax, u.fixed_salary, net]
