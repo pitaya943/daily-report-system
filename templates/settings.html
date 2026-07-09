@@ -199,6 +199,11 @@
               <td class="text-end" style="font-size:.82rem">
                 {% if u.fixed_salary > 0 %}
                   <span class="text-success fw-semibold">{{ u.fixed_salary | money }}</span>
+                  {% if u.fixed_salary_every_period %}
+                    <span class="badge bg-info text-dark ms-1" style="font-size:.6rem">每期</span>
+                  {% else %}
+                    <span class="badge bg-secondary ms-1" style="font-size:.6rem">10號</span>
+                  {% endif %}
                 {% else %}
                   <span class="text-muted">—</span>
                 {% endif %}
@@ -234,7 +239,7 @@
                   <i class="bi bi-bank2"></i>
                 </button>
                 <button class="btn btn-outline-success btn-sm py-0 px-2 ms-1"
-                        onclick="openFixedSalary({{ u.id }}, '{{ u.display_name|e }}', {{ u.fixed_salary }})"
+                        onclick="openFixedSalary({{ u.id }}, '{{ u.display_name|e }}', {{ u.fixed_salary }}, {{ 'true' if u.fixed_salary_every_period else 'false' }})"
                         title="設定固定薪資">
                   <i class="bi bi-cash-coin"></i>
                 </button>
@@ -939,13 +944,20 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <p class="small mb-2">帳戶：<strong id="fixedSalaryUsername"></strong></p>
-          <p class="small text-muted mb-3">固定薪資於每期 <strong>10 號發薪</strong>時加入，預設為 0（不啟用）。</p>
-          <label class="form-label small mb-1">固定薪資（NTD / 月）</label>
-          <div class="input-group input-group-sm">
+          <label class="form-label small mb-1">固定薪資（NTD / 期）</label>
+          <div class="input-group input-group-sm mb-3">
             <input type="number" name="fixed_salary" id="fixedSalaryAmount"
                    class="form-control" min="0" step="1" value="0">
             <span class="input-group-text">NTD</span>
           </div>
+          <div class="form-check mb-1">
+            <input class="form-check-input" type="checkbox" id="fixedSalaryEveryPeriod"
+                   name="fixed_salary_every_period" value="1">
+            <label class="form-check-label small" for="fixedSalaryEveryPeriod">
+              每期發放（不限 10 號發薪）
+            </label>
+          </div>
+          <p class="small text-muted mb-0">未勾選時僅於 10 號發薪日發放。</p>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
@@ -1128,10 +1140,11 @@ function toggleInsType() {
   // Disable the amount input when not shown so HTML5 validation skips it
   document.getElementById('insuranceAmount').disabled = !show;
 }
-function openFixedSalary(id, name, amount) {
+function openFixedSalary(id, name, amount, everyPeriod) {
   document.getElementById('fixedSalaryUsername').textContent = name;
   document.getElementById('fixedSalaryForm').action = '/settings/users/' + id + '/fixed-salary';
   document.getElementById('fixedSalaryAmount').value = amount;
+  document.getElementById('fixedSalaryEveryPeriod').checked = !!everyPeriod;
   var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('fixedSalaryModal'));
   modal.show();
 }

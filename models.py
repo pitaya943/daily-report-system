@@ -25,6 +25,7 @@ class User(UserMixin, db.Model):
     retention_offset    = db.Column(db.Integer,   nullable=False, default=0)           # ADMIN adjustment to YTD retention
     bank_account        = db.Column(db.String(200), nullable=True,  default=None)       # encrypted Fernet token (~88 chars); plaintext fallback = 14 digits
     fixed_salary        = db.Column(db.Integer,   nullable=False, default=0)           # fixed monthly salary paid on 10th payday
+    fixed_salary_every_period = db.Column(db.Boolean, nullable=False, default=False)  # if True, fixed_salary is paid every period (bypasses is_10th_payday)
     zone                = db.Column(db.String(10), nullable=False, default='西區')     # '西區' or '南區'
     is_big_meter        = db.Column(db.Boolean,   nullable=False, default=False)       # 大表用戶：使用大表工項計價，獨立管理
 

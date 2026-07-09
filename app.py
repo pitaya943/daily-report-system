@@ -442,6 +442,14 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(_text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS fixed_salary_every_period BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.commit()
+    except Exception:
+        pass
     # Column migration: add big meter fields to reports
     for _col in [
         'bm_50_down', 'bm_75_down', 'bm_100_down', 'bm_150_down',
@@ -1662,13 +1670,16 @@ def settings_fixed_salary(user_id):
     except (ValueError, TypeError):
         flash('請輸入有效的整數', 'danger')
         return redirect(url_for('settings'))
+    every_period = request.form.get('fixed_salary_every_period') == '1'
     old = target.fixed_salary
     target.fixed_salary = amount
+    target.fixed_salary_every_period = every_period
     target.updated_at = tw_now()
+    freq_label = '每期' if every_period else '10號'
     add_audit(current_user.id, 'ACCOUNT_UPDATE',
-              f'更新「{target.display_name}」固定薪資：{old} → {amount} NTD')
+              f'更新「{target.display_name}」固定薪資：{old} → {amount} NTD（{freq_label}發放）')
     db.session.commit()
-    flash(f'「{target.display_name}」固定薪資已更新為 {amount:,} NTD', 'success')
+    flash(f'「{target.display_name}」固定薪資已更新為 {amount:,} NTD（{freq_label}發放）', 'success')
     return redirect(url_for('settings'))
 
 
@@ -2955,7 +2966,8 @@ def salary():
 
                 ins = (u.insurance_deduction if u and u.insurance_deduction > 0 else 0) if is_10th_payday else 0
                 data['insurance_deduction'] = ins
-                fixed = (u.fixed_salary if u else 0) if (is_10th_payday or is_admin) else 0
+                every_period = bool(u and u.fixed_salary_every_period)
+                fixed = (u.fixed_salary if u else 0) if (is_10th_payday or every_period) else 0
                 data['fixed_salary'] = fixed
                 not_enrolled = (u.insurance_deduction == 0 and not u.tax_exempt) if u else True
                 data['tax_deduction'] = round(data['gross_salary'] * zone_tax / 100) if not_enrolled else 0
