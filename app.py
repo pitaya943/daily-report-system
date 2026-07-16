@@ -2330,7 +2330,7 @@ def materials_request():
     if not m:
         abort(404)
 
-    note = request.form.get('note', '').strip()[:200] or None
+    note = request.form.get('note', '').strip()[:50] or None
     req = MaterialRequest(user_id=current_user.id, material_id=material_id,
                           requested_quantity=qty, note=note, status='PENDING')
     db.session.add(req)
@@ -2751,15 +2751,19 @@ def materials_resolve_quarantine(material_id):
     m.quarantine_note = None
     db.session.commit()
     flash(f'「{m.name}」已完成審查', 'success')
-    return redirect(url_for('materials'))
+    return redirect(url_for('materials') + '#quarantineSection')
 
 
 @app.route('/admin/reset-materials', methods=['POST'])
 @admin_required
 def admin_reset_materials():
     _seed_materials_csv(reset=True)
+    cfg_label = db.session.get(SystemConfig, 'mat_last_import_name')
+    if cfg_label:
+        db.session.delete(cfg_label)
     add_audit(current_user.id, 'MATERIAL_RESET',
               f'ADMIN 重置材料庫存（共 {len(_MATERIALS_SEED)} 筆）')
+    db.session.commit()
     flash(f'材料庫存已重置，共載入 {len(_MATERIALS_SEED)} 筆資料', 'success')
     return redirect(url_for('materials'))
 

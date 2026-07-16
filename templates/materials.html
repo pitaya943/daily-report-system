@@ -64,8 +64,10 @@
             <th style="min-width:150px">材料名稱</th>
             <th style="min-width:90px">規格</th>
             <th class="text-center" style="min-width:38px">單位</th>
+            {% if current_user.role == 'ADMIN' %}
             <th class="text-center" style="min-width:62px">累計使用量</th>
             <th class="text-center" style="min-width:55px">實領量</th>
+            {% endif %}
             <th class="text-center" style="min-width:55px">庫存量</th>
             <th class="text-center" style="min-width:{% if current_user.role == 'ADMIN' %}190{% else %}70{% endif %}px">操作</th>
           </tr>
@@ -77,8 +79,10 @@
             <td>{{ m.name }}</td>
             <td class="text-muted small">{{ m.spec or '—' }}</td>
             <td class="text-center">{{ m.unit }}</td>
+            {% if current_user.role == 'ADMIN' %}
             <td class="text-center text-secondary">{{ m.cumulative_usage | mat_qty }}</td>
             <td class="text-center text-secondary">{{ m.received_quantity | mat_qty }}</td>
+            {% endif %}
             <td class="text-center fw-semibold
               {% if m.remaining_quantity | float <= 0 %}text-danger
               {% elif m.remaining_quantity | float <= 5 %}text-warning
@@ -142,7 +146,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-4">此分頁目前無材料</td></tr>
+          <tr><td colspan="{{ 8 if current_user.role == 'ADMIN' else 6 }}" class="text-center text-muted py-4">此分頁目前無材料</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -306,13 +310,13 @@
           <p class="mb-1 text-muted small" id="reqSpecRow"></p>
           <p class="mb-3">庫存：<strong id="reqStock"></strong> <span id="reqUnit"></span></p>
           <div class="mb-2">
-            <label class="form-label">申請數量</label>
-            <input type="number" name="quantity" class="form-control" min="1" max="99" required id="reqQty">
+            <label class="form-label">申請數量 <span class="text-danger">*</span></label>
+            <input type="number" name="quantity" class="form-control" min="1" max="99" step="1" required id="reqQty">
           </div>
           <div class="mb-2">
-            <label class="form-label">備註 <span class="text-muted small">（選填）</span></label>
+            <label class="form-label">備註 <span class="text-muted small">（選填，至多 50 字）</span></label>
             <input type="text" name="note" class="form-control form-control-sm"
-                   maxlength="200" placeholder="說明用途或其他備注">
+                   maxlength="50" placeholder="說明用途或其他備注">
           </div>
         </div>
         <div class="modal-footer">
@@ -340,14 +344,14 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <div class="alert alert-warning py-2 small mb-0">
-            <strong>此操作將清除所有材料及申請紀錄，並載入預設資料（85筆）。</strong><br>
+            <strong>此操作將清除所有材料及申請紀錄，並載入預設資料（94筆，數量全歸零）。</strong><br>
             此操作無法復原，請確認後再執行。
           </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
           <button type="submit" class="btn btn-danger btn-sm"
-                  onclick="return confirm('確定要清除所有資料並重置為預設85筆材料？')">
+                  onclick="return confirm('確定要清除所有資料並重置為預設94筆材料（數量歸零）？')">
             確定重置
           </button>
         </div>
@@ -538,6 +542,18 @@
 
 {% block scripts %}
 <script>
+// Scroll to quarantine section if hash matches (after resolve redirect)
+document.addEventListener('DOMContentLoaded', function() {
+  if (location.hash === '#quarantineSection') {
+    var el = document.getElementById('quarantineSection');
+    if (el) {
+      setTimeout(function() {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 120);
+    }
+  }
+});
+
 {% if current_user.role == 'USER' %}
 function openRequest(id, name, spec, unit, stock) {
   document.getElementById('reqMaterialId').value = id;
