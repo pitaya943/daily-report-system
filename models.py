@@ -147,9 +147,14 @@ class Report(db.Model):
 class Material(db.Model):
     __tablename__ = 'materials'
     id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), nullable=True)                                    # 材料編號
     name = db.Column(db.String(100), nullable=False)
+    spec = db.Column(db.String(200), nullable=True)                                   # 規格
     unit = db.Column(db.String(20), nullable=False)
-    remaining_quantity = db.Column(db.Integer, default=0)
+    cumulative_usage  = db.Column(db.Numeric(12, 3), nullable=False, default=0)       # 累積使用量
+    received_quantity = db.Column(db.Numeric(12, 3), nullable=False, default=0)       # 實領量
+    remaining_quantity = db.Column(db.Numeric(12, 3), nullable=False, default=0)      # 庫存量
+    tab_id     = db.Column(db.Integer, nullable=False, default=1)                     # 分頁 1-5
     sort_order = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=_tw_now)
     updated_at = db.Column(db.DateTime, default=_tw_now)

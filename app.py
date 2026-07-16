@@ -483,9 +483,156 @@ def _init_db():
                 conn.commit()
         except Exception:
             pass
+    # v1.0.7: Material major update — new columns + type upgrade
+    for _sql in [
+        "ALTER TABLE materials ADD COLUMN IF NOT EXISTS code VARCHAR(50)",
+        "ALTER TABLE materials ADD COLUMN IF NOT EXISTS spec VARCHAR(200)",
+        "ALTER TABLE materials ADD COLUMN IF NOT EXISTS cumulative_usage NUMERIC(12,3) NOT NULL DEFAULT 0",
+        "ALTER TABLE materials ADD COLUMN IF NOT EXISTS received_quantity NUMERIC(12,3) NOT NULL DEFAULT 0",
+        "ALTER TABLE materials ADD COLUMN IF NOT EXISTS tab_id INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE materials ALTER COLUMN remaining_quantity TYPE NUMERIC(12,3) USING remaining_quantity::NUMERIC(12,3)",
+    ]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(_text(_sql))
+                conn.commit()
+        except Exception:
+            pass
+    # Seed default tab names (idempotent)
+    try:
+        _tab_defaults = [('mat_tab_1_name', '全部材料')] + [(f'mat_tab_{i}_name', '') for i in range(2, 6)]
+        for _tk, _tv in _tab_defaults:
+            if not db.session.get(SystemConfig, _tk):
+                db.session.add(SystemConfig(key=_tk, value=_tv))
+        db.session.commit()
+    except Exception:
+        pass
+
+
+def _seed_materials_csv():
+    """Seed 90 materials from provided CSV. Upserts by code; skips if already seeded."""
+    _CSV = [
+        # (code, name, spec, unit, cumulative_usage, received_quantity, remaining_quantity)
+        ('01-01-012N', '防腐蝕型伸縮止水鐵表由令', '13mm', '只', 47, 64, 17),
+        ('01-01-013N', '防腐蝕型伸縮止水鐵表由令', '20mm', '只', 93.001, 125, 31.999),
+        ('01-01-014N', '防腐蝕型伸縮止水鐵表由令', '25mm', '只', 48, 73, 25),
+        ('01-01-015N', '防腐蝕型伸縮止水鐵表由令', '40mm', '只', 18, 28, 10),
+        ('01-01-029',  '鐵用表由令', '13mm', '只', 23, 23, 0),
+        ('01-01-030',  '鐵用表由令', '20mm', '只', 35, 35, 0),
+        ('01-01-031',  '鐵用表由令', '25mm', '只', 25, 35, 10),
+        ('01-01-032',  '鐵用表由令', '40mm', '只', 11, 20, 9),
+        ('01-01-033',  '鐵卡表由令', '13mm', '只', 4, 4, 0),
+        ('01-01-034',  '鐵卡表由令', '20mm', '只', 3, 3, 0),
+        ('01-01-035',  '鐵卡表由令', '25mm', '只', 2, 4, 2),
+        ('01-01-090',  '水道記管後接頭', '20mmX13mm(每組2只)', '組', 15, 15, 0),
+        ('01-01-091',  '水道記管後接頭', '25mmX20mm(每組2只)', '組', 40, 40, 0),
+        ('01-01-092',  '水道記管後接頭', '40mmX25mm(每組2只)', '組', 40, 40, 0),
+        ('01-03-337',  '延長式水表箱(鐵活框鑄框)', '大型', '只', 1, 2, 1),
+        ('01-04-081',  '不銹鋼管用伸縮止水管（鐵接頭）', '40mm', '只', 1, 1, 0),
+        ('02-01-114',  '塑膠壓接頭', '13(CNS16)mm', '只', 2, 2, 0),
+        ('02-01-115',  '塑膠壓接頭', '20mm', '只', 30, 30, 0),
+        ('02-01-136',  '塑膠彎接頭', '13(CNS16)mm', '只', 10, 10, 0),
+        ('02-01-137',  '塑膠彎接頭', '20mm', '只', 22, 30, 8),
+        ('02-01-138',  '塑膠彎接頭', '25mm', '只', 20, 20, 0),
+        ('02-01-139',  '塑膠彎接頭', '40mm', '只', 2, 10, 8),
+        ('02-05-001',  '聯管式塑膠管', '13(CNS16)mmX4M', 'M', 8, 8, 0),
+        ('02-05-002',  '聯管式塑膠管', '20mmX4m', 'M', 40, 40, 0),
+        ('02-05-003',  '聯管式塑膠管', '25mmX4m', 'M', 40, 40, 0),
+        ('02-05-019',  '聯管式塑膠彎頭', '13(CNS16)mmx90°', '只', 20, 20, 0),
+        ('02-05-020',  '聯管式塑膠彎頭', '20mmX90°', '只', 50, 50, 0),
+        ('02-05-021',  '聯管式塑膠彎頭', '25mmX90°', '只', 30, 30, 0),
+        ('02-05-022',  '聯管式塑膠彎頭', '40mmX90°', '只', 10, 10, 0),
+        ('02-05-116',  '聯管式塑膠壓接頭', '25mm', '只', 9, 15, 6),
+        ('02-05-117',  '聯管式塑膠壓接頭', '40mm', '只', 5, 10, 5),
+        ('02-05-146',  '聯管式塑膠管用護套帽', '100公分/卷', '公分', 1000, 1000, 0),
+        ('05-05-001',  '水通線', '3條(白鐵線)', '公尺', 89.324, 70, 0),
+        ('05-08-001',  '鐵螺絲', '', '只', 89324, 57000, 0),
+        ('06-01-001',  '水表用墊片', '13mm', '只', 1000, 2300, 1300),
+        ('06-01-002',  '水表用墊片', '20mm', '只', 1701, 4200, 2499),
+        ('06-01-003',  '水表用墊片', '25mm', '只', 4700, 7900, 3200),
+        ('06-01-004',  '水表用墊片', '40mm', '只', 1502, 2500, 998),
+        ('07-01-001',  '新表-臥式型', '13mm', '只', 4023, 4821, 798),
+        ('07-01-002',  '新表-臥式型', '20mm', '只', 39853, 44882, 5029),
+        ('07-01-003',  '新表-臥式型', '25mm', '只', 40171, 42430, 2259),
+        ('07-01-004',  '新表-臥式型', '40mm', '只', 2034, 2070, 36),
+        ('07-01-015',  '新表-臥式型', '50mm', '只', 11, 11, 0),
+        ('07-01-805',  '新表-臥式電子式(不含導管和顯示元件)', '50mm(保固8年,臥式磁置橫軸)', '只', 47, 48, 1),
+        ('07-01-806',  '新表-臥式電子式(不含導管和顯示元件)', '75mm(保固8年,臥式磁置橫軸)', '只', 61, 66, 5),
+        ('07-01-807',  '新表-臥式電子式(不含導管和顯示元件)', '100mm(保固8年,臥式磁置橫軸)', '只', 25, 31, 6),
+        ('07-01-808',  '新表-臥式電子式(不含導管和顯示元件)', '150mm(保固8年,臥式磁置橫軸)', '只', 3, 4, 1),
+        ('07-01-818',  '新表-臥式直電子式', '50mm(保固8年)', '只', 1, 1, 0),
+        ('07-01-8242', '自動讀表用水道計(2024年購案)', '20mm(保固8年)', '只', 117, 117, 0),
+        ('07-01-8243', '自動讀表用水道計(2024年購案)', '25mm(保固8年)', '只', 32, 32, 0),
+        ('07-01-8244', '自動讀表用水道計(2024年購案)', '40mm(保固8年)', '只', 13, 13, 0),
+        ('07-06-001',  '備用表-臥式型', '13mm', '只', 101, 101, 0),
+        ('07-06-002',  '備用表-臥式型', '20mm', '只', 1238, 1240, 2),
+        ('07-06-003',  '備用表-臥式型', '25mm', '只', 1133, 1090, 0),
+        ('07-06-004',  '備用表-臥式型', '40mm', '只', 200, 200, 0),
+        ('07-06-015',  '備用表-臥式型', '50mm', '只', 5, 10, 5),
+        ('07-06-021',  '備用表-臥式直電子式', '13mm', '只', 15, 17, 2),
+        ('07-06-021A', '備用表-臥式直電子式(特案用表)', '13mm', '只', 5, 5, 0),
+        ('07-06-022',  '備用表-臥式直電子式', '20mm', '只', 6, 12, 6),
+        ('07-06-022A', '備用表-臥式直電子式(特案用表)', '20mm', '只', 30, 31, 1),
+        ('07-06-023',  '備用表-臥式直電子式', '25mm', '只', 1, 3, 2),
+        ('07-06-023A', '備用表-臥式直電子式(特案用表)', '25mm', '只', 32, 37, 5),
+        ('07-06-024',  '備用表-臥式直電子式', '40mm', '只', 31, 31, 0),
+        ('07-06-024A', '備用表-臥式直電子式(特案用表)', '40mm', '只', 7, 7, 0),
+        ('07-06-125',  '備用表-臥式電子式(含顯示元件和無線傳輸模組)', '50mm(臥式磁置橫軸)', '只', 1, 1, 0),
+        ('07-06-2022', '備用表-109年起通測試用表(順序2)', '20mm', '只', 2, 2, 0),
+        ('07-06-2023', '備用表-109年起通測試用表(順序2)', '25mm', '只', 17, 17, 0),
+        ('07-06-2024', '備用表-109年起通測試用表(順序2)', '40mm', '只', 1, 1, 0),
+        ('07-06-2034', '備用表-109年起通測試用表(順序3)', '40mm', '只', 1, 2, 1),
+        ('07-06-2053', '備用表-109年起通測試用表(順序5)', '25mm', '只', 1, 1, 0),
+        ('07-06-2062', '備用表-109年起通測試用表(順序6)', '20mm', '只', 38, 38, 0),
+        ('07-06-2063', '備用表-109年起通測試用表(順序6)', '25mm', '只', 5, 5, 0),
+        ('07-06-2064', '備用表-109年起通測試用表(順序6)', '40mm', '只', 1, 1, 0),
+        ('07-06-2073', '備用表-109年起通測試用表(順序7)', '25mm', '只', 5, 5, 0),
+        ('07-06-805',  '備用表-臥式電子式(不含導管和顯示元件)', '50mm(臥式磁置橫軸)', '只', 2, 4, 2),
+        ('07-06-806',  '備用表-臥式電子式(不含導管和顯示元件)', '75mm(臥式磁置橫軸)', '只', 2, 2, 0),
+        ('07-06-807',  '備用表-臥式電子式(不含導管和顯示元件)', '100mm(臥式磁置橫軸)', '只', 1, 0, 0),
+        ('07-06-818',  '備用表-臥式直電子式', '50mm(保固8年)', '只', 2, 2, 0),
+        ('07-06-8202', '備用表-自動讀表用水道計', '20mm(保固8年)', '只', 10, 10, 0),
+        ('07-06-8203', '備用表-自動讀表用水道計', '25mm(保固8年)', '只', 19, 19, 0),
+        ('07-06-8204', '備用表-自動讀表用水道計', '40mm(保固8年)', '只', 14, 16, 2),
+        ('07-06-822',  '備用表-臥式直電子式', '20mm(保固8年)', '只', 1, 1, 0),
+        ('07-06-8222', '備用表-自動讀表用水道計(2022年購案)', '20mm(保固8年)', '只', 2, 2, 0),
+        ('07-06-8223', '備用表-自動讀表用水道計(2022年購案)', '25mm(保固8年)', '只', 1, 1, 0),
+        ('07-06-8224', '備用表-自動讀表用水道計(2022年購案)', '40mm(保固8年)', '只', 2, 4, 2),
+        ('07-06-8243', '備用表-自動讀表用水道計(2024年購案)', '25mm(保固8年)', '只', 2, 2, 0),
+        ('07-06-8244', '備用表-自動讀表用水道計(2024年購案)', '40mm(保固8年)', '只', 3, 3, 0),
+        ('07-06-842',  '備用表-20mm計費表組', '20mm(保固8年)', '只', 137, 153, 16),
+        ('07-06-843',  '備用表-25mm計費表組', '25mm(保固8年)', '只', 20, 32, 12),
+        ('07-06-844',  '備用表-40mm計費表組', '40mm(保固8年)', '只', 2, 3, 1),
+        ('07-06-862',  '備用表-20mm計費表組含計量表傳輸模組(4G含以上)', '20mm(保固8年)', '組', 1, 1, 0),
+        ('07-06-863',  '備用表-25mm計費表組含計量表傳輸模組(4G含以上)', '25mm(保固8年)', '組', 7, 7, 0),
+        ('07-06-864',  '備用表-40mm計費表組含計量表傳輸模組(4G含以上)', '40mm(保固8年)', '組', 9, 12, 3),
+        ('07-09-006',  '顯示器', '詳規範', '只', 1, 35, 34),
+    ]
+    from decimal import Decimal
+    for i, (code, name, spec, unit, cu, rq, stock) in enumerate(_CSV):
+        m = Material.query.filter_by(code=code).first()
+        if not m:
+            m = Material()
+            db.session.add(m)
+            m.sort_order = (i + 1) * 10
+        m.code = code
+        m.name = name
+        m.spec = spec or None
+        m.unit = unit
+        m.cumulative_usage  = Decimal(str(cu))
+        m.received_quantity = Decimal(str(rq))
+        m.remaining_quantity = Decimal(str(stock))
+        m.tab_id = 1
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'_seed_materials_csv failed: {e}')
+
 
 with app.app_context():
     _init_db()
+    _seed_materials_csv()
 
 
 class SimplePagination:
@@ -548,6 +695,18 @@ def qty_filter(value):
         return str(int(v)) if v == int(v) else f'{v:.1f}'
     except (TypeError, ValueError):
         return ''
+
+
+@app.template_filter('mat_qty')
+def mat_qty_filter(value):
+    """Display material quantity: integer if whole, else trimmed decimal."""
+    if value is None:
+        return '0'
+    try:
+        f = float(value)
+        return str(int(f)) if f == int(f) else f'{f:.3f}'.rstrip('0')
+    except (TypeError, ValueError):
+        return '0'
 
 
 @app.template_filter('report_json')
@@ -2086,7 +2245,23 @@ def settings_reset_password(user_id):
 @app.route('/materials')
 @login_required
 def materials():
-    all_materials = Material.query.order_by(Material.sort_order, Material.id).all()
+    # Load tab names from SystemConfig
+    tab_names = {}
+    for i in range(1, 6):
+        cfg = db.session.get(SystemConfig, f'mat_tab_{i}_name')
+        tab_names[i] = cfg.value if cfg else ('' if i > 1 else '全部材料')
+
+    # Determine active tab (default to first visible tab)
+    visible_tabs = [i for i in range(1, 6) if tab_names.get(i)]
+    try:
+        active_tab = int(request.args.get('tab', visible_tabs[0] if visible_tabs else 1))
+    except (ValueError, TypeError):
+        active_tab = visible_tabs[0] if visible_tabs else 1
+
+    tab_materials = (Material.query
+                     .filter_by(tab_id=active_tab)
+                     .order_by(Material.sort_order, Material.id).all())
+    all_materials = Material.query.order_by(Material.tab_id, Material.sort_order, Material.id).all()
 
     my_requests = None
     if current_user.role == 'USER':
@@ -2095,12 +2270,15 @@ def materials():
                        .order_by(MaterialRequest.created_at.desc()).all())
         users_dict = {current_user.id: current_user}
     else:
-        # ADMIN: load only users with active requests
         _req_uids = {r.user_id for r in MaterialRequest.query.with_entities(MaterialRequest.user_id).all()}
         users_dict = {u.id: u for u in User.query.filter(User.id.in_(_req_uids)).all()} if _req_uids else {}
 
     return render_template('materials.html',
+                           tab_materials=tab_materials,
                            all_materials=all_materials,
+                           tab_names=tab_names,
+                           visible_tabs=visible_tabs,
+                           active_tab=active_tab,
                            my_requests=my_requests,
                            users_dict=users_dict)
 
@@ -2158,44 +2336,71 @@ def materials_cancel_request(req_id):
 @app.route('/materials/add', methods=['POST'])
 @admin_required
 def materials_add():
+    from decimal import Decimal, InvalidOperation
+    code = request.form.get('code', '').strip() or None
     name = request.form.get('name', '').strip()
+    spec = request.form.get('spec', '').strip() or None
     unit = request.form.get('unit', '').strip()
     try:
-        qty = max(0, min(9999, int(request.form.get('quantity', 0))))
+        tab_id = max(1, min(5, int(request.form.get('tab_id', 1))))
     except (ValueError, TypeError):
-        qty = 0
+        tab_id = 1
+    def _parse_dec(key, default=0):
+        try:
+            return max(Decimal('0'), Decimal(str(request.form.get(key, default) or default)))
+        except InvalidOperation:
+            return Decimal('0')
+    received   = _parse_dec('received_quantity')
+    remaining  = _parse_dec('remaining_quantity')
+    cumulative = _parse_dec('cumulative_usage')
 
     if not name or not unit:
         flash('材料名稱和單位不能為空', 'danger')
     else:
-        max_order = db.session.query(db.func.max(Material.sort_order)).scalar() or 0
-        m = Material(name=name, unit=unit, remaining_quantity=qty, sort_order=max_order + 1)
+        max_order = (db.session.query(db.func.max(Material.sort_order))
+                     .filter(Material.tab_id == tab_id).scalar() or 0)
+        m = Material(code=code, name=name, spec=spec, unit=unit,
+                     cumulative_usage=cumulative, received_quantity=received,
+                     remaining_quantity=remaining, tab_id=tab_id,
+                     sort_order=max_order + 10)
         db.session.add(m)
         add_audit(current_user.id, 'MATERIAL_ADD',
-                  f'新增材料「{name}」（{unit}），初始數量：{qty}')
+                  f'新增材料「{name}」（{unit}），庫存：{remaining}')
         db.session.commit()
         flash(f'材料「{name}」已新增', 'success')
-    return redirect(url_for('materials'))
+    return redirect(url_for('materials', tab=tab_id))
 
 
 @app.route('/materials/<int:material_id>/update', methods=['POST'])
 @admin_required
 def materials_update(material_id):
+    from decimal import Decimal, InvalidOperation
     m = db.session.get(Material, material_id)
     if not m:
         abort(404)
-    try:
-        new_qty = max(0, min(9999, int(request.form.get('quantity', 0))))
-    except (ValueError, TypeError):
-        new_qty = 0
-    old_qty = m.remaining_quantity
-    m.remaining_quantity = new_qty
+    def _parse_dec(key, fallback):
+        try:
+            return max(Decimal('0'), Decimal(str(request.form.get(key, fallback) or fallback)))
+        except InvalidOperation:
+            return Decimal(str(fallback))
+    old_stock = m.remaining_quantity
+    m.cumulative_usage  = _parse_dec('cumulative_usage', m.cumulative_usage)
+    m.received_quantity = _parse_dec('received_quantity', m.received_quantity)
+    m.remaining_quantity = _parse_dec('remaining_quantity', m.remaining_quantity)
+    new_name = request.form.get('name', '').strip()
+    new_spec = request.form.get('spec', '').strip()
+    new_unit = request.form.get('unit', '').strip()
+    if new_name:
+        m.name = new_name
+    if new_unit:
+        m.unit = new_unit
+    m.spec = new_spec or None
     m.updated_at = tw_now()
     add_audit(current_user.id, 'MATERIAL_UPDATE',
-              f'調整「{m.name}」數量：{old_qty}{m.unit} → {new_qty}{m.unit}')
+              f'調整「{m.name}」庫存：{old_stock}{m.unit} → {m.remaining_quantity}{m.unit}')
     db.session.commit()
-    flash(f'「{m.name}」數量已更新', 'success')
-    return redirect(url_for('materials'))
+    flash(f'「{m.name}」已更新', 'success')
+    return redirect(url_for('materials', tab=m.tab_id))
 
 
 @app.route('/materials/<int:material_id>/delete', methods=['POST'])
@@ -2204,13 +2409,13 @@ def materials_delete(material_id):
     m = db.session.get(Material, material_id)
     if not m:
         abort(404)
-    name = m.name
+    name, tab = m.name, m.tab_id
     MaterialRequest.query.filter_by(material_id=material_id).delete()
     db.session.delete(m)
     add_audit(current_user.id, 'MATERIAL_DELETE', f'刪除材料「{name}」及其所有申請紀錄')
     db.session.commit()
     flash(f'材料「{name}」已刪除', 'success')
-    return redirect(url_for('materials'))
+    return redirect(url_for('materials', tab=tab))
 
 
 @app.route('/materials/<int:material_id>/move-up', methods=['POST'])
@@ -2219,12 +2424,13 @@ def materials_move_up(material_id):
     m = db.session.get(Material, material_id)
     if not m:
         abort(404)
-    prev = (Material.query.filter(Material.sort_order < m.sort_order)
+    prev = (Material.query.filter(Material.tab_id == m.tab_id,
+                                  Material.sort_order < m.sort_order)
             .order_by(Material.sort_order.desc()).first())
     if prev:
         m.sort_order, prev.sort_order = prev.sort_order, m.sort_order
         db.session.commit()
-    return redirect(url_for('materials'))
+    return redirect(url_for('materials', tab=m.tab_id))
 
 
 @app.route('/materials/<int:material_id>/move-down', methods=['POST'])
@@ -2233,11 +2439,49 @@ def materials_move_down(material_id):
     m = db.session.get(Material, material_id)
     if not m:
         abort(404)
-    nxt = (Material.query.filter(Material.sort_order > m.sort_order)
+    nxt = (Material.query.filter(Material.tab_id == m.tab_id,
+                                 Material.sort_order > m.sort_order)
            .order_by(Material.sort_order.asc()).first())
     if nxt:
         m.sort_order, nxt.sort_order = nxt.sort_order, m.sort_order
         db.session.commit()
+    return redirect(url_for('materials', tab=m.tab_id))
+
+
+@app.route('/materials/<int:material_id>/set-tab', methods=['POST'])
+@admin_required
+def materials_set_tab(material_id):
+    m = db.session.get(Material, material_id)
+    if not m:
+        abort(404)
+    old_tab = m.tab_id
+    try:
+        new_tab = max(1, min(5, int(request.form.get('tab_id', 1))))
+    except (ValueError, TypeError):
+        new_tab = 1
+    m.tab_id = new_tab
+    max_order = (db.session.query(db.func.max(Material.sort_order))
+                 .filter(Material.tab_id == new_tab).scalar() or 0)
+    m.sort_order = max_order + 10
+    m.updated_at = tw_now()
+    db.session.commit()
+    flash(f'「{m.name}」已移至分頁 {new_tab}', 'success')
+    current_tab = request.form.get('current_tab', str(old_tab))
+    return redirect(url_for('materials', tab=current_tab))
+
+
+@app.route('/settings/mat-tabs', methods=['POST'])
+@admin_required
+def settings_mat_tabs():
+    for i in range(1, 6):
+        name = request.form.get(f'tab_{i}_name', '').strip()
+        cfg = db.session.get(SystemConfig, f'mat_tab_{i}_name')
+        if cfg:
+            cfg.value = name
+        else:
+            db.session.add(SystemConfig(key=f'mat_tab_{i}_name', value=name))
+    db.session.commit()
+    flash('分頁名稱已更新', 'success')
     return redirect(url_for('materials'))
 
 
@@ -2635,7 +2879,10 @@ def approve_material(req_id):
 
     old_qty = m.remaining_quantity if m else 0
     if m:
-        m.remaining_quantity = max(0, m.remaining_quantity - req.requested_quantity)
+        from decimal import Decimal
+        issued = Decimal(str(req.requested_quantity))
+        m.remaining_quantity  = max(Decimal('0'), (m.remaining_quantity  or Decimal('0')) - issued)
+        m.cumulative_usage    = (m.cumulative_usage or Decimal('0')) + issued
         m.updated_at = tw_now()
 
     mname = m.name if m else '?'

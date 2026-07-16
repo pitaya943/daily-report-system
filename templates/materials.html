@@ -1,81 +1,139 @@
 {% extends 'base.html' %}
-{% block title %}剩餘材料{% endblock %}
-{% block page_title %}<i class="bi bi-box-seam me-2"></i>剩餘材料{% endblock %}
+{% block title %}材料庫存{% endblock %}
+{% block page_title %}<i class="bi bi-box-seam me-2"></i>材料庫存{% endblock %}
 
 {% block content %}
 
-<!-- Materials list -->
-<div class="card mb-4">
-  <div class="card-header d-flex justify-content-between align-items-center
-              {% if current_user.role == 'ADMIN' %}bg-success text-white{% endif %}">
-    <span><i class="bi bi-boxes me-1"></i>材料庫存</span>
-    {% if current_user.role == 'ADMIN' %}
-    <button class="btn btn-sm btn-light" data-bs-toggle="modal" data-bs-target="#addMaterialModal">
+<!-- Tab navigation -->
+<div class="d-flex align-items-center mb-3 flex-wrap gap-2">
+  <ul class="nav nav-tabs flex-grow-1 mb-0" id="materialTabs">
+    {% for i in visible_tabs %}
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == i %}active fw-semibold{% endif %}"
+         href="{{ url_for('materials', tab=i) }}">
+        {{ tab_names[i] }}
+      </a>
+    </li>
+    {% endfor %}
+    {% if not visible_tabs %}
+    <li class="nav-item"><span class="nav-link disabled">尚未設定分頁</span></li>
+    {% endif %}
+  </ul>
+
+  {% if current_user.role == 'ADMIN' %}
+  <div class="d-flex gap-2 align-items-center ms-auto">
+    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#tabManagerModal">
+      <i class="bi bi-gear me-1"></i>管理分頁
+    </button>
+    <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#addMaterialModal">
       <i class="bi bi-plus-lg me-1"></i>新增材料
     </button>
-    {% endif %}
   </div>
+  {% endif %}
+</div>
+
+<!-- Materials table -->
+<div class="card mb-4">
   <div class="card-body p-0">
-    <table class="table table-hover table-sm mb-0">
-      <thead>
-        <tr>
-          <th>#</th><th>材料名稱</th><th>單位</th>
-          <th class="text-center">剩餘數量</th>
-          <th class="text-center">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for m in all_materials %}
-        <tr>
-          <td class="text-muted">{{ loop.index }}</td>
-          <td>{{ m.name }}</td>
-          <td>{{ m.unit }}</td>
-          <td class="text-center fw-semibold
-            {% if m.remaining_quantity <= 5 %}text-danger{% elif m.remaining_quantity <= 20 %}text-warning{% else %}text-success{% endif %}">
-            {{ m.remaining_quantity }}
-          </td>
-          <td class="text-center" style="white-space:nowrap">
-            {% if current_user.role == 'USER' %}
-            <button class="btn btn-outline-primary btn-sm py-0 px-2"
-                    onclick="openRequest({{ m.id }}, '{{ m.name }}', '{{ m.unit }}', {{ m.remaining_quantity }})">
-              <i class="bi bi-cart-plus me-1"></i>申請
-            </button>
-            {% else %}
-            <!-- 排序移動 -->
-            <form method="POST" action="{{ url_for('materials_move_up', material_id=m.id) }}" style="display:inline">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1"
-                      {% if loop.first %}disabled{% endif %} title="上移">
-                <i class="bi bi-chevron-up"></i>
-              </button>
-            </form>
-            <form method="POST" action="{{ url_for('materials_move_down', material_id=m.id) }}" style="display:inline">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1 me-1"
-                      {% if loop.last %}disabled{% endif %} title="下移">
-                <i class="bi bi-chevron-down"></i>
-              </button>
-            </form>
-            <button class="btn btn-outline-warning btn-sm py-0 px-2"
-                    onclick="openUpdate({{ m.id }}, '{{ m.name }}', '{{ m.unit }}', {{ m.remaining_quantity }})">
-              <i class="bi bi-pencil me-1"></i>調整
-            </button>
-            <form method="POST" action="{{ url_for('materials_delete', material_id=m.id) }}"
-                  style="display:inline"
-                  onsubmit="return confirm('確定刪除材料「{{ m.name }}」？相關申請紀錄也將一併刪除，此操作無法復原。')">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2 ms-1">
-                <i class="bi bi-trash"></i>
-              </button>
-            </form>
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0 align-middle" style="font-size:.82rem">
+        <thead class="table-light">
+          <tr>
+            {% if current_user.role == 'ADMIN' %}
+            <th style="min-width:80px">材料編號</th>
             {% endif %}
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="text-center text-muted py-3">尚無材料</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            <th style="min-width:160px">材料名稱</th>
+            <th style="min-width:100px">規格</th>
+            <th class="text-center" style="min-width:40px">單位</th>
+            {% if current_user.role == 'ADMIN' %}
+            <th class="text-center" style="min-width:65px">累積使用量</th>
+            <th class="text-center" style="min-width:55px">實領量</th>
+            {% endif %}
+            <th class="text-center" style="min-width:55px">庫存量</th>
+            <th class="text-center" style="min-width:{% if current_user.role == 'ADMIN' %}200{% else %}80{% endif %}px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in tab_materials %}
+          <tr>
+            {% if current_user.role == 'ADMIN' %}
+            <td class="text-muted" style="font-size:.75rem">{{ m.code or '—' }}</td>
+            {% endif %}
+            <td>{{ m.name }}</td>
+            <td class="text-muted">{{ m.spec or '—' }}</td>
+            <td class="text-center">{{ m.unit }}</td>
+            {% if current_user.role == 'ADMIN' %}
+            <td class="text-center text-muted">{{ m.cumulative_usage | mat_qty }}</td>
+            <td class="text-center text-muted">{{ m.received_quantity | mat_qty }}</td>
+            {% endif %}
+            <td class="text-center fw-semibold
+              {% if m.remaining_quantity | float <= 0 %}text-danger
+              {% elif m.remaining_quantity | float <= 5 %}text-warning
+              {% else %}text-success{% endif %}">
+              {{ m.remaining_quantity | mat_qty }}
+            </td>
+            <td class="text-center" style="white-space:nowrap">
+              {% if current_user.role == 'USER' %}
+              <button class="btn btn-outline-primary btn-sm py-0 px-2"
+                      onclick="openRequest({{ m.id }}, '{{ m.name | e }}', '{{ m.spec or '' | e }}', '{{ m.unit | e }}', {{ m.remaining_quantity | float }})"
+                      {% if m.remaining_quantity | float <= 0 %}disabled{% endif %}>
+                <i class="bi bi-cart-plus me-1"></i>申請
+              </button>
+              {% else %}
+              <form method="POST" action="{{ url_for('materials_move_up', material_id=m.id) }}" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1"
+                        {% if loop.first %}disabled{% endif %} title="上移">
+                  <i class="bi bi-chevron-up"></i>
+                </button>
+              </form>
+              <form method="POST" action="{{ url_for('materials_move_down', material_id=m.id) }}" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1"
+                        {% if loop.last %}disabled{% endif %} title="下移">
+                  <i class="bi bi-chevron-down"></i>
+                </button>
+              </form>
+              {% if visible_tabs | length > 1 %}
+              <div class="dropdown d-inline-block ms-1">
+                <button class="btn btn-outline-info btn-sm py-0 px-2 dropdown-toggle" data-bs-toggle="dropdown">移至</button>
+                <ul class="dropdown-menu dropdown-menu-end" style="min-width:8rem">
+                  {% for tid in visible_tabs if tid != m.tab_id %}
+                  <li>
+                    <form method="POST" action="{{ url_for('materials_set_tab', material_id=m.id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="tab_id" value="{{ tid }}">
+                      <input type="hidden" name="current_tab" value="{{ active_tab }}">
+                      <button type="submit" class="dropdown-item py-1 small">{{ tab_names[tid] }}</button>
+                    </form>
+                  </li>
+                  {% endfor %}
+                </ul>
+              </div>
+              {% endif %}
+              <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
+                      onclick="openUpdate({{ m.id }}, '{{ m.code or '' | e }}', '{{ m.name | e }}', '{{ m.spec or '' | e }}', '{{ m.unit | e }}',
+                               {{ m.cumulative_usage | float }}, {{ m.received_quantity | float }}, {{ m.remaining_quantity | float }})">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form method="POST" action="{{ url_for('materials_delete', material_id=m.id) }}"
+                    style="display:inline"
+                    onsubmit="return confirm('確定刪除材料「{{ m.name }}」？相關申請紀錄也將一併刪除，此操作無法復原。')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2 ms-1">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="{% if current_user.role == 'ADMIN' %}8{% else %}5{% endif %}"
+                  class="text-center text-muted py-4">此分頁目前無材料</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -101,20 +159,14 @@
           <td style="font-size:.8rem; max-width:120px; word-break:break-all;">{{ req.note or '' }}</td>
           <td style="font-size:.8rem">{{ req.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td class="text-center">
-            {% if req.status == 'PENDING' %}
-              <span class="badge bg-warning text-dark">待審核</span>
-            {% elif req.status == 'APPROVED' %}
-              <span class="badge bg-success">已核准</span>
-            {% else %}
-              <span class="badge bg-danger">已駁回</span>
-            {% endif %}
+            {% if req.status == 'PENDING' %}<span class="badge bg-warning text-dark">待審核</span>
+            {% elif req.status == 'APPROVED' %}<span class="badge bg-success">已核准</span>
+            {% else %}<span class="badge bg-danger">已駁回</span>{% endif %}
           </td>
           <td class="text-center">
             {% if req.status == 'PENDING' %}
-            <form method="POST"
-                  action="{{ url_for('materials_cancel_request', req_id=req.id) }}"
-                  style="display:inline"
-                  onsubmit="return confirm('確定取消此申請？')">
+            <form method="POST" action="{{ url_for('materials_cancel_request', req_id=req.id) }}"
+                  style="display:inline" onsubmit="return confirm('確定取消此申請？')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2">
                 <i class="bi bi-x-circle me-1"></i>取消
@@ -126,7 +178,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="5" class="text-center text-muted py-3">尚無申請紀錄</td></tr>
+        <tr><td colspan="6" class="text-center text-muted py-3">尚無申請紀錄</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -149,11 +201,11 @@
         <input type="hidden" name="material_id" id="reqMaterialId">
         <div class="modal-body">
           <p class="mb-1">材料：<strong id="reqMaterialName"></strong></p>
-          <p class="mb-3">目前庫存：<strong id="reqStock"></strong> <span id="reqUnit"></span></p>
+          <p class="mb-1 text-muted small" id="reqSpecRow"></p>
+          <p class="mb-3">庫存：<strong id="reqStock"></strong> <span id="reqUnit"></span></p>
           <div class="mb-2">
             <label class="form-label">申請數量</label>
-            <input type="number" name="quantity" class="form-control"
-                   min="1" max="99" required id="reqQty">
+            <input type="number" name="quantity" class="form-control" min="1" max="99" required id="reqQty">
           </div>
           <div class="mb-2">
             <label class="form-label">備註 <span class="text-muted small">（選填）</span></label>
@@ -171,10 +223,12 @@
 </div>
 {% endif %}
 
-<!-- ─── ADMIN: Add Material Modal ───────────────────────── -->
+<!-- ─── ADMIN modals ──────────────────────────────────────── -->
 {% if current_user.role == 'ADMIN' %}
+
+<!-- Add Material Modal -->
 <div class="modal fade" id="addMaterialModal" tabindex="-1">
-  <div class="modal-dialog modal-sm">
+  <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header bg-success text-white">
         <h5 class="modal-title"><i class="bi bi-plus-lg me-2"></i>新增材料</h5>
@@ -184,17 +238,43 @@
             onsubmit="return confirm('確定新增此材料？')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label">材料名稱</label>
-            <input type="text" name="name" class="form-control" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">單位（如：個、箱、公尺）</label>
-            <input type="text" name="unit" class="form-control" required>
-          </div>
-          <div class="mb-2">
-            <label class="form-label">初始數量</label>
-            <input type="number" name="quantity" class="form-control" value="0" min="0">
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label small">材料編號</label>
+              <input type="text" name="code" class="form-control form-control-sm" maxlength="50" placeholder="如 07-01-001">
+            </div>
+            <div class="col-md-8">
+              <label class="form-label small">材料名稱 <span class="text-danger">*</span></label>
+              <input type="text" name="name" class="form-control form-control-sm" required maxlength="100">
+            </div>
+            <div class="col-md-7">
+              <label class="form-label small">規格</label>
+              <input type="text" name="spec" class="form-control form-control-sm" maxlength="200" placeholder="如 13mm">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">單位 <span class="text-danger">*</span></label>
+              <input type="text" name="unit" class="form-control form-control-sm" required maxlength="20" placeholder="只">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">分頁</label>
+              <select name="tab_id" class="form-select form-select-sm">
+                {% for i in range(1,6) %}{% if tab_names.get(i) %}
+                <option value="{{ i }}" {% if i == active_tab %}selected{% endif %}>{{ tab_names[i] }}</option>
+                {% endif %}{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">累積使用量</label>
+              <input type="number" name="cumulative_usage" class="form-control form-control-sm" value="0" min="0" step="0.001">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">實領量</label>
+              <input type="number" name="received_quantity" class="form-control form-control-sm" value="0" min="0" step="0.001">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">庫存量</label>
+              <input type="number" name="remaining_quantity" class="form-control form-control-sm" value="0" min="0" step="0.001">
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -206,23 +286,47 @@
   </div>
 </div>
 
-<!-- ADMIN: Update Quantity Modal -->
+<!-- Update Material Modal -->
 <div class="modal fade" id="updateModal" tabindex="-1">
-  <div class="modal-dialog modal-sm">
+  <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header bg-warning">
-        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>調整數量</h5>
+        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>調整材料</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      <form id="updateForm" method="POST"
-            onsubmit="return confirm('確定更新庫存數量？')">
+      <form id="updateForm" method="POST" onsubmit="return confirm('確定更新此材料資料？')">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
-          <p class="mb-1">材料：<strong id="updName"></strong></p>
-          <p class="mb-3">單位：<strong id="updUnit"></strong></p>
-          <div class="mb-2">
-            <label class="form-label">新數量</label>
-            <input type="number" name="quantity" class="form-control" id="updQty" min="0" required>
+          <div class="row g-2">
+            <div class="col-12">
+              <p class="mb-1 text-muted small">編號：<span id="updCode" class="fw-semibold"></span></p>
+            </div>
+            <div class="col-md-7">
+              <label class="form-label small">材料名稱</label>
+              <input type="text" name="name" class="form-control form-control-sm" id="updName" maxlength="100">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">單位</label>
+              <input type="text" name="unit" class="form-control form-control-sm" id="updUnit" maxlength="20">
+            </div>
+            <div class="col-md-2"></div>
+            <div class="col-12">
+              <label class="form-label small">規格</label>
+              <input type="text" name="spec" class="form-control form-control-sm" id="updSpec" maxlength="200">
+            </div>
+            <div class="col-12"><hr class="my-1"></div>
+            <div class="col-md-4">
+              <label class="form-label small">累積使用量</label>
+              <input type="number" name="cumulative_usage" class="form-control form-control-sm" id="updCu" min="0" step="0.001">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">實領量</label>
+              <input type="number" name="received_quantity" class="form-control form-control-sm" id="updRq" min="0" step="0.001">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-bold">庫存量</label>
+              <input type="number" name="remaining_quantity" class="form-control form-control-sm" id="updStock" min="0" step="0.001">
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -233,26 +337,69 @@
     </div>
   </div>
 </div>
+
+<!-- Manage Tabs Modal -->
+<div class="modal fade" id="tabManagerModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title"><i class="bi bi-gear me-2"></i>管理分頁名稱</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('settings_mat_tabs') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <p class="text-muted small mb-3">留空的分頁將會隱藏，最多可設定 5 個分頁。</p>
+          {% for i in range(1, 6) %}
+          <div class="mb-2 d-flex align-items-center gap-2">
+            <label class="form-label mb-0 text-muted small" style="min-width:42px">分頁 {{ i }}</label>
+            <input type="text" name="tab_{{ i }}_name" class="form-control form-control-sm"
+                   value="{{ tab_names.get(i, '') }}" maxlength="20"
+                   placeholder="{% if i == 1 %}建議不留空{% else %}留空則隱藏{% endif %}">
+          </div>
+          {% endfor %}
+        </div>
+        <div class="modal-footer py-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-dark btn-sm">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script>
 {% if current_user.role == 'USER' %}
-function openRequest(id, name, unit, stock) {
+function openRequest(id, name, spec, unit, stock) {
   document.getElementById('reqMaterialId').value = id;
   document.getElementById('reqMaterialName').textContent = name;
   document.getElementById('reqUnit').textContent = unit;
   document.getElementById('reqStock').textContent = stock;
-  document.getElementById('reqQty').max = stock;
+  const specRow = document.getElementById('reqSpecRow');
+  if (spec) {
+    specRow.textContent = '規格：' + spec;
+    specRow.style.display = '';
+  } else {
+    specRow.style.display = 'none';
+  }
+  const maxQty = Math.min(99, Math.floor(stock));
+  document.getElementById('reqQty').max = maxQty;
   new bootstrap.Modal(document.getElementById('requestModal')).show();
 }
 {% else %}
-function openUpdate(id, name, unit, qty) {
+function openUpdate(id, code, name, spec, unit, cu, rq, stock) {
   document.getElementById('updateForm').action = `/materials/${id}/update`;
-  document.getElementById('updName').textContent = name;
-  document.getElementById('updUnit').textContent = unit;
-  document.getElementById('updQty').value = qty;
+  document.getElementById('updCode').textContent = code || '—';
+  document.getElementById('updName').value = name;
+  document.getElementById('updSpec').value = spec;
+  document.getElementById('updUnit').value = unit;
+  document.getElementById('updCu').value = cu;
+  document.getElementById('updRq').value = rq;
+  document.getElementById('updStock').value = stock;
   new bootstrap.Modal(document.getElementById('updateModal')).show();
 }
 {% endif %}
