@@ -2966,6 +2966,117 @@ def bm_summary():
                            url_args=url_args)
 
 
+@app.route('/bm/summary/export-excel')
+@admin_required
+def bm_summary_export_excel():
+    start_date_s     = request.args.get('start_date', '')
+    end_date_s       = request.args.get('end_date',   '')
+    selected_user_id = request.args.get('user_id', '')
+    confirm_filter   = request.args.get('confirm_filter', 'all')
+
+    if not start_date_s or not end_date_s:
+        flash('請先選擇日期範圍', 'warning')
+        return redirect(url_for('bm_summary'))
+
+    _bm_ids      = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+    all_bm_users = User.query.filter_by(is_big_meter=True).all()
+    users_dict   = {u.id: u for u in all_bm_users}
+
+    q = Report.query.filter(
+        Report.report_date >= date.fromisoformat(start_date_s),
+        Report.report_date <= date.fromisoformat(end_date_s),
+        Report.user_id.in_(_bm_ids)
+    )
+    if selected_user_id:
+        _sid = int(selected_user_id)
+        from sqlalchemy import or_, text as _sa_bm_ex
+        q = q.filter(or_(Report.user_id == _sid, _sa_bm_ex(f"collab_json::jsonb @> '[{_sid}]'")))
+    if confirm_filter == 'confirmed':
+        q = q.filter_by(is_confirmed=True)
+    elif confirm_filter == 'unconfirmed':
+        q = q.filter_by(is_confirmed=False)
+    reports = q.all()
+
+    user_totals: dict = {}
+
+    def _bm_accum(tgt_uid, rpt, n):
+        u_obj = users_dict.get(tgt_uid)
+        if not u_obj:
+            return
+        if tgt_uid not in user_totals:
+            user_totals[tgt_uid] = {'username': u_obj.display_name,
+                                     'totals': {k: 0.0 for k, _ in BIG_METER_FIELDS}, 'count': 0}
+        for k, _ in BIG_METER_FIELDS:
+            user_totals[tgt_uid]['totals'][k] += float(getattr(rpt, k, 0) or 0) / n
+        user_totals[tgt_uid]['count'] += 1
+
+    for r in reports:
+        _n = float(r.collab_count or 1)
+        if selected_user_id:
+            _bm_accum(int(selected_user_id), r, _n)
+        else:
+            _bm_accum(r.user_id, r, _n)
+            if r.collab_json:
+                for _cuid in json.loads(r.collab_json):
+                    _bm_accum(_cuid, r, _n)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    wb = Workbook()
+    ws = wb.active
+    ws.title = '大表統計'
+
+    header_fill = PatternFill('solid', fgColor='343A40')
+    bold_white  = Font(bold=True, color='FFFFFF')
+    bold        = Font(bold=True)
+    center      = Alignment(horizontal='center', vertical='center')
+
+    headers = ['姓名', '回報次數'] + [lbl for _, lbl in BIG_METER_FIELDS] + ['合計']
+    for ci, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=ci, value=h)
+        c.fill = header_fill
+        c.font = bold_white
+        c.alignment = center
+
+    sub_fill = PatternFill('solid', fgColor='E9ECEF')
+    for row_i, (_, d) in enumerate(user_totals.items(), 2):
+        ws.cell(row=row_i, column=1, value=d['username'])
+        ws.cell(row=row_i, column=2, value=d['count'])
+        total = 0.0
+        for ci, (k, _) in enumerate(BIG_METER_FIELDS, 3):
+            val = round(d['totals'].get(k, 0.0), 1)
+            ws.cell(row=row_i, column=ci, value=val if val else '')
+            total += val
+        ws.cell(row=row_i, column=len(headers), value=round(total, 1))
+        if row_i % 2 == 0:
+            for ci in range(1, len(headers) + 1):
+                ws.cell(row=row_i, column=ci).fill = sub_fill
+
+    gt_row = len(user_totals) + 2
+    ws.cell(row=gt_row, column=1, value='合計').font = bold
+    ws.cell(row=gt_row, column=2, value=sum(d['count'] for d in user_totals.values())).font = bold
+    gt_total = 0.0
+    for ci, (k, _) in enumerate(BIG_METER_FIELDS, 3):
+        col_sum = round(sum(d['totals'].get(k, 0.0) for d in user_totals.values()), 1)
+        ws.cell(row=gt_row, column=ci, value=col_sum if col_sum else '').font = bold
+        gt_total += col_sum
+    ws.cell(row=gt_row, column=len(headers), value=round(gt_total, 1)).font = bold
+
+    for ci in range(1, len(headers) + 1):
+        col_letter = get_column_letter(ci)
+        max_len = max((len(str(c.value)) for c in ws[col_letter] if c.value), default=6)
+        ws.column_dimensions[col_letter].width = min(max_len * 2.0 + 2, 40)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f'bm_summary_{start_date_s}_{end_date_s}.xlsx'
+    return send_file(buf,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
+
+
 # ---------------------------------------------------------------------------
 # Page 8: Salary (ADMIN)
 # ---------------------------------------------------------------------------

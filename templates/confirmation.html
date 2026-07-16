@@ -284,6 +284,7 @@
             </tr>
           </tfoot>
         </table>
+        <div id="detailCustomItem" class="alert alert-warning py-2 mt-2 d-none" style="font-size:.85rem"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
@@ -336,6 +337,16 @@ function openReportDetail(btn) {
     tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted">所有欄位均為 0</td></tr>';
   }
   document.getElementById('detailModalTotal').textContent = total;
+  const ciDiv = document.getElementById('detailCustomItem');
+  if (data.custom_item_name) {
+    const subtotal = Math.round(data.custom_item_qty * data.custom_item_price);
+    ciDiv.innerHTML = `<i class="bi bi-plus-square-fill me-1"></i>
+      <strong>自訂工項：</strong>${data.custom_item_name}
+      　數量：${data.custom_item_qty}　單價：${data.custom_item_price} 元　小計：${subtotal} 元`;
+    ciDiv.classList.remove('d-none');
+  } else {
+    ciDiv.classList.add('d-none');
+  }
   new bootstrap.Modal(document.getElementById('reportDetailModal')).show();
 }
 

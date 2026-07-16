@@ -183,6 +183,17 @@ function openView(id, r) {
                value="${getVal(r, k)}" disabled>
       </div>`;
   });
+  if (r.custom_item_name) {
+    const subtotal = Math.round(r.custom_item_qty * r.custom_item_price);
+    container.innerHTML += `
+      <div class="col-12 mt-2">
+        <div class="alert alert-warning py-2 mb-0" style="font-size:.85rem">
+          <i class="bi bi-plus-square-fill me-1"></i>
+          <strong>自訂工項：</strong>${r.custom_item_name}
+          　數量：${r.custom_item_qty}　單價：${r.custom_item_price} 元　小計：${subtotal} 元
+        </div>
+      </div>`;
+  }
   new bootstrap.Modal(document.getElementById('viewModal')).show();
 }
 

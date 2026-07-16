@@ -36,7 +36,7 @@
             <div class="col-6 col-md-3">
               <label class="form-label small text-muted">{{ label }}</label>
               <input type="number" class="form-control field-input"
-                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" max="999" step="1">
             </div>
             {% endfor %}
           </div>
@@ -50,7 +50,7 @@
             <div class="col-6 col-md-3">
               <label class="form-label small text-muted">{{ label }}</label>
               <input type="number" class="form-control field-input"
-                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" max="999" step="1">
             </div>
             {% endfor %}
           </div>
@@ -64,7 +64,7 @@
             <div class="col-6 col-md-4">
               <label class="form-label small text-muted">{{ label }}</label>
               <input type="number" class="form-control field-input"
-                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" max="999" step="1">
             </div>
             {% endfor %}
           </div>
@@ -79,7 +79,7 @@
             <div class="col-6 col-md-3">
               <label class="form-label small text-muted">{{ label }}</label>
               <input type="number" class="form-control field-input"
-                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" max="999" step="1">
             </div>
             {% endfor %}
           </div>
@@ -93,7 +93,7 @@
             <div class="col-6 col-md-3">
               <label class="form-label small text-muted">{{ label }}</label>
               <input type="number" class="form-control field-input"
-                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" max="999" step="1">
             </div>
             {% endfor %}
           </div>
@@ -107,7 +107,7 @@
             <div class="col-6 col-md-4">
               <label class="form-label small text-muted">{{ label }}</label>
               <input type="number" class="form-control field-input"
-                     id="{{ key }}" name="{{ key }}" value="0" min="0" step="1">
+                     id="{{ key }}" name="{{ key }}" value="0" min="0" max="999" step="1">
             </div>
             {% endfor %}
           </div>
@@ -187,13 +187,16 @@
 const FIELDS = {{ report_fields | tojson }};
 
 // ── Qty warning ─────────────────────────────────────────
+function checkQtyLimit() {
+  const anyOver = Array.from(
+    document.querySelectorAll('#reportForm input[type="number"].field-input')
+  ).some(inp => parseFloat(inp.value) > 999);
+  document.getElementById('qtyWarning').classList.toggle('d-none', !anyOver);
+  return !anyOver;
+}
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reportForm').addEventListener('input', e => {
-    if (e.target.type !== 'number') return;
-    const anyOver = Array.from(
-      document.querySelectorAll('#reportForm input[type="number"]')
-    ).some(inp => parseFloat(inp.value) > 999);
-    document.getElementById('qtyWarning').classList.toggle('d-none', !anyOver);
+    if (e.target.classList.contains('field-input')) checkQtyLimit();
   });
 });
 
@@ -278,6 +281,11 @@ function updateCollabInput() {
 // ────────────────────────────────────────────────────────
 
 function openConfirmModal() {
+  if (!checkQtyLimit()) {
+    document.getElementById('qtyWarning').classList.remove('d-none');
+    document.getElementById('qtyWarning').scrollIntoView({behavior:'smooth', block:'center'});
+    return;
+  }
   const rdate = document.getElementById('rdate').value;
   const vals = {};
   FIELDS.forEach(([k]) => { vals[k] = parseFloat(document.getElementById(k).value) || 0; });

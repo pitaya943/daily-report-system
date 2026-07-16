@@ -69,6 +69,11 @@
                       title="查看詳情">
                 <i class="bi bi-eye"></i>
               </button>
+              <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
+                      onclick="openCustomItem({{ r.id }}, '{{ r.custom_item_name or '' }}', {{ r.custom_item_qty or 0 }}, {{ r.custom_item_price or 0 }})"
+                      title="自訂工項">
+                {% if r.custom_item_name %}<i class="bi bi-plus-square-fill text-warning"></i>{% else %}<i class="bi bi-plus-square"></i>{% endif %}
+              </button>
               <form method="POST" action="{{ url_for('bm_confirm_report', report_id=r.id) }}" class="d-inline ms-1">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% for k, v in url_args.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
@@ -101,6 +106,40 @@
   {{ paginate(pending_pagination, 'bm_confirmation', url_args) }}
 </div>
 
+<!-- Custom Item Modal -->
+<div class="modal fade" id="customItemModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header bg-warning bg-opacity-75">
+        <h6 class="modal-title"><i class="bi bi-plus-square me-2"></i>自訂工項</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="customItemForm" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% for k, v in url_args.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label small mb-1">工項名稱（空白即清除）</label>
+            <input type="text" class="form-control form-control-sm" name="custom_item_name" id="ciName" maxlength="100" placeholder="例：特殊工項">
+          </div>
+          <div class="mb-2">
+            <label class="form-label small mb-1">數量</label>
+            <input type="number" class="form-control form-control-sm" name="custom_item_qty" id="ciQty" min="0" step="0.1" value="1">
+          </div>
+          <div class="mb-2">
+            <label class="form-label small mb-1">單價（元）</label>
+            <input type="number" class="form-control form-control-sm" name="custom_item_price" id="ciPrice" min="0" step="1" value="0">
+          </div>
+        </div>
+        <div class="modal-footer py-2">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-warning btn-sm">儲存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- Report Detail Modal (read-only) -->
 <div class="modal fade" id="reportDetailModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
@@ -127,6 +166,7 @@
             </tr>
           </tfoot>
         </table>
+        <div id="detailCustomItem" class="alert alert-warning py-2 mt-2 d-none" style="font-size:.85rem"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
@@ -176,7 +216,26 @@ function openReportDetail(btn) {
     tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted">所有欄位均為 0</td></tr>';
   }
   document.getElementById('detailModalTotal').textContent = total;
+  // 自訂工項
+  const ciDiv = document.getElementById('detailCustomItem');
+  if (data.custom_item_name) {
+    const subtotal = Math.round(data.custom_item_qty * data.custom_item_price);
+    ciDiv.innerHTML = `<i class="bi bi-plus-square-fill me-1"></i>
+      <strong>自訂工項：</strong>${data.custom_item_name}
+      　數量：${data.custom_item_qty}　單價：${data.custom_item_price} 元　小計：${subtotal} 元`;
+    ciDiv.classList.remove('d-none');
+  } else {
+    ciDiv.classList.add('d-none');
+  }
   new bootstrap.Modal(document.getElementById('reportDetailModal')).show();
+}
+
+function openCustomItem(reportId, name, qty, price) {
+  document.getElementById('customItemForm').action = `/confirmation/report/${reportId}/custom-item`;
+  document.getElementById('ciName').value  = name || '';
+  document.getElementById('ciQty').value   = qty  || 1;
+  document.getElementById('ciPrice').value = price || 0;
+  new bootstrap.Modal(document.getElementById('customItemModal')).show();
 }
 </script>
 {% endblock %}
