@@ -2511,22 +2511,45 @@ def materials_import_excel():
 
     f = request.files.get('excel_file')
     if not f or not f.filename:
-        flash('請選擇 Excel 檔案', 'danger')
-        return redirect(url_for('materials'))
-    if not f.filename.lower().endswith(('.xlsx', '.xls')):
-        flash('檔案格式不正確，請上傳 .xlsx 或 .xls 檔案', 'danger')
+        flash('請選擇檔案', 'danger')
         return redirect(url_for('materials'))
 
-    try:
-        import io, openpyxl
-        wb = openpyxl.load_workbook(io.BytesIO(f.read()), data_only=True)
-        ws = wb.active
-    except Exception as _e:
-        flash(f'無法讀取 Excel 檔案：{_e}', 'danger')
+    fname = f.filename.lower()
+    if not fname.endswith(('.xlsx', '.xls', '.csv')):
+        flash('檔案格式不正確，請上傳 .xlsx 或 .csv 檔案', 'danger')
+        return redirect(url_for('materials'))
+
+    if fname.endswith('.xls'):
+        flash('不支援舊版 .xls 格式，請在 Excel 中另存新檔為 .xlsx 或 .csv 後再上傳', 'danger')
+        return redirect(url_for('materials'))
+
+    # Parse file into list of rows (list of values)
+    import io
+    raw_rows = []  # list of lists
+
+    if fname.endswith('.csv'):
+        import csv
+        text = f.read().decode('utf-8-sig')  # strip BOM if present
+        reader = csv.reader(io.StringIO(text))
+        for row in reader:
+            raw_rows.append(row)
+    else:  # .xlsx
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(f.read()), data_only=True)
+            ws = wb.active
+            for row in ws.iter_rows(values_only=True):
+                raw_rows.append([cell for cell in row])
+        except Exception as _e:
+            flash(f'無法讀取 Excel 檔案：{_e}', 'danger')
+            return redirect(url_for('materials'))
+
+    if not raw_rows:
+        flash('檔案內容為空', 'danger')
         return redirect(url_for('materials'))
 
     # Auto-detect column indices from header row
-    headers = [str(cell.value or '').strip() for cell in ws[1]]
+    headers = [str(v or '').strip() for v in raw_rows[0]]
     col = {}
     for i, h in enumerate(headers):
         if any(k in h for k in ('材料編號', '編號', 'code', 'Code')):
@@ -2539,14 +2562,15 @@ def materials_import_excel():
             col.setdefault('remaining', i)
 
     if 'code' not in col or 'received' not in col:
-        flash('Excel 格式不正確：找不到「材料編號」或「實領量」欄位（請確認第一列為標題）', 'danger')
+        flash('格式不正確：找不到「材料編號」或「實領量」欄位（請確認第一列為標題）', 'danger')
         return redirect(url_for('materials'))
 
     def _dec(row, key):
         if key not in col:
             return Decimal('0')
         try:
-            return Decimal(str(row[col[key]] or 0))
+            val = row[col[key]]
+            return Decimal(str(val or 0).replace(',', ''))
         except (InvalidOperation, TypeError, ValueError):
             return Decimal('0')
 
@@ -2556,8 +2580,8 @@ def materials_import_excel():
 
     correct, quarantined, not_found = [], [], []
 
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if all(v is None for v in row):
+    for row in raw_rows[1:]:
+        if all((v is None or str(v).strip() == '') for v in row):
             continue
         b_code = str(row[col['code']] or '').strip()
         if not b_code:

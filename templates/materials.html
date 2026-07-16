@@ -312,15 +312,16 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <div class="alert alert-info py-2 small mb-3">
-            <strong>Excel 格式要求：</strong>第一列為標題，必須包含
+            <strong>格式要求：</strong>第一列為標題，必須包含
             <code>材料編號</code>、<code>實領量</code>，建議同時含
-            <code>累計使用量</code>、<code>庫存量</code>。
-            比對依據為材料編號，以實領量為主要對照欄位。
+            <code>累計使用量</code>、<code>庫存量</code>。<br>
+            支援 <strong>.xlsx</strong> 或 <strong>.csv</strong>；
+            舊版 .xls 請先在 Excel 中另存新檔為 .xlsx 或 CSV。
           </div>
           <div class="mb-3">
-            <label class="form-label">選擇 Excel 檔案</label>
+            <label class="form-label">選擇檔案（.xlsx 或 .csv）</label>
             <input type="file" name="excel_file" class="form-control"
-                   accept=".xlsx,.xls" required>
+                   accept=".xlsx,.csv" required>
           </div>
           <p class="text-muted small mb-0">
             <i class="bi bi-info-circle me-1"></i>
