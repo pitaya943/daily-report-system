@@ -107,7 +107,7 @@
           </div>
           <div class="mb-3">
             <label class="form-label">新密碼</label>
-            <input type="password" name="new_password" class="form-control" required minlength="4">
+            <input type="password" name="new_password" class="form-control" required minlength="6" maxlength="100">
           </div>
           <div class="mb-3">
             <label class="form-label">確認新密碼</label>
@@ -382,7 +382,7 @@
           <label class="form-label mb-1 small">每只抽取金額（適用直總/間接 8 個欄位）</label>
           <div class="input-group" style="max-width:220px">
             <input type="number" name="rate" class="form-control"
-                   value="{{ retention_rate }}" min="0" step="1" required>
+                   value="{{ retention_rate }}" min="0" max="9999" step="1" required>
             <span class="input-group-text">NTD / 只</span>
           </div>
         </div>
@@ -412,7 +412,7 @@
           <label class="form-label mb-1 small">每只抽取金額（適用南區 28 個工項欄位）</label>
           <div class="input-group" style="max-width:220px">
             <input type="number" name="rate" class="form-control"
-                   value="{{ retention_rate_south }}" min="0" step="1" required>
+                   value="{{ retention_rate_south }}" min="0" max="9999" step="1" required>
             <span class="input-group-text">NTD / 只</span>
           </div>
         </div>
@@ -523,7 +523,7 @@
               <div class="input-group input-group-sm">
                 <input type="number" name="price_{{ key }}" class="form-control"
                        value="{{ west_prices.get(key, 0) | int }}"
-                       min="0" step="1" required>
+                       min="0" max="99999" step="1" required>
                 <span class="input-group-text">NTD</span>
               </div>
             </div>
@@ -546,7 +546,7 @@
               <div class="input-group input-group-sm">
                 <input type="number" name="price_south_{{ key }}" class="form-control"
                        value="{{ south_prices.get(key, 0) | int }}"
-                       min="0" step="1" required>
+                       min="0" max="99999" step="1" required>
                 <span class="input-group-text">NTD</span>
               </div>
             </div>
@@ -569,7 +569,7 @@
               <div class="input-group input-group-sm">
                 <input type="number" name="price_bm_{{ key }}" class="form-control"
                        value="{{ bm_prices.get(key, 0) | int }}"
-                       min="0" step="1" required>
+                       min="0" max="99999" step="1" required>
                 <span class="input-group-text">NTD</span>
               </div>
             </div>
@@ -674,17 +674,17 @@
           <div class="mb-3">
             <label class="form-label fw-semibold">帳戶名稱（可使用中文）</label>
             <input type="text" name="display_name" class="form-control"
-                   placeholder="例：陳小明" required>
+                   placeholder="例：陳小明" maxlength="50" required>
           </div>
           <div class="mb-3">
             <label class="form-label">密碼</label>
             <input type="password" name="password" id="createPwdNew"
-                   class="form-control" required minlength="4">
+                   class="form-control" required minlength="6" maxlength="100">
           </div>
           <div class="mb-3">
             <label class="form-label">確認密碼</label>
             <input type="password" name="confirm_password" id="createPwdConfirm"
-                   class="form-control" required minlength="4">
+                   class="form-control" required minlength="6" maxlength="100">
           </div>
           <div class="mb-3">
             <label class="form-label">帳戶類型</label>
@@ -770,7 +770,7 @@
           <div class="mb-2">
             <label class="form-label">顯示名稱（可使用中文）</label>
             <input type="text" name="display_name" class="form-control"
-                   id="editNameInput" required>
+                   id="editNameInput" maxlength="50" required>
           </div>
         </div>
         <div class="modal-footer">
@@ -798,12 +798,12 @@
           <div class="mb-2">
             <label class="form-label">新密碼</label>
             <input type="password" name="new_password" id="resetPwdNew"
-                   class="form-control" required minlength="4">
+                   class="form-control" required minlength="6" maxlength="100">
           </div>
           <div class="mb-2">
             <label class="form-label">確認新密碼</label>
             <input type="password" name="confirm_password" id="resetPwdConfirm"
-                   class="form-control" required minlength="4">
+                   class="form-control" required minlength="6" maxlength="100">
           </div>
         </div>
         <div class="modal-footer">
@@ -917,7 +917,7 @@
           <label class="form-label small">設定為指定金額（NTD）</label>
           <div class="input-group input-group-sm">
             <input type="number" name="amount" id="retentionAmount"
-                   class="form-control" min="0" step="1" value="0" required>
+                   class="form-control" min="0" max="9999999" step="1" value="0" required>
             <span class="input-group-text">NTD</span>
           </div>
           <div class="mt-2">
@@ -947,7 +947,7 @@
           <label class="form-label small mb-1">固定薪資（NTD / 期）</label>
           <div class="input-group input-group-sm mb-3">
             <input type="number" name="fixed_salary" id="fixedSalaryAmount"
-                   class="form-control" min="0" step="1" value="0">
+                   class="form-control" min="0" max="999999" step="1" value="0">
             <span class="input-group-text">NTD</span>
           </div>
           <div class="form-check mb-1">
@@ -994,7 +994,7 @@
             <label class="form-label small mb-1">每期扣除金額（NTD）</label>
             <div class="input-group input-group-sm" style="max-width:180px">
               <input type="number" name="insurance_deduction" id="insuranceAmount"
-                     class="form-control" min="1" step="1" value="0">
+                     class="form-control" min="1" max="9999" step="1" value="0">
               <span class="input-group-text">NTD</span>
             </div>
           </div>
@@ -1112,7 +1112,7 @@ function openRetRates(userId, name) {
     tr.innerHTML =
       '<td>' + label + '</td>' +
       '<td><div class="input-group input-group-sm">' +
-      '<input type="number" name="rate_' + field + '" class="form-control" min="0" step="1" value="' + rate + '">' +
+      '<input type="number" name="rate_' + field + '" class="form-control" min="0" max="9999" step="1" value="' + rate + '">' +
       '<span class="input-group-text">NTD</span></div></td>';
     tbody.appendChild(tr);
   });

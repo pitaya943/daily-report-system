@@ -235,7 +235,7 @@
             <div class="col-sm-4">
               <label class="form-label fw-semibold">金額 (NTD) <span class="text-danger">*</span></label>
               <input type="number" name="amount" class="form-control" required min="1"
-                     max="2000000000" placeholder="例：1500">
+                     max="9999999" placeholder="例：1500">
             </div>
             <div class="col-sm-6">
               <label class="form-label fw-semibold">類別</label>
@@ -269,7 +269,7 @@
             </div>
             <div class="col-12">
               <label class="form-label fw-semibold">備註 <small class="text-muted fw-normal">（最多 100 字）</small></label>
-              <textarea name="note" class="form-control" rows="3" maxlength="100"
+              <textarea name="note" class="form-control" rows="3" maxlength="1000"
                         placeholder="（選填）" id="add_note"></textarea>
               <div class="form-text text-end"><span id="add_note_count">0</span> / 100 字</div>
             </div>
@@ -313,7 +313,7 @@
             </div>
             <div class="col-sm-4">
               <label class="form-label fw-semibold">金額 (NTD) <span class="text-danger">*</span></label>
-              <input type="number" name="amount" id="edit_amount" class="form-control" required min="1" max="2000000000">
+              <input type="number" name="amount" id="edit_amount" class="form-control" required min="1" max="9999999">
             </div>
             <div class="col-sm-6">
               <label class="form-label fw-semibold">類別</label>
@@ -346,7 +346,7 @@
             </div>
             <div class="col-12">
               <label class="form-label fw-semibold">備註 <small class="text-muted fw-normal">（最多 100 字）</small></label>
-              <textarea name="note" id="edit_note" class="form-control" rows="3" maxlength="100"></textarea>
+              <textarea name="note" id="edit_note" class="form-control" rows="3" maxlength="1000"></textarea>
               <div class="form-text text-end"><span id="edit_note_count">0</span> / 100 字</div>
             </div>
           </div>

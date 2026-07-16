@@ -23,7 +23,7 @@
           <div class="mb-4">
             <label class="form-label fw-semibold">回報日期</label>
             <input type="date" class="form-control" id="rdate" name="date"
-                   value="{{ today }}" required style="max-width:200px">
+                   value="{{ today }}" min="{{ min_date }}" max="{{ today }}" required style="max-width:200px">
           </div>
 
           {% if is_big_meter %}

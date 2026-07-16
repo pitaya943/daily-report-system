@@ -1161,7 +1161,8 @@ def report():
                            report_fields=user_fields,
                            zone=current_user.zone,
                            is_big_meter=current_user.is_big_meter,
-                           today=str(date.today()))
+                           today=str(date.today()),
+                           min_date=str(date.today() - timedelta(days=365)))
 
 
 @app.route('/api/collab-users')
@@ -1189,6 +1190,7 @@ def history():
     end_date = request.args.get('end_date', '')
     selected_user_id = request.args.get('user_id', '')
     selected_zone = request.args.get('zone', '')
+    has_custom = request.args.get('has_custom', '')
 
     q = Report.query
     if current_user.role == 'USER':
@@ -1214,6 +1216,8 @@ def history():
         _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone, is_big_meter=False).scalar_subquery()
         q = q.filter(Report.user_id.in_(_zone_ids))
 
+    if has_custom == '1':
+        q = q.filter(Report.custom_item_name.isnot(None))
     if start_date:
         q = q.filter(Report.report_date >= date.fromisoformat(start_date))
     if end_date:
@@ -1269,6 +1273,7 @@ def history():
                            end_date=end_date,
                            selected_user_id=selected_user_id,
                            selected_zone=selected_zone,
+                           has_custom=has_custom,
                            url_args=url_args)
 
 
@@ -2727,9 +2732,12 @@ def bm_history():
     start_date       = request.args.get('start_date', '')
     end_date         = request.args.get('end_date',   '')
     selected_user_id = request.args.get('user_id', '')
+    has_custom       = request.args.get('has_custom', '')
 
     _bm_ids = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
     q = Report.query.filter(Report.user_id.in_(_bm_ids))
+    if has_custom == '1':
+        q = q.filter(Report.custom_item_name.isnot(None))
     if start_date:
         q = q.filter(Report.report_date >= date.fromisoformat(start_date))
     if end_date:
@@ -2757,6 +2765,7 @@ def bm_history():
                            selected_user_id=selected_user_id,
                            start_date=start_date,
                            end_date=end_date,
+                           has_custom=has_custom,
                            url_args=url_args)
 
 
