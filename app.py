@@ -493,6 +493,7 @@ def _init_db():
         "ALTER TABLE materials ALTER COLUMN remaining_quantity TYPE NUMERIC(12,3) USING remaining_quantity::NUMERIC(12,3)",
         "ALTER TABLE materials ADD COLUMN IF NOT EXISTS is_quarantined BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE materials ADD COLUMN IF NOT EXISTS quarantine_note TEXT",
+        "ALTER TABLE materials ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE",
     ]:
         try:
             with db.engine.connect() as conn:
@@ -502,7 +503,7 @@ def _init_db():
             pass
     # Seed default tab names (idempotent)
     try:
-        _tab_defaults = [('mat_tab_1_name', '全部材料')] + [(f'mat_tab_{i}_name', '') for i in range(2, 6)]
+        _tab_defaults = [('mat_tab_1_name', '全部材料')] + [(f'mat_tab_{i}_name', '') for i in range(2, 11)]
         for _tk, _tv in _tab_defaults:
             if not db.session.get(SystemConfig, _tk):
                 db.session.add(SystemConfig(key=_tk, value=_tv))
@@ -633,6 +634,7 @@ def _seed_materials_csv(reset=False):
         m.cumulative_usage   = Decimal('0')
         m.remaining_quantity = Decimal('0')
         m.received_quantity  = Decimal('0')
+        m.is_hidden = False
         m.is_quarantined = False
         m.quarantine_note = None
         m.tab_id = 1
@@ -1449,6 +1451,92 @@ def history():
                            url_args=url_args)
 
 
+@app.route('/history/export-excel')
+@login_required
+def history_export_excel():
+    import io, openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from sqlalchemy import or_, text as _sa_t
+    start_date = request.args.get('start_date', '')
+    end_date   = request.args.get('end_date', '')
+    selected_user_id = request.args.get('user_id', '')
+    selected_zone    = request.args.get('zone', '')
+    has_custom       = request.args.get('has_custom', '')
+
+    q = Report.query
+    if current_user.role == 'USER':
+        _uid = int(current_user.id)
+        q = q.filter(or_(Report.user_id == _uid,
+                         _sa_t(f"collab_json::jsonb @> '[{_uid}]'")))
+    else:
+        _bm_ids = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+        q = q.filter(Report.user_id.notin_(_bm_ids))
+        if selected_user_id:
+            _sid = int(selected_user_id)
+            q = q.filter(or_(Report.user_id == _sid,
+                             _sa_t(f"collab_json::jsonb @> '[{_sid}]'")))
+    if current_user.role == 'ADMIN' and selected_zone in (ZONE_WEST, ZONE_SOUTH):
+        _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone, is_big_meter=False).scalar_subquery()
+        q = q.filter(Report.user_id.in_(_zone_ids))
+    if has_custom == '1':
+        q = q.filter(Report.custom_item_name.isnot(None))
+    if start_date:
+        q = q.filter(Report.report_date >= date.fromisoformat(start_date))
+    if end_date:
+        q = q.filter(Report.report_date <= date.fromisoformat(end_date))
+    reports = q.order_by(Report.report_date.desc(), Report.created_at.desc()).all()
+    all_users_dict = {u.id: u for u in User.query.all()}
+
+    # Combined field list (WEST ∪ SOUTH, deduped, preserving order)
+    _seen = set()
+    combined_fields = []
+    for k, l in WEST_REPORT_FIELDS + SOUTH_REPORT_FIELDS:
+        if k not in _seen:
+            combined_fields.append((k, l))
+            _seen.add(k)
+
+    if current_user.role == 'USER':
+        zone_fields = get_zone_fields(current_user.zone)
+        export_fields = zone_fields
+    else:
+        export_fields = combined_fields
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '歷史紀錄'
+    meta_headers = ['日期', '人員', '區域', '是否確認']
+    field_headers = [l for _, l in export_fields]
+    ws.append(meta_headers + field_headers + ['自訂工項', '自訂數量', '自訂單價'])
+    hdr_font = Font(bold=True)
+    hdr_fill = PatternFill(fill_type='solid', fgColor='D9E1F2')
+    for cell in ws[1]:
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = Alignment(horizontal='center')
+
+    for r in reports:
+        u = all_users_dict.get(r.user_id)
+        row = [
+            r.report_date.strftime('%Y-%m-%d'),
+            u.display_name if u else f'#{r.user_id}',
+            u.zone if u else '',
+            '是' if r.is_confirmed else '否',
+        ]
+        for k, _ in export_fields:
+            row.append(float(getattr(r, k, 0) or 0))
+        row += [r.custom_item_name or '', float(r.custom_item_qty or 0), r.custom_item_price or 0]
+        ws.append(row)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from datetime import date as _date
+    fname = f'歷史紀錄_{_date.today().strftime("%Y%m%d")}.xlsx'
+    return send_file(buf,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
+
+
 @app.route('/history/<int:report_id>/edit', methods=['POST'])
 @login_required
 def history_edit(report_id):
@@ -2260,25 +2348,27 @@ def settings_reset_password(user_id):
 def materials():
     # Load tab names from SystemConfig
     tab_names = {}
-    for i in range(1, 6):
+    for i in range(1, 11):
         cfg = db.session.get(SystemConfig, f'mat_tab_{i}_name')
         tab_names[i] = cfg.value if cfg else ('' if i > 1 else '全部材料')
 
     # Determine active tab (default to first visible tab)
-    visible_tabs = [i for i in range(1, 6) if tab_names.get(i)]
+    visible_tabs = [i for i in range(1, 11) if tab_names.get(i)]
     try:
         active_tab = int(request.args.get('tab', visible_tabs[0] if visible_tabs else 1))
     except (ValueError, TypeError):
         active_tab = visible_tabs[0] if visible_tabs else 1
 
     # Non-quarantined materials for the active tab
-    tab_materials = (Material.query
-                     .filter_by(tab_id=active_tab, is_quarantined=False)
-                     .order_by(Material.sort_order, Material.id).all())
+    _tab_q = Material.query.filter_by(tab_id=active_tab, is_quarantined=False)
+    if current_user.role == 'USER':
+        _tab_q = _tab_q.filter_by(is_hidden=False)
+    tab_materials = _tab_q.order_by(Material.sort_order, Material.id).all()
     # All non-quarantined materials (for request history lookup)
-    all_materials = (Material.query
-                     .filter_by(is_quarantined=False)
-                     .order_by(Material.tab_id, Material.sort_order, Material.id).all())
+    _all_q = Material.query.filter_by(is_quarantined=False)
+    if current_user.role == 'USER':
+        _all_q = _all_q.filter_by(is_hidden=False)
+    all_materials = _all_q.order_by(Material.tab_id, Material.sort_order, Material.id).all()
     # Quarantined materials (ADMIN only)
     quarantine_materials = (Material.query.filter_by(is_quarantined=True).all()
                             if current_user.role == 'ADMIN' else [])
@@ -2367,7 +2457,7 @@ def materials_add():
     spec = request.form.get('spec', '').strip() or None
     unit = request.form.get('unit', '').strip()
     try:
-        tab_id = max(1, min(5, int(request.form.get('tab_id', 1))))
+        tab_id = max(1, min(10, int(request.form.get('tab_id', 1))))
     except (ValueError, TypeError):
         tab_id = 1
     def _parse_dec(key, default=0):
@@ -2500,7 +2590,7 @@ def materials_set_tab(material_id):
 @app.route('/settings/mat-tabs', methods=['POST'])
 @admin_required
 def settings_mat_tabs():
-    for i in range(1, 6):
+    for i in range(1, 11):
         name = request.form.get(f'tab_{i}_name', '').strip()
         cfg = db.session.get(SystemConfig, f'mat_tab_{i}_name')
         if cfg:
@@ -2510,6 +2600,67 @@ def settings_mat_tabs():
     db.session.commit()
     flash('分頁名稱已更新', 'success')
     return redirect(url_for('materials'))
+
+
+@app.route('/materials/<int:material_id>/toggle-hidden', methods=['POST'])
+@admin_required
+def materials_toggle_hidden(material_id):
+    m = db.session.get(Material, material_id)
+    if not m:
+        abort(404)
+    m.is_hidden = not m.is_hidden
+    label = '隱藏' if m.is_hidden else '顯示'
+    add_audit(current_user.id, 'MATERIAL_VISIBILITY',
+              f'ADMIN 將「{m.name}({m.code})」設為{label}（USER 介面）')
+    db.session.commit()
+    return redirect(url_for('materials', tab=request.form.get('active_tab', 1)))
+
+
+@app.route('/materials/export-excel')
+@admin_required
+def materials_export_excel():
+    import io, openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    tab_names = {}
+    for i in range(1, 11):
+        cfg = db.session.get(SystemConfig, f'mat_tab_{i}_name')
+        tab_names[i] = cfg.value if cfg else f'分頁{i}'
+    materials = (Material.query.filter_by(is_quarantined=False)
+                 .order_by(Material.tab_id, Material.sort_order, Material.id).all())
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '材料庫存'
+    headers = ['材料編號', '材料名稱', '規格', '單位', '累計使用量', '實領量', '庫存量', '分頁', '對USER隱藏']
+    ws.append(headers)
+    hdr_font = Font(bold=True)
+    hdr_fill = PatternFill(fill_type='solid', fgColor='D9E1F2')
+    for cell in ws[1]:
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = Alignment(horizontal='center')
+    for m in materials:
+        ws.append([
+            m.code or '',
+            m.name,
+            m.spec or '',
+            m.unit,
+            float(m.cumulative_usage or 0),
+            float(m.received_quantity or 0),
+            float(m.remaining_quantity or 0),
+            tab_names.get(m.tab_id, f'分頁{m.tab_id}'),
+            '是' if m.is_hidden else '否',
+        ])
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = max(
+            len(str(cell.value or '')) for cell in col) + 4
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from datetime import date as _date
+    fname = f'材料庫存_{_date.today().strftime("%Y%m%d")}.xlsx'
+    return send_file(buf,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
 
 
 @app.route('/materials/import-excel', methods=['POST'])
@@ -3297,6 +3448,64 @@ def bm_history():
                            end_date=end_date,
                            has_custom=has_custom,
                            url_args=url_args)
+
+
+@app.route('/bm/history/export-excel')
+@admin_required
+def bm_history_export_excel():
+    import io, openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    start_date       = request.args.get('start_date', '')
+    end_date         = request.args.get('end_date',   '')
+    selected_user_id = request.args.get('user_id', '')
+    has_custom       = request.args.get('has_custom', '')
+
+    _bm_ids = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+    q = Report.query.filter(Report.user_id.in_(_bm_ids))
+    if has_custom == '1':
+        q = q.filter(Report.custom_item_name.isnot(None))
+    if start_date:
+        q = q.filter(Report.report_date >= date.fromisoformat(start_date))
+    if end_date:
+        q = q.filter(Report.report_date <= date.fromisoformat(end_date))
+    if selected_user_id:
+        q = q.filter(Report.user_id == int(selected_user_id))
+    reports = q.order_by(Report.report_date.desc(), Report.id.desc()).all()
+    all_users_dict = {u.id: u for u in User.query.all()}
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '大表歷史紀錄'
+    meta_headers = ['日期', '人員', '是否確認']
+    field_headers = [l for _, l in BIG_METER_FIELDS]
+    ws.append(meta_headers + field_headers + ['自訂工項', '自訂數量', '自訂單價'])
+    hdr_font = Font(bold=True)
+    hdr_fill = PatternFill(fill_type='solid', fgColor='D9E1F2')
+    for cell in ws[1]:
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.alignment = Alignment(horizontal='center')
+
+    for r in reports:
+        u = all_users_dict.get(r.user_id)
+        row = [
+            r.report_date.strftime('%Y-%m-%d'),
+            u.display_name if u else f'#{r.user_id}',
+            '是' if r.is_confirmed else '否',
+        ]
+        for k, _ in BIG_METER_FIELDS:
+            row.append(float(getattr(r, k, 0) or 0))
+        row += [r.custom_item_name or '', float(r.custom_item_qty or 0), r.custom_item_price or 0]
+        ws.append(row)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from datetime import date as _date
+    fname = f'大表歷史紀錄_{_date.today().strftime("%Y%m%d")}.xlsx'
+    return send_file(buf,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
 
 
 @app.route('/bm/history/<int:report_id>/edit', methods=['POST'])

@@ -46,6 +46,9 @@
     <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#resetMaterialsModal">
       <i class="bi bi-arrow-counterclockwise me-1"></i>重置庫存
     </button>
+    <a href="{{ url_for('materials_export_excel') }}" class="btn btn-sm btn-outline-dark" data-no-loading>
+      <i class="bi bi-download me-1"></i>匯出 Excel
+    </a>
     <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#addMaterialModal">
       <i class="bi bi-plus-lg me-1"></i>新增材料
     </button>
@@ -69,14 +72,14 @@
             <th class="text-center" style="min-width:55px">實領量</th>
             {% endif %}
             <th class="text-center" style="min-width:55px">庫存量</th>
-            <th class="text-center" style="min-width:{% if current_user.role == 'ADMIN' %}190{% else %}70{% endif %}px">操作</th>
+            <th class="text-center" style="min-width:{% if current_user.role == 'ADMIN' %}220{% else %}70{% endif %}px">操作</th>
           </tr>
         </thead>
         <tbody>
           {% for m in tab_materials %}
-          <tr>
+          <tr {% if m.is_hidden %}class="opacity-50"{% endif %}>
             <td class="text-muted" style="font-size:.76rem">{{ m.code or '—' }}</td>
-            <td>{{ m.name }}</td>
+            <td>{{ m.name }}{% if m.is_hidden %} <span class="badge bg-secondary" style="font-size:.65rem">已隱藏</span>{% endif %}</td>
             <td class="text-muted small">{{ m.spec or '—' }}</td>
             <td class="text-center">{{ m.unit }}</td>
             {% if current_user.role == 'ADMIN' %}
@@ -128,6 +131,16 @@
                 </ul>
               </div>
               {% endif %}
+              <form method="POST" action="{{ url_for('materials_toggle_hidden', material_id=m.id) }}"
+                    style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="active_tab" value="{{ active_tab }}">
+                <button type="submit"
+                        class="btn btn-sm py-0 px-2 ms-1 {% if m.is_hidden %}btn-secondary{% else %}btn-outline-secondary{% endif %}"
+                        title="{% if m.is_hidden %}顯示給USER{% else %}對USER隱藏{% endif %}">
+                  <i class="bi bi-{% if m.is_hidden %}eye{% else %}eye-slash{% endif %}"></i>
+                </button>
+              </form>
               <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
                       onclick="openUpdate({{ m.id }}, '{{ m.code or '' | e }}', '{{ m.name | e }}',
                                '{{ m.spec or '' | e }}', '{{ m.unit | e }}',
@@ -431,7 +444,7 @@
             <div class="col-md-2">
               <label class="form-label small">分頁</label>
               <select name="tab_id" class="form-select form-select-sm">
-                {% for i in range(1,6) %}{% if tab_names.get(i) %}
+                {% for i in range(1,11) %}{% if tab_names.get(i) %}
                 <option value="{{ i }}" {% if i == active_tab %}selected{% endif %}>{{ tab_names[i] }}</option>
                 {% endif %}{% endfor %}
               </select>
@@ -518,8 +531,8 @@
       <form method="POST" action="{{ url_for('settings_mat_tabs') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
-          <p class="text-muted small mb-3">留空的分頁將會隱藏，最多可設定 5 個分頁。</p>
-          {% for i in range(1, 6) %}
+          <p class="text-muted small mb-3">留空的分頁將會隱藏，最多可設定 10 個分頁。</p>
+          {% for i in range(1, 11) %}
           <div class="mb-2 d-flex align-items-center gap-2">
             <label class="form-label mb-0 text-muted small" style="min-width:42px">分頁 {{ i }}</label>
             <input type="text" name="tab_{{ i }}_name" class="form-control form-control-sm"

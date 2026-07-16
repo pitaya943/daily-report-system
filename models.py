@@ -154,8 +154,9 @@ class Material(db.Model):
     cumulative_usage  = db.Column(db.Numeric(12, 3), nullable=False, default=0)       # 累積使用量
     received_quantity = db.Column(db.Numeric(12, 3), nullable=False, default=0)       # 實領量
     remaining_quantity = db.Column(db.Numeric(12, 3), nullable=False, default=0)      # 庫存量
-    tab_id           = db.Column(db.Integer, nullable=False, default=1)               # 分頁 1-5
+    tab_id           = db.Column(db.Integer, nullable=False, default=1)               # 分頁 1-10
     sort_order       = db.Column(db.Integer, nullable=False, default=0)
+    is_hidden        = db.Column(db.Boolean, nullable=False, default=False)          # ADMIN 隱藏，USER 看不到
     is_quarantined   = db.Column(db.Boolean, nullable=False, default=False)          # 暫存區
     quarantine_note  = db.Column(db.Text, nullable=True)                             # JSON: reason + B系統數值
     created_at       = db.Column(db.DateTime, default=_tw_now)
