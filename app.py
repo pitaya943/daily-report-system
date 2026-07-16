@@ -2578,7 +2578,8 @@ def materials_import_excel():
     all_materials = {m.code: m for m in
                      Material.query.filter(Material.code.isnot(None)).all()}
 
-    correct, quarantined, not_found = [], [], []
+    correct, updated, quarantined, not_found = [], [], [], []
+    TOL = Decimal('0.001')
 
     for row in raw_rows[1:]:
         if all((v is None or str(v).strip() == '') for v in row):
@@ -2596,38 +2597,89 @@ def materials_import_excel():
             not_found.append(b_code)
             continue
 
-        a_received   = m.received_quantity   or Decimal('0')
-        a_cumulative = m.cumulative_usage    or Decimal('0')
-        a_remaining  = m.remaining_quantity  or Decimal('0')
+        a_received   = m.received_quantity  or Decimal('0')
+        a_cumulative = m.cumulative_usage   or Decimal('0')
+        a_remaining  = m.remaining_quantity or Decimal('0')
 
-        # Condition 1: B.received >= A.received
-        b_ge_a = b_received >= a_received
-        # Condition 2: A invariant holds (received = cumulative + remaining)
-        invariant_ok = abs((a_cumulative + a_remaining) - a_received) < Decimal('0.001')
+        # ── Step 1：計算 x（B 新進材料量）──────────────────────────
+        x = b_received - a_received
 
-        if b_ge_a and invariant_ok:
-            correct.append(b_code)
-        else:
-            reasons = []
-            if not b_ge_a:
-                reasons.append(f'B實領量({b_received}) < A實領量({a_received})')
-            if not invariant_ok:
-                reasons.append(f'A系統不一致：{a_cumulative}+{a_remaining}≠{a_received}')
+        if x < -TOL:
+            # 異常：B 的實領量比 A 少，不合理
             m.is_quarantined  = True
             m.quarantine_note = _json.dumps({
-                'reason':       '；'.join(reasons),
-                'b_cumulative': str(b_cumulative),
-                'b_received':   str(b_received),
-                'b_remaining':  str(b_remaining),
-                'a_cumulative': str(a_cumulative),
-                'a_received':   str(a_received),
-                'a_remaining':  str(a_remaining),
+                'reason':        f'B系統實領量({b_received})低於A系統實領量({a_received})，數據異常',
+                'wrong_party':   '?',
+                'x':             str(x),
+                'a_cumulative':  str(a_cumulative),
+                'a_received':    str(a_received),
+                'a_remaining':   str(a_remaining),
+                'a_received_new': str(a_received),
+                'a_remaining_new': str(a_remaining),
+                'b_cumulative':  str(b_cumulative),
+                'b_received':    str(b_received),
+                'b_remaining':   str(b_remaining),
+            }, ensure_ascii=False)
+            quarantined.append(b_code)
+            continue
+
+        # ── Step 2：計算更新後 A 的數值 ────────────────────────────
+        # x >= 0：B 有新到材料（x=0 表示實領量已一致，僅做比對）
+        a_received_new  = a_received + x    # == b_received
+        a_remaining_new = a_remaining + x   # 新材料進庫存
+        a_cumulative_new = a_cumulative      # 累計使用量不動
+
+        # ── Step 3：對比更新後 A 與 B 是否完全一致 ─────────────────
+        cumulative_match = abs(a_cumulative_new - b_cumulative) < TOL
+        remaining_match  = abs(a_remaining_new  - b_remaining)  < TOL
+
+        if cumulative_match and remaining_match:
+            # 完全同步 → 寫入更新（只有 x > 0 才需要實際更新 DB）
+            if x > TOL:
+                m.received_quantity  = a_received_new
+                m.remaining_quantity = a_remaining_new
+                # cumulative_usage 不動
+                updated.append(b_code)
+            else:
+                correct.append(b_code)
+        else:
+            # 不一致 → 分析誰錯
+            if a_remaining_new - b_remaining > TOL:
+                # 更新後 A 庫存 > B 庫存 → A 累計使用量偏少 → A 系統可能漏了核准
+                wrong_party = 'A'
+                reason = (f'更新後A庫存({a_remaining_new}) > B庫存({b_remaining})，'
+                          f'A系統累計使用量偏少（可能漏了核准紀錄）')
+            else:
+                # 更新後 B 庫存 > A 庫存 → B 累計使用量偏少 → B 系統可能漏了紀錄
+                wrong_party = 'B'
+                reason = (f'更新後B庫存({b_remaining}) > A庫存({a_remaining_new})，'
+                          f'B系統累計使用量偏少（可能漏了領料紀錄）')
+
+            m.is_quarantined  = True
+            m.quarantine_note = _json.dumps({
+                'reason':          reason,
+                'wrong_party':     wrong_party,
+                'x':               str(x),
+                'a_cumulative':    str(a_cumulative),
+                'a_received':      str(a_received),
+                'a_remaining':     str(a_remaining),
+                'a_received_new':  str(a_received_new),
+                'a_remaining_new': str(a_remaining_new),
+                'b_cumulative':    str(b_cumulative),
+                'b_received':      str(b_received),
+                'b_remaining':     str(b_remaining),
             }, ensure_ascii=False)
             quarantined.append(b_code)
 
     db.session.commit()
 
-    parts = [f'比對完成：{len(correct)} 筆正確']
+    parts = []
+    if correct:
+        parts.append(f'{len(correct)} 筆已同步（實領量無變動）')
+    if updated:
+        parts.append(f'{len(updated)} 筆已更新實領量並確認同步')
+    if not parts:
+        parts.append('0 筆正確')
     if quarantined:
         preview = '、'.join(quarantined[:5]) + ('…' if len(quarantined) > 5 else '')
         parts.append(f'{len(quarantined)} 筆移至暫存區（{preview}）')
@@ -2648,21 +2700,30 @@ def materials_resolve_quarantine(material_id):
         abort(404)
 
     action = request.form.get('action', 'keep_a')
-    if action == 'use_b':
-        try:
-            note = _json.loads(m.quarantine_note or '{}')
+    try:
+        note = _json.loads(m.quarantine_note or '{}')
+        x = Decimal(note.get('x', '0'))
+
+        if action == 'use_b':
+            # 信任 B 系統：採用 B 的 cumulative 與 remaining，received = b_received
             m.cumulative_usage   = Decimal(note['b_cumulative'])
             m.remaining_quantity = Decimal(note['b_remaining'])
-            m.received_quantity  = m.cumulative_usage + m.remaining_quantity
+            m.received_quantity  = Decimal(note['b_received'])
             add_audit(current_user.id, 'MATERIAL_SYNC_B',
-                      f'「{m.name}({m.code})」採用 B 系統數值：'
+                      f'「{m.name}({m.code})」採用B系統數值：'
                       f'累計={m.cumulative_usage} 庫存={m.remaining_quantity} 實領={m.received_quantity}')
-        except Exception:
-            flash('同步 B 系統數值失敗', 'danger')
-            return redirect(url_for('materials'))
-    else:
-        add_audit(current_user.id, 'MATERIAL_QUARANTINE_RESOLVE',
-                  f'「{m.name}({m.code})」保留 A 系統數值，結束暫存審查')
+        else:
+            # 信任 A 系統 cumulative：套用 x（新進材料），A.remaining += x，A.received += x
+            if x > Decimal('0'):
+                m.received_quantity  = Decimal(note['a_received_new'])
+                m.remaining_quantity = Decimal(note['a_remaining_new'])
+                # cumulative_usage 保持原值不動
+            # 若 x == 0，則三個欄位都不需動
+            add_audit(current_user.id, 'MATERIAL_KEEP_A',
+                      f'「{m.name}({m.code})」保留A系統累計使用量，新進材料x={x}已套入庫存')
+    except Exception as _e:
+        flash(f'處理失敗：{_e}', 'danger')
+        return redirect(url_for('materials'))
 
     m.is_quarantined  = False
     m.quarantine_note = None

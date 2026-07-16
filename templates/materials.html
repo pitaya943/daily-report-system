@@ -199,54 +199,71 @@
       <table class="table table-sm mb-0 align-middle" style="font-size:.82rem">
         <thead class="table-light">
           <tr>
-            <th style="min-width:85px">材料編號</th>
-            <th style="min-width:120px">材料名稱</th>
-            <th class="text-center" colspan="3">A 系統（本系統）</th>
-            <th class="text-center" colspan="3">B 系統（Excel）</th>
-            <th style="min-width:180px">異常原因</th>
-            <th class="text-center" style="min-width:160px">處理</th>
+            <th rowspan="2" style="min-width:80px">材料編號</th>
+            <th rowspan="2" style="min-width:110px">材料名稱</th>
+            <th rowspan="2" class="text-center" style="min-width:40px">新進量<br><span style="font-size:.7rem">(x)</span></th>
+            <th class="text-center" colspan="3" style="border-left:2px solid #adb5bd">A 系統原始值</th>
+            <th class="text-center" colspan="3" style="border-left:2px solid #6ea8fe">A 更新後（套入x）</th>
+            <th class="text-center" colspan="3" style="border-left:2px solid #fd7e14">B 系統（Excel）</th>
+            <th rowspan="2" style="min-width:50px">判斷<br>誰錯</th>
+            <th rowspan="2" style="min-width:170px">異常原因</th>
+            <th rowspan="2" class="text-center" style="min-width:130px">處理</th>
           </tr>
-          <tr class="table-secondary" style="font-size:.75rem">
-            <th></th><th></th>
-            <th class="text-center">累計使用量</th>
-            <th class="text-center">實領量</th>
-            <th class="text-center">庫存量</th>
-            <th class="text-center">累計使用量</th>
-            <th class="text-center">實領量</th>
-            <th class="text-center">庫存量</th>
-            <th></th><th></th>
+          <tr class="table-secondary" style="font-size:.72rem">
+            <th class="text-center" style="border-left:2px solid #adb5bd">累計</th>
+            <th class="text-center">實領</th>
+            <th class="text-center">庫存</th>
+            <th class="text-center" style="border-left:2px solid #6ea8fe">累計</th>
+            <th class="text-center">實領</th>
+            <th class="text-center">庫存</th>
+            <th class="text-center" style="border-left:2px solid #fd7e14">累計</th>
+            <th class="text-center">實領</th>
+            <th class="text-center">庫存</th>
           </tr>
         </thead>
         <tbody>
           {% for m in quarantine_materials %}
           {% set note = m.quarantine_note | from_json if m.quarantine_note else {} %}
-          <tr class="table-danger bg-opacity-25">
+          {% set wrong = note.get('wrong_party', '?') %}
+          <tr>
             <td style="font-size:.75rem">{{ m.code or '—' }}</td>
             <td>{{ m.name }}</td>
-            <td class="text-center">{{ note.get('a_cumulative', m.cumulative_usage | mat_qty) }}</td>
-            <td class="text-center">{{ note.get('a_received', m.received_quantity | mat_qty) }}</td>
-            <td class="text-center">{{ note.get('a_remaining', m.remaining_quantity | mat_qty) }}</td>
-            <td class="text-center text-primary fw-semibold">{{ note.get('b_cumulative', '—') }}</td>
-            <td class="text-center text-primary fw-semibold">{{ note.get('b_received', '—') }}</td>
-            <td class="text-center text-primary fw-semibold">{{ note.get('b_remaining', '—') }}</td>
-            <td class="text-danger small">{{ note.get('reason', '—') }}</td>
-            <td class="text-center text-nowrap">
+            <td class="text-center fw-semibold text-success">{{ note.get('x', '—') }}</td>
+            {{/* A 原始值 */}}
+            <td class="text-center text-muted" style="border-left:2px solid #adb5bd">{{ note.get('a_cumulative', '—') }}</td>
+            <td class="text-center text-muted">{{ note.get('a_received', '—') }}</td>
+            <td class="text-center text-muted">{{ note.get('a_remaining', '—') }}</td>
+            {{/* A 更新後 */}}
+            <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}" style="border-left:2px solid #6ea8fe">{{ note.get('a_cumulative', '—') }}</td>
+            <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}">{{ note.get('a_received_new', '—') }}</td>
+            <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}">{{ note.get('a_remaining_new', '—') }}</td>
+            {{/* B 值 */}}
+            <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}" style="border-left:2px solid #fd7e14">{{ note.get('b_cumulative', '—') }}</td>
+            <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}">{{ note.get('b_received', '—') }}</td>
+            <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}">{{ note.get('b_remaining', '—') }}</td>
+            <td class="text-center">
+              {% if wrong == 'A' %}<span class="badge bg-danger">A錯</span>
+              {% elif wrong == 'B' %}<span class="badge bg-warning text-dark">B錯</span>
+              {% else %}<span class="badge bg-secondary">?</span>{% endif %}
+            </td>
+            <td class="text-danger" style="font-size:.78rem">{{ note.get('reason', '—') }}</td>
+            <td class="text-center" style="white-space:nowrap">
               <form method="POST" action="{{ url_for('materials_resolve_quarantine', material_id=m.id) }}"
                     style="display:inline"
-                    onsubmit="return confirm('保留 A 系統數值並結束暫存審查？')">
+                    onsubmit="return confirm('信任A系統累計使用量，將新進材料x套入A庫存？')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="action" value="keep_a">
-                <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-2" title="保留本系統數值">
-                  保留A
+                <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-2">
+                  信任A
                 </button>
               </form>
               <form method="POST" action="{{ url_for('materials_resolve_quarantine', material_id=m.id) }}"
-                    style="display:inline ms-1"
-                    onsubmit="return confirm('將以 B 系統（Excel）的數值覆蓋本系統數值？')">
+                    style="display:inline"
+                    onsubmit="return confirm('信任B系統，將B的累計/庫存/實領全數覆蓋A？')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="action" value="use_b">
-                <button type="submit" class="btn btn-outline-primary btn-sm py-0 px-2 ms-1" title="同步 B 系統數值">
-                  同步B
+                <button type="submit" class="btn btn-outline-primary btn-sm py-0 px-2 ms-1">
+                  信任B
                 </button>
               </form>
             </td>
