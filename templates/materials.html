@@ -88,7 +88,7 @@
   <div class="card-body p-0">
     <table class="table table-sm table-hover mb-0">
       <thead>
-        <tr><th>材料</th><th class="text-center">數量</th><th>申請時間</th><th class="text-center">狀態</th><th class="text-center">操作</th></tr>
+        <tr><th>材料</th><th class="text-center">數量</th><th>備註</th><th>申請時間</th><th class="text-center">狀態</th><th class="text-center">操作</th></tr>
       </thead>
       <tbody>
         {% for req in my_requests %}
@@ -98,6 +98,7 @@
             {% for m in all_materials if m.id == mat_id %}{{ m.name }} ({{ m.unit }}){% endfor %}
           </td>
           <td class="text-center">{{ req.requested_quantity }}</td>
+          <td style="font-size:.8rem; max-width:120px; word-break:break-all;">{{ req.note or '' }}</td>
           <td style="font-size:.8rem">{{ req.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td class="text-center">
             {% if req.status == 'PENDING' %}
@@ -152,7 +153,12 @@
           <div class="mb-2">
             <label class="form-label">申請數量</label>
             <input type="number" name="quantity" class="form-control"
-                   min="1" required id="reqQty">
+                   min="1" max="99" required id="reqQty">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">備註 <span class="text-muted small">（選填）</span></label>
+            <input type="text" name="note" class="form-control form-control-sm"
+                   maxlength="200" placeholder="說明用途或其他備注">
           </div>
         </div>
         <div class="modal-footer">

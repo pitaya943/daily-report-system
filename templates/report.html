@@ -139,7 +139,10 @@
           </div>
           <input type="hidden" id="collabIdsInput" name="collab_ids" value="">
 
-          <button type="button" class="btn btn-primary px-4"
+          <div id="qtyWarning" class="text-danger small mt-2 d-none">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>數量過大請分批回報
+          </div>
+          <button type="button" class="btn btn-primary px-4 mt-2"
                   onclick="openConfirmModal()">
             <i class="bi bi-send me-1"></i>送出回報
           </button>
@@ -182,6 +185,17 @@
 {% block scripts %}
 <script>
 const FIELDS = {{ report_fields | tojson }};
+
+// ── Qty warning ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('reportForm').addEventListener('input', e => {
+    if (e.target.type !== 'number') return;
+    const anyOver = Array.from(
+      document.querySelectorAll('#reportForm input[type="number"]')
+    ).some(inp => parseFloat(inp.value) > 999);
+    document.getElementById('qtyWarning').classList.toggle('d-none', !anyOver);
+  });
+});
 
 // ── Collab ──────────────────────────────────────────────
 let collabUsers = [];   // [{id, name}] fetched from API

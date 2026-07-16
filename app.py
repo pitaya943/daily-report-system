@@ -450,6 +450,20 @@ def _init_db():
             conn.commit()
     except Exception:
         pass
+    # v1.0.6 migrations
+    for _sql in [
+        "ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS note VARCHAR(200)",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_item_name VARCHAR(100)",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_item_qty NUMERIC(8,1) DEFAULT 0",
+        "ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_item_price INTEGER DEFAULT 0",
+        "ALTER TABLE audit_logs ALTER COLUMN user_id DROP NOT NULL",
+    ]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(_text(_sql))
+                conn.commit()
+        except Exception:
+            pass
     # Column migration: add big meter fields to reports
     for _col in [
         'bm_50_down', 'bm_75_down', 'bm_100_down', 'bm_150_down',
@@ -547,6 +561,9 @@ def report_json_filter(r):
     data['report_date'] = str(r.report_date)
     data['collab_count'] = r.collab_count or 1
     data['collab_json'] = r.collab_json or '[]'
+    data['custom_item_name']  = r.custom_item_name or ''
+    data['custom_item_qty']   = float(r.custom_item_qty or 0)
+    data['custom_item_price'] = int(r.custom_item_price or 0)
     return json.dumps(data, ensure_ascii=False)
 
 login_manager = LoginManager(app)
@@ -736,8 +753,7 @@ BIG_METER_FIELDS = [
     ('bm_mobilization', '動員'),
     ('bm_recheck',      '復查'),
     ('bm_app',          'APP'),
-    ('bm_40_fen',       '40MM分'),
-]  # 26 欄
+]  # 25 欄
 
 DEFAULT_PRICES_BM = {
     'bm_50_down':1100.0,'bm_75_down':1800.0,'bm_100_down':2000.0,
@@ -2098,13 +2114,17 @@ def materials_request():
     if qty <= 0:
         flash('申請數量必須大於 0', 'danger')
         return redirect(url_for('materials'))
+    if qty > 99:
+        flash('單次申請數量上限為 99', 'danger')
+        return redirect(url_for('materials'))
 
     m = db.session.get(Material, material_id)
     if not m:
         abort(404)
 
+    note = request.form.get('note', '').strip()[:200] or None
     req = MaterialRequest(user_id=current_user.id, material_id=material_id,
-                          requested_quantity=qty, status='PENDING')
+                          requested_quantity=qty, note=note, status='PENDING')
     db.session.add(req)
     add_audit(current_user.id, 'MATERIAL_REQUEST',
               f'申請領取「{m.name}」{qty}{m.unit}')
@@ -2136,7 +2156,7 @@ def materials_add():
     name = request.form.get('name', '').strip()
     unit = request.form.get('unit', '').strip()
     try:
-        qty = max(0, int(request.form.get('quantity', 0)))
+        qty = max(0, min(9999, int(request.form.get('quantity', 0))))
     except (ValueError, TypeError):
         qty = 0
 
@@ -2160,7 +2180,7 @@ def materials_update(material_id):
     if not m:
         abort(404)
     try:
-        new_qty = max(0, int(request.form.get('quantity', 0)))
+        new_qty = max(0, min(9999, int(request.form.get('quantity', 0))))
     except (ValueError, TypeError):
         new_qty = 0
     old_qty = m.remaining_quantity
@@ -2315,6 +2335,136 @@ def summary():
                            url_args=url_args)
 
 
+@app.route('/summary/export-excel')
+@admin_required
+def summary_export_excel():
+    start_date_s = request.args.get('start_date', '')
+    end_date_s   = request.args.get('end_date', '')
+    selected_user_id = request.args.get('user_id', '')
+    selected_zone    = request.args.get('zone', '')
+    confirm_filter   = request.args.get('confirm_filter', 'all')
+
+    if not start_date_s or not end_date_s:
+        flash('請先選擇日期範圍', 'warning')
+        return redirect(url_for('summary'))
+
+    _bm_ids = db.session.query(User.id).filter_by(is_big_meter=True).scalar_subquery()
+    all_users = User.query.filter_by(is_big_meter=False).all()
+    users_dict = {u.id: u for u in all_users}
+
+    q = Report.query.filter(
+        Report.report_date >= date.fromisoformat(start_date_s),
+        Report.report_date <= date.fromisoformat(end_date_s)
+    ).filter(Report.user_id.notin_(_bm_ids))
+    if selected_user_id:
+        _sid = int(selected_user_id)
+        from sqlalchemy import or_, text as _sa_t
+        q = q.filter(or_(Report.user_id == _sid, _sa_t(f"collab_json::jsonb @> '[{_sid}]'")))
+    elif selected_zone in (ZONE_WEST, ZONE_SOUTH):
+        _zone_ids = db.session.query(User.id).filter_by(zone=selected_zone, is_big_meter=False).scalar_subquery()
+        q = q.filter(Report.user_id.in_(_zone_ids))
+    if confirm_filter == 'confirmed':
+        q = q.filter_by(is_confirmed=True)
+    elif confirm_filter == 'unconfirmed':
+        q = q.filter_by(is_confirmed=False)
+    reports = q.all()
+
+    user_totals = {}
+
+    def _accum(tgt_uid, rpt, n):
+        u_obj = users_dict.get(tgt_uid)
+        if not u_obj:
+            return
+        zone_f = get_zone_fields(u_obj.zone)
+        if tgt_uid not in user_totals:
+            user_totals[tgt_uid] = {
+                'username': u_obj.display_name, 'zone': u_obj.zone,
+                'totals': {k: 0.0 for k, _ in zone_f}, 'count': 0,
+            }
+        for k, _ in zone_f:
+            user_totals[tgt_uid]['totals'][k] += float(getattr(rpt, k, 0) or 0) / n
+        user_totals[tgt_uid]['count'] += 1
+
+    for r in reports:
+        _n = float(r.collab_count or 1)
+        if selected_user_id:
+            _accum(int(selected_user_id), r, _n)
+        else:
+            _accum(r.user_id, r, _n)
+            if r.collab_json:
+                for _cuid in json.loads(r.collab_json):
+                    _accum(_cuid, r, _n)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    header_fill = PatternFill('solid', fgColor='4472C4')
+    sub_fill    = PatternFill('solid', fgColor='D9E1F2')
+    bold_blue   = Font(bold=True, color='FFFFFF')
+    bold        = Font(bold=True)
+    center      = Alignment(horizontal='center', vertical='center')
+
+    def _make_sheet(ws_name, fields, zone_data):
+        ws = wb.create_sheet(ws_name)
+        headers = ['姓名', '回報次數'] + [lbl for _, lbl in fields] + ['合計']
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=1, column=ci, value=h)
+            c.fill = header_fill
+            c.font = bold_blue
+            c.alignment = center
+
+        for row_i, (_, d) in enumerate(zone_data.items(), 2):
+            row_fill = sub_fill if row_i % 2 == 0 else None
+            ws.cell(row=row_i, column=1, value=d['username'])
+            ws.cell(row=row_i, column=2, value=d['count'])
+            total = 0.0
+            for ci, (k, _) in enumerate(fields, 3):
+                val = round(d['totals'].get(k, 0.0), 1)
+                ws.cell(row=row_i, column=ci, value=val if val else '')
+                total += val
+            ws.cell(row=row_i, column=len(headers), value=round(total, 1))
+            if row_fill:
+                for ci in range(1, len(headers) + 1):
+                    ws.cell(row=row_i, column=ci).fill = row_fill
+
+        # Grand total row
+        gt_row = len(zone_data) + 2
+        ws.cell(row=gt_row, column=1, value='合計').font = bold
+        ws.cell(row=gt_row, column=2, value=sum(d['count'] for d in zone_data.values())).font = bold
+        gt_total = 0.0
+        for ci, (k, _) in enumerate(fields, 3):
+            col_sum = round(sum(d['totals'].get(k, 0.0) for d in zone_data.values()), 1)
+            ws.cell(row=gt_row, column=ci, value=col_sum if col_sum else '').font = bold
+            gt_total += col_sum
+        ws.cell(row=gt_row, column=len(headers), value=round(gt_total, 1)).font = bold
+
+        for ci in range(1, len(headers) + 1):
+            col_letter = get_column_letter(ci)
+            max_len = max((len(str(c.value)) for c in ws[col_letter] if c.value), default=6)
+            ws.column_dimensions[col_letter].width = min(max_len * 2.0 + 2, 40)
+
+    west_data  = {uid: d for uid, d in user_totals.items() if d['zone'] == ZONE_WEST}
+    south_data = {uid: d for uid, d in user_totals.items() if d['zone'] == ZONE_SOUTH}
+    if west_data:
+        _make_sheet('西區', WEST_REPORT_FIELDS, west_data)
+    if south_data:
+        _make_sheet('南區', SOUTH_REPORT_FIELDS, south_data)
+    if not west_data and not south_data:
+        ws = wb.create_sheet('無資料')
+        ws.cell(row=1, column=1, value='查無資料')
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f'summary_{start_date_s}_{end_date_s}.xlsx'
+    return send_file(buf,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
+
+
 # ---------------------------------------------------------------------------
 # Page 6: Confirmation (ADMIN)
 # ---------------------------------------------------------------------------
@@ -2414,6 +2564,34 @@ def confirm_report(report_id):
     flash('回報已確認', 'success')
     _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page')
             if request.form.get(k)}
+    return redirect(url_for('confirmation', **_flt))
+
+
+@app.route('/confirmation/report/<int:report_id>/custom-item', methods=['POST'])
+@admin_required
+def set_custom_item(report_id):
+    r = db.session.get(Report, report_id)
+    if not r:
+        abort(404)
+    name  = request.form.get('custom_item_name', '').strip()[:100]
+    try:
+        qty   = max(0.0, round(float(request.form.get('custom_item_qty', 0) or 0), 1))
+        price = max(0, int(request.form.get('custom_item_price', 0) or 0))
+    except (ValueError, TypeError):
+        flash('數量或單價格式錯誤', 'danger')
+        _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page') if request.form.get(k)}
+        return redirect(url_for('confirmation', **_flt))
+    r.custom_item_name  = name or None
+    r.custom_item_qty   = qty if name else None
+    r.custom_item_price = price if name else None
+    r.updated_at = tw_now()
+    submitter = db.session.get(User, r.user_id)
+    uname = submitter.display_name if submitter else '(已刪除)'
+    add_audit(current_user.id, 'REPORT_UPDATE',
+              f'設定回報 #{r.id}（{uname} {r.report_date}）自訂工項：{name or "（清除）"} × {qty} @ {price}')
+    db.session.commit()
+    flash('自訂工項已更新', 'success')
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page') if request.form.get(k)}
     return redirect(url_for('confirmation', **_flt))
 
 
@@ -2896,6 +3074,11 @@ def salary():
                     for k, _ in _fields:
                         user_data[uid]['totals'][k] = user_data[uid]['totals'].get(k, 0.0) + float(getattr(r, k, 0) or 0) / _n
                 # 共同作業者
+                # 自訂工項累計（依人數平分金額）
+                if r.custom_item_name and r.custom_item_qty and r.custom_item_price:
+                    _ci_val = float(r.custom_item_qty or 0) * float(r.custom_item_price or 0) / _n
+                    if uid in user_data:
+                        user_data[uid]['custom_item_total'] = user_data[uid].get('custom_item_total', 0.0) + _ci_val
                 if r.collab_json:
                     for _cuid in json.loads(r.collab_json):
                         _init_user(_cuid)
@@ -2904,6 +3087,9 @@ def salary():
                             _cfields = get_user_report_fields(_cu) if _cu else get_zone_fields(user_data[_cuid]['zone'])
                             for k, _ in _cfields:
                                 user_data[_cuid]['totals'][k] = user_data[_cuid]['totals'].get(k, 0.0) + float(getattr(r, k, 0) or 0) / _n
+                            # 自訂工項給協作者
+                            if r.custom_item_name and r.custom_item_qty and r.custom_item_price:
+                                user_data[_cuid]['custom_item_total'] = user_data[_cuid].get('custom_item_total', 0.0) + _ci_val
 
             # 有固定薪資但本期無回報者也納入
             for u in users_dict.values():
@@ -2942,7 +3128,7 @@ def salary():
                 subtotals = {k: float(data['totals'].get(k, 0)) * prices.get(k, 0) for k, _ in zone_fields}
                 data['subtotals']    = subtotals
                 data['zone_fields']  = zone_fields
-                data['gross_salary'] = sum(subtotals.values())
+                data['gross_salary'] = sum(subtotals.values()) + data.get('custom_item_total', 0.0)
 
                 u = users_dict.get(uid)
                 if is_bm or is_admin:
@@ -4760,11 +4946,13 @@ def _run_auto_report(report_type: str, target_date, source: str = 'auto',
         )
         db.session.add(archive)
 
-        admin = User.query.filter_by(role='ADMIN').first()
-        if admin:
-            src_label = '（自動）' if source == 'auto' else '（手動）'
-            add_audit(admin.id, 'AUTO_REPORT',
-                      f'生成{"日報" if report_type == "DAILY" else "月報"} {label}{r2_suffix}{src_label}')
+        if source == 'manual' and generated_by:
+            _audit_uid = generated_by
+        else:
+            _audit_uid = None  # system-generated: show as "-"
+        src_label = '（自動）' if source == 'auto' else '（手動）'
+        add_audit(_audit_uid, 'AUTO_REPORT',
+                  f'生成{"日報" if report_type == "DAILY" else "月報"} {label}{r2_suffix}{src_label}')
         db.session.commit()
         app.logger.info(
             f'Report {report_type} {label} ({source}) generated OK — r2_excel={r2_excel}')

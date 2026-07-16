@@ -77,7 +77,11 @@
               {% else %}<span class="badge bg-secondary">未確認</span>{% endif %}
             </td>
             <td class="text-center text-nowrap">
-              <button class="btn btn-outline-primary btn-sm py-0 px-2"
+              <button class="btn btn-outline-secondary btn-sm py-0 px-2"
+                      onclick="openView({{ r.id }}, {{ r | report_json }})" title="檢視">
+                <i class="bi bi-eye"></i>
+              </button>
+              <button class="btn btn-outline-primary btn-sm py-0 px-2 ms-1"
                       onclick="openEdit({{ r.id }}, {{ r | report_json }})">
                 <i class="bi bi-pencil"></i>
               </button>
@@ -123,6 +127,27 @@
   </div>
 </div>
 
+<!-- View Modal -->
+<div class="modal fade" id="viewModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title"><i class="bi bi-eye me-2"></i>檢視大表回報</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="viewCollabInfo" class="alert alert-info py-2 mb-3 d-none" style="font-size:.85rem">
+          <i class="bi bi-people me-1"></i>共同作業人員：<span id="viewCollabNames"></span>
+        </div>
+        <div id="viewFields" class="row g-3"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Delete form -->
 <form id="deleteForm" method="POST" style="display:none">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -138,6 +163,28 @@ const USERS = {
 };
 
 function getVal(r, k) { return r[k] ?? 0; }
+
+function openView(id, r) {
+  const collabIds = JSON.parse(r.collab_json || '[]');
+  const collabDiv = document.getElementById('viewCollabInfo');
+  if (collabIds.length > 0) {
+    document.getElementById('viewCollabNames').textContent = collabIds.map(cid => USERS[cid] || '?').join('、');
+    collabDiv.classList.remove('d-none');
+  } else {
+    collabDiv.classList.add('d-none');
+  }
+  const container = document.getElementById('viewFields');
+  container.innerHTML = '';
+  BM_FIELDS.forEach(([k, label]) => {
+    container.innerHTML += `
+      <div class="col-6 col-md-3">
+        <label class="form-label small text-muted">${label}</label>
+        <input type="number" class="form-control form-control-sm bg-light"
+               value="${getVal(r, k)}" disabled>
+      </div>`;
+  });
+  new bootstrap.Modal(document.getElementById('viewModal')).show();
+}
 
 function openEdit(id, r) {
   document.getElementById('editForm').action = `/bm/history/${id}/edit`;

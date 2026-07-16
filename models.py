@@ -128,6 +128,10 @@ class Report(db.Model):
     bm_recheck       = db.Column(db.Numeric(8, 1), default=0)
     bm_app           = db.Column(db.Numeric(8, 1), default=0)
     bm_40_fen        = db.Column(db.Numeric(8, 1), default=0)
+    # ── 自訂工項（ADMIN 確認時插入）
+    custom_item_name  = db.Column(db.String(100), nullable=True)
+    custom_item_qty   = db.Column(db.Numeric(8, 1), nullable=True, default=0)
+    custom_item_price = db.Column(db.Integer, nullable=True, default=0)
     # ── 共同作業
     collab_count = db.Column(db.Integer, nullable=False, default=1)   # 含提交者的總人數
     collab_json  = db.Column(db.Text, nullable=True)                   # JSON list of additional collab user_ids
@@ -161,6 +165,7 @@ class MaterialRequest(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     material_id = db.Column(db.Integer, db.ForeignKey('materials.id'), nullable=False)
     requested_quantity = db.Column(db.Integer, nullable=False)
+    note = db.Column(db.String(200), nullable=True)
     status = db.Column(db.String(10), default='PENDING')  # PENDING, APPROVED, REJECTED
     reviewed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     reviewed_at = db.Column(db.DateTime, nullable=True)
@@ -181,7 +186,7 @@ class AuditLog(db.Model):
         db.Index('ix_audit_logs_action_type', 'action_type'),
     )
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # NULL = system-generated
     action_type = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=_tw_now)

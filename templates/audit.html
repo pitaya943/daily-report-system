@@ -77,7 +77,7 @@
           <tr>
             <td class="text-muted">{{ log.id }}</td>
             <td style="white-space:nowrap">{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-            <td>{{ u.display_name if u else '(已刪除)' }}</td>
+            <td>{% if log.user_id is none %}-{% elif u %}{{ u.display_name }}{% else %}(已刪除){% endif %}</td>
             <td>
               <span class="badge
                 {% if 'DELETE' in log.action_type or 'REJECT' in log.action_type %}bg-danger
