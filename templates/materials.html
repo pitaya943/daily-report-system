@@ -287,8 +287,8 @@
               <td class="text-danger" style="font-size:.78rem">{{ note.get('reason', '—') }}</td>
               <td class="text-center">
                 <select name="action_{{ m.id }}" class="form-select form-select-sm py-0" style="font-size:.78rem;min-width:90px">
-                  <option value="keep_a" {% if wrong != 'B' %}selected{% endif %}>信任A</option>
-                  <option value="use_b" {% if wrong == 'B' %}selected{% endif %}>信任B</option>
+                  <option value="keep_a" {% if wrong != 'A' %}selected{% endif %}>信任A</option>
+                  <option value="use_b" {% if wrong == 'A' %}selected{% endif %}>信任B</option>
                 </select>
               </td>
             </tr>
