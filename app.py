@@ -2364,11 +2364,12 @@ def materials():
     if current_user.role == 'USER':
         _tab_q = _tab_q.filter_by(is_hidden=False)
     tab_materials = _tab_q.order_by(Material.sort_order, Material.id).all()
-    # All non-quarantined materials (for request history lookup)
-    _all_q = Material.query.filter_by(is_quarantined=False)
+    # All non-quarantined materials — only needed for USER request history lookup
     if current_user.role == 'USER':
-        _all_q = _all_q.filter_by(is_hidden=False)
-    all_materials = _all_q.order_by(Material.tab_id, Material.sort_order, Material.id).all()
+        all_materials = (Material.query.filter_by(is_quarantined=False, is_hidden=False)
+                         .order_by(Material.tab_id, Material.sort_order, Material.id).all())
+    else:
+        all_materials = None
     # Quarantined materials (ADMIN only)
     quarantine_materials = (Material.query.filter_by(is_quarantined=True).all()
                             if current_user.role == 'ADMIN' else [])
@@ -2544,9 +2545,13 @@ def materials_move_up(material_id):
     prev = (Material.query.filter(Material.tab_id == m.tab_id,
                                   Material.sort_order < m.sort_order)
             .order_by(Material.sort_order.desc()).first())
+    swapped = False
     if prev:
         m.sort_order, prev.sort_order = prev.sort_order, m.sort_order
         db.session.commit()
+        swapped = True
+    if request.form.get('ajax') == '1':
+        return jsonify({'ok': True, 'swapped': swapped})
     return redirect(url_for('materials', tab=m.tab_id))
 
 
@@ -2559,9 +2564,13 @@ def materials_move_down(material_id):
     nxt = (Material.query.filter(Material.tab_id == m.tab_id,
                                  Material.sort_order > m.sort_order)
            .order_by(Material.sort_order.asc()).first())
+    swapped = False
     if nxt:
         m.sort_order, nxt.sort_order = nxt.sort_order, m.sort_order
         db.session.commit()
+        swapped = True
+    if request.form.get('ajax') == '1':
+        return jsonify({'ok': True, 'swapped': swapped})
     return redirect(url_for('materials', tab=m.tab_id))
 
 
@@ -2573,7 +2582,7 @@ def materials_set_tab(material_id):
         abort(404)
     old_tab = m.tab_id
     try:
-        new_tab = max(1, min(5, int(request.form.get('tab_id', 1))))
+        new_tab = max(1, min(10, int(request.form.get('tab_id', 1))))
     except (ValueError, TypeError):
         new_tab = 1
     m.tab_id = new_tab
@@ -2613,6 +2622,8 @@ def materials_toggle_hidden(material_id):
     add_audit(current_user.id, 'MATERIAL_VISIBILITY',
               f'ADMIN 將「{m.name}({m.code})」設為{label}（USER 介面）')
     db.session.commit()
+    if request.form.get('ajax') == '1':
+        return jsonify({'ok': True, 'is_hidden': m.is_hidden})
     return redirect(url_for('materials', tab=request.form.get('active_tab', 1)))
 
 
@@ -2861,6 +2872,53 @@ def materials_import_excel():
     level = 'warning' if quarantined else 'success'
     flash('；'.join(parts), level)
     return redirect(url_for('materials'))
+
+
+@app.route('/materials/batch-resolve-quarantine', methods=['POST'])
+@admin_required
+def materials_batch_resolve_quarantine():
+    import json as _json
+    from decimal import Decimal
+    ids = request.form.getlist('ids')
+    if not ids:
+        flash('請先勾選要處理的材料', 'warning')
+        return redirect(url_for('materials') + '#quarantineSection')
+    processed, errors = 0, []
+    for mid_str in ids:
+        try:
+            mid = int(mid_str)
+        except ValueError:
+            continue
+        m = db.session.get(Material, mid)
+        if not m or not m.is_quarantined:
+            continue
+        action = request.form.get(f'action_{mid}', 'keep_a')
+        try:
+            note = _json.loads(m.quarantine_note or '{}')
+            x = Decimal(note.get('x', '0'))
+            if action == 'use_b':
+                m.cumulative_usage   = Decimal(note['b_cumulative'])
+                m.remaining_quantity = Decimal(note['b_remaining'])
+                m.received_quantity  = Decimal(note['b_received'])
+                add_audit(current_user.id, 'MATERIAL_SYNC_B',
+                          f'批次：「{m.name}({m.code})」採用B系統數值')
+            else:
+                if x > Decimal('0'):
+                    m.received_quantity  = Decimal(note['a_received_new'])
+                    m.remaining_quantity = Decimal(note['a_remaining_new'])
+                add_audit(current_user.id, 'MATERIAL_KEEP_A',
+                          f'批次：「{m.name}({m.code})」保留A系統累計使用量')
+            m.is_quarantined  = False
+            m.quarantine_note = None
+            processed += 1
+        except Exception as _e:
+            errors.append(f'{m.name}: {_e}')
+    db.session.commit()
+    if errors:
+        flash(f'完成 {processed} 筆，失敗：{"；".join(errors)}', 'warning')
+    else:
+        flash(f'已完成 {processed} 筆材料審查', 'success')
+    return redirect(url_for('materials') + '#quarantineSection')
 
 
 @app.route('/materials/<int:material_id>/resolve-quarantine', methods=['POST'])

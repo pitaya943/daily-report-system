@@ -79,7 +79,7 @@
           {% for m in tab_materials %}
           <tr {% if m.is_hidden %}class="opacity-50"{% endif %}>
             <td class="text-muted" style="font-size:.76rem">{{ m.code or '—' }}</td>
-            <td>{{ m.name }}{% if m.is_hidden %} <span class="badge bg-secondary" style="font-size:.65rem">已隱藏</span>{% endif %}</td>
+            <td>{{ m.name }} <span class="badge bg-secondary hidden-badge" style="font-size:.65rem;{% if not m.is_hidden %}display:none{% endif %}">已隱藏</span></td>
             <td class="text-muted small">{{ m.spec or '—' }}</td>
             <td class="text-center">{{ m.unit }}</td>
             {% if current_user.role == 'ADMIN' %}
@@ -100,20 +100,22 @@
                 <i class="bi bi-cart-plus me-1"></i>申請
               </button>
               {% else %}
-              <form method="POST" action="{{ url_for('materials_move_up', material_id=m.id) }}" style="display:inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1"
-                        {% if loop.first %}disabled{% endif %} title="上移">
-                  <i class="bi bi-chevron-up"></i>
-                </button>
-              </form>
-              <form method="POST" action="{{ url_for('materials_move_down', material_id=m.id) }}" style="display:inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1"
-                        {% if loop.last %}disabled{% endif %} title="下移">
-                  <i class="bi bi-chevron-down"></i>
-                </button>
-              </form>
+              <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1"
+                      data-dir="up"
+                      data-url="{{ url_for('materials_move_up', material_id=m.id) }}"
+                      data-csrf="{{ csrf_token() }}"
+                      {% if loop.first %}disabled{% endif %} title="上移"
+                      onclick="matMove(this,'up')">
+                <i class="bi bi-chevron-up"></i>
+              </button>
+              <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-1"
+                      data-dir="down"
+                      data-url="{{ url_for('materials_move_down', material_id=m.id) }}"
+                      data-csrf="{{ csrf_token() }}"
+                      {% if loop.last %}disabled{% endif %} title="下移"
+                      onclick="matMove(this,'down')">
+                <i class="bi bi-chevron-down"></i>
+              </button>
               {% if visible_tabs | length > 1 %}
               <div class="dropdown d-inline-block ms-1">
                 <button class="btn btn-outline-info btn-sm py-0 px-2 dropdown-toggle" data-bs-toggle="dropdown">移至</button>
@@ -131,16 +133,14 @@
                 </ul>
               </div>
               {% endif %}
-              <form method="POST" action="{{ url_for('materials_toggle_hidden', material_id=m.id) }}"
-                    style="display:inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="active_tab" value="{{ active_tab }}">
-                <button type="submit"
-                        class="btn btn-sm py-0 px-2 ms-1 {% if m.is_hidden %}btn-secondary{% else %}btn-outline-secondary{% endif %}"
-                        title="{% if m.is_hidden %}顯示給USER{% else %}對USER隱藏{% endif %}">
-                  <i class="bi bi-{% if m.is_hidden %}eye{% else %}eye-slash{% endif %}"></i>
-                </button>
-              </form>
+              <button type="button"
+                      class="btn btn-sm py-0 px-2 ms-1 {% if m.is_hidden %}btn-secondary{% else %}btn-outline-secondary{% endif %}"
+                      data-url="{{ url_for('materials_toggle_hidden', material_id=m.id) }}"
+                      data-csrf="{{ csrf_token() }}"
+                      title="{% if m.is_hidden %}顯示給USER{% else %}對USER隱藏{% endif %}"
+                      onclick="matToggleHidden(this)">
+                <i class="bi bi-{% if m.is_hidden %}eye{% else %}eye-slash{% endif %}"></i>
+              </button>
               <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
                       onclick="openUpdate({{ m.id }}, '{{ m.code or '' | e }}', '{{ m.name | e }}',
                                '{{ m.spec or '' | e }}', '{{ m.unit | e }}',
@@ -219,89 +219,90 @@
 <!-- ADMIN: Quarantine section -->
 {% if current_user.role == 'ADMIN' and quarantine_materials %}
 <div class="card mt-4 border-danger" id="quarantineSection">
-  <div class="card-header bg-danger text-white">
-    <i class="bi bi-exclamation-triangle-fill me-1"></i>
-    暫存區 — 待人工審查（{{ quarantine_materials | length }} 筆）
-  </div>
-  <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table table-sm mb-0 align-middle" style="font-size:.82rem">
-        <thead class="table-light">
-          <tr>
-            <th rowspan="2" style="min-width:80px">材料編號</th>
-            <th rowspan="2" style="min-width:110px">材料名稱</th>
-            <th rowspan="2" class="text-center" style="min-width:40px">新進量<br><span style="font-size:.7rem">(x)</span></th>
-            <th class="text-center" colspan="3" style="border-left:2px solid #adb5bd">A 系統原始值</th>
-            <th class="text-center" colspan="3" style="border-left:2px solid #6ea8fe">A 更新後（套入x）</th>
-            <th class="text-center" colspan="3" style="border-left:2px solid #fd7e14">B 系統（Excel）</th>
-            <th rowspan="2" style="min-width:50px">判斷<br>誰錯</th>
-            <th rowspan="2" style="min-width:170px">異常原因</th>
-            <th rowspan="2" class="text-center" style="min-width:130px">處理</th>
-          </tr>
-          <tr class="table-secondary" style="font-size:.72rem">
-            <th class="text-center" style="border-left:2px solid #adb5bd">累計</th>
-            <th class="text-center">實領</th>
-            <th class="text-center">庫存</th>
-            <th class="text-center" style="border-left:2px solid #6ea8fe">累計</th>
-            <th class="text-center">實領</th>
-            <th class="text-center">庫存</th>
-            <th class="text-center" style="border-left:2px solid #fd7e14">累計</th>
-            <th class="text-center">實領</th>
-            <th class="text-center">庫存</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for m in quarantine_materials %}
-          {% set note = m.quarantine_note | from_json if m.quarantine_note else {} %}
-          {% set wrong = note.get('wrong_party', '?') %}
-          <tr>
-            <td style="font-size:.75rem">{{ m.code or '—' }}</td>
-            <td>{{ m.name }}</td>
-            <td class="text-center fw-semibold text-success">{{ note.get('x', '—') }}</td>
-            {# A 原始值 #}
-            <td class="text-center text-muted" style="border-left:2px solid #adb5bd">{{ note.get('a_cumulative', '—') }}</td>
-            <td class="text-center text-muted">{{ note.get('a_received', '—') }}</td>
-            <td class="text-center text-muted">{{ note.get('a_remaining', '—') }}</td>
-            {# A 更新後 #}
-            <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}" style="border-left:2px solid #6ea8fe">{{ note.get('a_cumulative', '—') }}</td>
-            <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}">{{ note.get('a_received_new', '—') }}</td>
-            <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}">{{ note.get('a_remaining_new', '—') }}</td>
-            {# B 值 #}
-            <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}" style="border-left:2px solid #fd7e14">{{ note.get('b_cumulative', '—') }}</td>
-            <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}">{{ note.get('b_received', '—') }}</td>
-            <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}">{{ note.get('b_remaining', '—') }}</td>
-            <td class="text-center">
-              {% if wrong == 'A' %}<span class="badge bg-danger">A錯</span>
-              {% elif wrong == 'B' %}<span class="badge bg-warning text-dark">B錯</span>
-              {% else %}<span class="badge bg-secondary">?</span>{% endif %}
-            </td>
-            <td class="text-danger" style="font-size:.78rem">{{ note.get('reason', '—') }}</td>
-            <td class="text-center" style="white-space:nowrap">
-              <form method="POST" action="{{ url_for('materials_resolve_quarantine', material_id=m.id) }}"
-                    style="display:inline"
-                    onsubmit="return confirm('信任A系統累計使用量，將新進材料x套入A庫存？')">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="keep_a">
-                <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-2">
-                  信任A
-                </button>
-              </form>
-              <form method="POST" action="{{ url_for('materials_resolve_quarantine', material_id=m.id) }}"
-                    style="display:inline"
-                    onsubmit="return confirm('信任B系統，將B的累計/庫存/實領全數覆蓋A？')">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="use_b">
-                <button type="submit" class="btn btn-outline-primary btn-sm py-0 px-2 ms-1">
-                  信任B
-                </button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span><i class="bi bi-exclamation-triangle-fill me-1"></i>暫存區 — 待人工審查（{{ quarantine_materials | length }} 筆）</span>
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+      <button type="button" class="btn btn-sm btn-light py-0" onclick="setAllQ('keep_a')">全部設為信任A</button>
+      <button type="button" class="btn btn-sm btn-outline-light py-0" onclick="setAllQ('use_b')">全部設為信任B</button>
+      <button type="button" class="btn btn-sm btn-warning py-0 fw-semibold" onclick="toggleAllQ()">全選/取消</button>
     </div>
   </div>
+  <form method="POST" action="{{ url_for('materials_batch_resolve_quarantine') }}" onsubmit="return checkAndConfirmBatch()">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr>
+              <th class="text-center" style="width:36px"><input type="checkbox" id="qCheckAll" onchange="toggleAllQ(this.checked)"></th>
+              <th rowspan="2" style="min-width:80px">材料編號</th>
+              <th rowspan="2" style="min-width:110px">材料名稱</th>
+              <th rowspan="2" class="text-center" style="min-width:40px">新進量<br><span style="font-size:.7rem">(x)</span></th>
+              <th class="text-center" colspan="3" style="border-left:2px solid #adb5bd">A 系統原始值</th>
+              <th class="text-center" colspan="3" style="border-left:2px solid #6ea8fe">A 更新後（套入x）</th>
+              <th class="text-center" colspan="3" style="border-left:2px solid #fd7e14">B 系統（Excel）</th>
+              <th rowspan="2" style="min-width:50px">判斷<br>誰錯</th>
+              <th rowspan="2" style="min-width:170px">異常原因</th>
+              <th rowspan="2" class="text-center" style="min-width:120px">處理方式</th>
+            </tr>
+            <tr class="table-secondary" style="font-size:.72rem">
+              <th></th>
+              <th class="text-center" style="border-left:2px solid #adb5bd">累計</th>
+              <th class="text-center">實領</th>
+              <th class="text-center">庫存</th>
+              <th class="text-center" style="border-left:2px solid #6ea8fe">累計</th>
+              <th class="text-center">實領</th>
+              <th class="text-center">庫存</th>
+              <th class="text-center" style="border-left:2px solid #fd7e14">累計</th>
+              <th class="text-center">實領</th>
+              <th class="text-center">庫存</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in quarantine_materials %}
+            {% set note = m.quarantine_note | from_json if m.quarantine_note else {} %}
+            {% set wrong = note.get('wrong_party', '?') %}
+            <tr>
+              <td class="text-center"><input type="checkbox" name="ids" value="{{ m.id }}" class="q-check"></td>
+              <td style="font-size:.75rem">{{ m.code or '—' }}</td>
+              <td>{{ m.name }}</td>
+              <td class="text-center fw-semibold text-success">{{ note.get('x', '—') }}</td>
+              {# A 原始值 #}
+              <td class="text-center text-muted" style="border-left:2px solid #adb5bd">{{ note.get('a_cumulative', '—') }}</td>
+              <td class="text-center text-muted">{{ note.get('a_received', '—') }}</td>
+              <td class="text-center text-muted">{{ note.get('a_remaining', '—') }}</td>
+              {# A 更新後 #}
+              <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}" style="border-left:2px solid #6ea8fe">{{ note.get('a_cumulative', '—') }}</td>
+              <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}">{{ note.get('a_received_new', '—') }}</td>
+              <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}">{{ note.get('a_remaining_new', '—') }}</td>
+              {# B 值 #}
+              <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}" style="border-left:2px solid #fd7e14">{{ note.get('b_cumulative', '—') }}</td>
+              <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}">{{ note.get('b_received', '—') }}</td>
+              <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}">{{ note.get('b_remaining', '—') }}</td>
+              <td class="text-center">
+                {% if wrong == 'A' %}<span class="badge bg-danger">A錯</span>
+                {% elif wrong == 'B' %}<span class="badge bg-warning text-dark">B錯</span>
+                {% else %}<span class="badge bg-secondary">?</span>{% endif %}
+              </td>
+              <td class="text-danger" style="font-size:.78rem">{{ note.get('reason', '—') }}</td>
+              <td class="text-center">
+                <select name="action_{{ m.id }}" class="form-select form-select-sm py-0" style="font-size:.78rem;min-width:90px">
+                  <option value="keep_a" {% if wrong != 'B' %}selected{% endif %}>信任A</option>
+                  <option value="use_b" {% if wrong == 'B' %}selected{% endif %}>信任B</option>
+                </select>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer d-flex justify-content-end">
+      <button type="submit" class="btn btn-danger px-4">
+        <i class="bi bi-check2-all me-1"></i>儲存選取項目
+      </button>
+    </div>
+  </form>
 </div>
 {% endif %}
 
@@ -566,6 +567,105 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 });
+
+{% if current_user.role == 'ADMIN' %}
+// AJAX: move material up or down without full page reload
+function matMove(btn, dir) {
+  btn.disabled = true;
+  const url = btn.dataset.url;
+  const csrf = btn.dataset.csrf;
+  fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'csrf_token=' + encodeURIComponent(csrf) + '&ajax=1'
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok && data.swapped) {
+      const row = btn.closest('tr');
+      const tbody = row.parentNode;
+      if (dir === 'up') {
+        const prev = row.previousElementSibling;
+        if (prev) tbody.insertBefore(row, prev);
+      } else {
+        const next = row.nextElementSibling;
+        if (next) next.insertAdjacentElement('afterend', row);
+      }
+      refreshMoveButtons(tbody);
+    }
+    btn.disabled = false;
+  })
+  .catch(() => { btn.disabled = false; });
+}
+
+function refreshMoveButtons(tbody) {
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.forEach((row, idx) => {
+    const upBtn = row.querySelector('[data-dir="up"]');
+    const dnBtn = row.querySelector('[data-dir="down"]');
+    if (upBtn) upBtn.disabled = (idx === 0);
+    if (dnBtn) dnBtn.disabled = (idx === rows.length - 1);
+  });
+}
+
+// AJAX: toggle hidden without full page reload
+function matToggleHidden(btn) {
+  btn.disabled = true;
+  const url = btn.dataset.url;
+  const csrf = btn.dataset.csrf;
+  fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'csrf_token=' + encodeURIComponent(csrf) + '&ajax=1'
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      const row = btn.closest('tr');
+      const badge = row.querySelector('.hidden-badge');
+      if (data.is_hidden) {
+        btn.classList.remove('btn-outline-secondary');
+        btn.classList.add('btn-secondary');
+        btn.title = '顯示給USER';
+        btn.querySelector('i').className = 'bi bi-eye';
+        row.classList.add('opacity-50');
+        if (badge) badge.style.display = '';
+      } else {
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-outline-secondary');
+        btn.title = '對USER隱藏';
+        btn.querySelector('i').className = 'bi bi-eye-slash';
+        row.classList.remove('opacity-50');
+        if (badge) badge.style.display = 'none';
+      }
+    }
+    btn.disabled = false;
+  })
+  .catch(() => { btn.disabled = false; });
+}
+
+// Quarantine batch helpers
+function toggleAllQ(checked) {
+  const boxes = document.querySelectorAll('.q-check');
+  const master = document.getElementById('qCheckAll');
+  const val = (checked !== undefined) ? checked : !Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => b.checked = val);
+  if (master) master.checked = val;
+}
+
+function setAllQ(action) {
+  document.querySelectorAll('[name^="action_"]').forEach(sel => { sel.value = action; });
+}
+
+function checkAndConfirmBatch() {
+  const checked = document.querySelectorAll('.q-check:checked');
+  if (checked.length === 0) {
+    alert('請先勾選要處理的材料');
+    return false;
+  }
+  return confirm('確定處理已勾選的 ' + checked.length + ' 筆材料？');
+}
+{% endif %}
 
 {% if current_user.role == 'USER' %}
 function openRequest(id, name, spec, unit, stock) {
