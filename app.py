@@ -491,6 +491,8 @@ def _init_db():
         "ALTER TABLE materials ADD COLUMN IF NOT EXISTS received_quantity NUMERIC(12,3) NOT NULL DEFAULT 0",
         "ALTER TABLE materials ADD COLUMN IF NOT EXISTS tab_id INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE materials ALTER COLUMN remaining_quantity TYPE NUMERIC(12,3) USING remaining_quantity::NUMERIC(12,3)",
+        "ALTER TABLE materials ADD COLUMN IF NOT EXISTS is_quarantined BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE materials ADD COLUMN IF NOT EXISTS quarantine_note TEXT",
     ]:
         try:
             with db.engine.connect() as conn:
@@ -609,7 +611,7 @@ def _seed_materials_csv():
         ('07-09-006',  '顯示器', '詳規範', '只', 1, 35, 34),
     ]
     from decimal import Decimal
-    for i, (code, name, spec, unit, cu, rq, stock) in enumerate(_CSV):
+    for i, (code, name, spec, unit, cu, _, stock) in enumerate(_CSV):
         m = Material.query.filter_by(code=code).first()
         if not m:
             m = Material()
@@ -619,9 +621,9 @@ def _seed_materials_csv():
         m.name = name
         m.spec = spec or None
         m.unit = unit
-        m.cumulative_usage  = Decimal(str(cu))
-        m.received_quantity = Decimal(str(rq))
+        m.cumulative_usage   = Decimal(str(cu))
         m.remaining_quantity = Decimal(str(stock))
+        m.received_quantity  = m.cumulative_usage + m.remaining_quantity  # enforce invariant
         m.tab_id = 1
     try:
         db.session.commit()
@@ -2258,10 +2260,17 @@ def materials():
     except (ValueError, TypeError):
         active_tab = visible_tabs[0] if visible_tabs else 1
 
+    # Non-quarantined materials for the active tab
     tab_materials = (Material.query
-                     .filter_by(tab_id=active_tab)
+                     .filter_by(tab_id=active_tab, is_quarantined=False)
                      .order_by(Material.sort_order, Material.id).all())
-    all_materials = Material.query.order_by(Material.tab_id, Material.sort_order, Material.id).all()
+    # All non-quarantined materials (for request history lookup)
+    all_materials = (Material.query
+                     .filter_by(is_quarantined=False)
+                     .order_by(Material.tab_id, Material.sort_order, Material.id).all())
+    # Quarantined materials (ADMIN only)
+    quarantine_materials = (Material.query.filter_by(is_quarantined=True).all()
+                            if current_user.role == 'ADMIN' else [])
 
     my_requests = None
     if current_user.role == 'USER':
@@ -2276,6 +2285,7 @@ def materials():
     return render_template('materials.html',
                            tab_materials=tab_materials,
                            all_materials=all_materials,
+                           quarantine_materials=quarantine_materials,
                            tab_names=tab_names,
                            visible_tabs=visible_tabs,
                            active_tab=active_tab,
@@ -2350,9 +2360,9 @@ def materials_add():
             return max(Decimal('0'), Decimal(str(request.form.get(key, default) or default)))
         except InvalidOperation:
             return Decimal('0')
-    received   = _parse_dec('received_quantity')
     remaining  = _parse_dec('remaining_quantity')
     cumulative = _parse_dec('cumulative_usage')
+    received   = cumulative + remaining  # enforce invariant
 
     if not name or not unit:
         flash('材料名稱和單位不能為空', 'danger')
@@ -2384,9 +2394,6 @@ def materials_update(material_id):
         except InvalidOperation:
             return Decimal(str(fallback))
     old_stock = m.remaining_quantity
-    m.cumulative_usage  = _parse_dec('cumulative_usage', m.cumulative_usage)
-    m.received_quantity = _parse_dec('received_quantity', m.received_quantity)
-    m.remaining_quantity = _parse_dec('remaining_quantity', m.remaining_quantity)
     new_name = request.form.get('name', '').strip()
     new_spec = request.form.get('spec', '').strip()
     new_unit = request.form.get('unit', '').strip()
@@ -2395,9 +2402,14 @@ def materials_update(material_id):
     if new_unit:
         m.unit = new_unit
     m.spec = new_spec or None
+    # Enforce invariant: received = cumulative + remaining
+    m.cumulative_usage   = _parse_dec('cumulative_usage', m.cumulative_usage)
+    m.remaining_quantity = _parse_dec('remaining_quantity', m.remaining_quantity)
+    m.received_quantity  = m.cumulative_usage + m.remaining_quantity
     m.updated_at = tw_now()
     add_audit(current_user.id, 'MATERIAL_UPDATE',
-              f'調整「{m.name}」庫存：{old_stock}{m.unit} → {m.remaining_quantity}{m.unit}')
+              f'手動調整「{m.name}」庫存 {old_stock}{m.unit}→{m.remaining_quantity}{m.unit}，'
+              f'累計使用量：{m.cumulative_usage}，實領量：{m.received_quantity}')
     db.session.commit()
     flash(f'「{m.name}」已更新', 'success')
     return redirect(url_for('materials', tab=m.tab_id))
@@ -2482,6 +2494,156 @@ def settings_mat_tabs():
             db.session.add(SystemConfig(key=f'mat_tab_{i}_name', value=name))
     db.session.commit()
     flash('分頁名稱已更新', 'success')
+    return redirect(url_for('materials'))
+
+
+@app.route('/materials/import-excel', methods=['POST'])
+@admin_required
+def materials_import_excel():
+    import json as _json
+    from decimal import Decimal, InvalidOperation
+
+    # Block import if quarantine is not empty
+    quarantine_count = Material.query.filter_by(is_quarantined=True).count()
+    if quarantine_count > 0:
+        flash(f'暫存區尚有 {quarantine_count} 筆材料待處理，請先解決後再匯入新的 Excel', 'danger')
+        return redirect(url_for('materials'))
+
+    f = request.files.get('excel_file')
+    if not f or not f.filename:
+        flash('請選擇 Excel 檔案', 'danger')
+        return redirect(url_for('materials'))
+    if not f.filename.lower().endswith(('.xlsx', '.xls')):
+        flash('檔案格式不正確，請上傳 .xlsx 或 .xls 檔案', 'danger')
+        return redirect(url_for('materials'))
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(f, data_only=True)
+        ws = wb.active
+    except Exception:
+        flash('無法讀取 Excel 檔案，請確認格式正確', 'danger')
+        return redirect(url_for('materials'))
+
+    # Auto-detect column indices from header row
+    headers = [str(cell.value or '').strip() for cell in ws[1]]
+    col = {}
+    for i, h in enumerate(headers):
+        if any(k in h for k in ('材料編號', '編號', 'code', 'Code')):
+            col.setdefault('code', i)
+        elif any(k in h for k in ('累積使用量', '累計使用量', 'cumulative')):
+            col.setdefault('cumulative', i)
+        elif any(k in h for k in ('實領量', '實收', 'received')):
+            col.setdefault('received', i)
+        elif any(k in h for k in ('庫存量', '庫存', 'remaining', 'stock')):
+            col.setdefault('remaining', i)
+
+    if 'code' not in col or 'received' not in col:
+        flash('Excel 格式不正確：找不到「材料編號」或「實領量」欄位（請確認第一列為標題）', 'danger')
+        return redirect(url_for('materials'))
+
+    def _dec(row, key):
+        if key not in col:
+            return Decimal('0')
+        try:
+            return Decimal(str(row[col[key]] or 0))
+        except (InvalidOperation, TypeError, ValueError):
+            return Decimal('0')
+
+    # Load all materials keyed by code (all tabs + quarantine)
+    all_materials = {m.code: m for m in
+                     Material.query.filter(Material.code.isnot(None)).all()}
+
+    correct, quarantined, not_found = [], [], []
+
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if all(v is None for v in row):
+            continue
+        b_code = str(row[col['code']] or '').strip()
+        if not b_code:
+            continue
+
+        b_received   = _dec(row, 'received')
+        b_cumulative = _dec(row, 'cumulative')
+        b_remaining  = _dec(row, 'remaining')
+
+        m = all_materials.get(b_code)
+        if not m:
+            not_found.append(b_code)
+            continue
+
+        a_received   = m.received_quantity   or Decimal('0')
+        a_cumulative = m.cumulative_usage    or Decimal('0')
+        a_remaining  = m.remaining_quantity  or Decimal('0')
+
+        # Condition 1: B.received >= A.received
+        b_ge_a = b_received >= a_received
+        # Condition 2: A invariant holds (received = cumulative + remaining)
+        invariant_ok = abs((a_cumulative + a_remaining) - a_received) < Decimal('0.001')
+
+        if b_ge_a and invariant_ok:
+            correct.append(b_code)
+        else:
+            reasons = []
+            if not b_ge_a:
+                reasons.append(f'B實領量({b_received}) < A實領量({a_received})')
+            if not invariant_ok:
+                reasons.append(f'A系統不一致：{a_cumulative}+{a_remaining}≠{a_received}')
+            m.is_quarantined  = True
+            m.quarantine_note = _json.dumps({
+                'reason':       '；'.join(reasons),
+                'b_cumulative': str(b_cumulative),
+                'b_received':   str(b_received),
+                'b_remaining':  str(b_remaining),
+                'a_cumulative': str(a_cumulative),
+                'a_received':   str(a_received),
+                'a_remaining':  str(a_remaining),
+            }, ensure_ascii=False)
+            quarantined.append(b_code)
+
+    db.session.commit()
+
+    parts = [f'比對完成：{len(correct)} 筆正確']
+    if quarantined:
+        preview = '、'.join(quarantined[:5]) + ('…' if len(quarantined) > 5 else '')
+        parts.append(f'{len(quarantined)} 筆移至暫存區（{preview}）')
+    if not_found:
+        parts.append(f'{len(not_found)} 筆材料編號在本系統中不存在')
+    level = 'warning' if quarantined else 'success'
+    flash('；'.join(parts), level)
+    return redirect(url_for('materials'))
+
+
+@app.route('/materials/<int:material_id>/resolve-quarantine', methods=['POST'])
+@admin_required
+def materials_resolve_quarantine(material_id):
+    import json as _json
+    from decimal import Decimal
+    m = db.session.get(Material, material_id)
+    if not m or not m.is_quarantined:
+        abort(404)
+
+    action = request.form.get('action', 'keep_a')
+    if action == 'use_b':
+        try:
+            note = _json.loads(m.quarantine_note or '{}')
+            m.cumulative_usage   = Decimal(note['b_cumulative'])
+            m.remaining_quantity = Decimal(note['b_remaining'])
+            m.received_quantity  = m.cumulative_usage + m.remaining_quantity
+            add_audit(current_user.id, 'MATERIAL_SYNC_B',
+                      f'「{m.name}({m.code})」採用 B 系統數值：'
+                      f'累計={m.cumulative_usage} 庫存={m.remaining_quantity} 實領={m.received_quantity}')
+        except Exception:
+            flash('同步 B 系統數值失敗', 'danger')
+            return redirect(url_for('materials'))
+    else:
+        add_audit(current_user.id, 'MATERIAL_QUARANTINE_RESOLVE',
+                  f'「{m.name}({m.code})」保留 A 系統數值，結束暫存審查')
+
+    m.is_quarantined  = False
+    m.quarantine_note = None
+    db.session.commit()
+    flash(f'「{m.name}」已完成審查', 'success')
     return redirect(url_for('materials'))
 
 
@@ -5468,6 +5630,14 @@ def forbidden(e):
 @app.errorhandler(404)
 def not_found(e):
     return render_template('error.html', code=404, message='頁面不存在'), 404
+
+
+from flask_wtf.csrf import CSRFError
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    flash('登入階段已過期，請重新登入', 'warning')
+    return redirect(url_for('login'))
 
 
 # ---------------------------------------------------------------------------

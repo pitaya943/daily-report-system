@@ -4,6 +4,15 @@
 
 {% block content %}
 
+{% if current_user.role == 'ADMIN' and quarantine_materials %}
+<div class="alert alert-danger d-flex align-items-center gap-2 mb-3 py-2" style="font-size:.9rem">
+  <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+  <span>暫存區有 <strong>{{ quarantine_materials | length }}</strong> 筆材料待人工審查，匯入新的 Excel 前請先處理完畢。
+    <a href="#quarantineSection" class="alert-link ms-1">前往查看 ↓</a>
+  </span>
+</div>
+{% endif %}
+
 <!-- Tab navigation -->
 <div class="d-flex align-items-center mb-3 flex-wrap gap-2">
   <ul class="nav nav-tabs flex-grow-1 mb-0" id="materialTabs">
@@ -21,9 +30,13 @@
   </ul>
 
   {% if current_user.role == 'ADMIN' %}
-  <div class="d-flex gap-2 align-items-center ms-auto">
+  <div class="d-flex gap-2 align-items-center ms-auto flex-wrap">
     <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#tabManagerModal">
       <i class="bi bi-gear me-1"></i>管理分頁
+    </button>
+    <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#importExcelModal"
+            {% if quarantine_materials %}disabled title="請先處理暫存區"{% endif %}>
+      <i class="bi bi-file-earmark-arrow-up me-1"></i>匯入 Excel
     </button>
     <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#addMaterialModal">
       <i class="bi bi-plus-lg me-1"></i>新增材料
@@ -36,36 +49,24 @@
 <div class="card mb-4">
   <div class="card-body p-0">
     <div class="table-responsive">
-      <table class="table table-hover table-sm mb-0 align-middle" style="font-size:.82rem">
+      <table class="table table-hover table-sm mb-0 align-middle" style="font-size:.85rem">
         <thead class="table-light">
           <tr>
-            {% if current_user.role == 'ADMIN' %}
-            <th style="min-width:80px">材料編號</th>
-            {% endif %}
-            <th style="min-width:160px">材料名稱</th>
-            <th style="min-width:100px">規格</th>
-            <th class="text-center" style="min-width:40px">單位</th>
-            {% if current_user.role == 'ADMIN' %}
-            <th class="text-center" style="min-width:65px">累積使用量</th>
-            <th class="text-center" style="min-width:55px">實領量</th>
-            {% endif %}
+            <th style="min-width:85px">材料編號</th>
+            <th style="min-width:150px">材料名稱</th>
+            <th style="min-width:90px">規格</th>
+            <th class="text-center" style="min-width:38px">單位</th>
             <th class="text-center" style="min-width:55px">庫存量</th>
-            <th class="text-center" style="min-width:{% if current_user.role == 'ADMIN' %}200{% else %}80{% endif %}px">操作</th>
+            <th class="text-center" style="min-width:{% if current_user.role == 'ADMIN' %}190{% else %}70{% endif %}px">操作</th>
           </tr>
         </thead>
         <tbody>
           {% for m in tab_materials %}
           <tr>
-            {% if current_user.role == 'ADMIN' %}
-            <td class="text-muted" style="font-size:.75rem">{{ m.code or '—' }}</td>
-            {% endif %}
+            <td class="text-muted" style="font-size:.76rem">{{ m.code or '—' }}</td>
             <td>{{ m.name }}</td>
-            <td class="text-muted">{{ m.spec or '—' }}</td>
+            <td class="text-muted small">{{ m.spec or '—' }}</td>
             <td class="text-center">{{ m.unit }}</td>
-            {% if current_user.role == 'ADMIN' %}
-            <td class="text-center text-muted">{{ m.cumulative_usage | mat_qty }}</td>
-            <td class="text-center text-muted">{{ m.received_quantity | mat_qty }}</td>
-            {% endif %}
             <td class="text-center fw-semibold
               {% if m.remaining_quantity | float <= 0 %}text-danger
               {% elif m.remaining_quantity | float <= 5 %}text-warning
@@ -112,8 +113,9 @@
               </div>
               {% endif %}
               <button class="btn btn-outline-warning btn-sm py-0 px-2 ms-1"
-                      onclick="openUpdate({{ m.id }}, '{{ m.code or '' | e }}', '{{ m.name | e }}', '{{ m.spec or '' | e }}', '{{ m.unit | e }}',
-                               {{ m.cumulative_usage | float }}, {{ m.received_quantity | float }}, {{ m.remaining_quantity | float }})">
+                      onclick="openUpdate({{ m.id }}, '{{ m.code or '' | e }}', '{{ m.name | e }}',
+                               '{{ m.spec or '' | e }}', '{{ m.unit | e }}',
+                               {{ m.cumulative_usage | float }}, {{ m.remaining_quantity | float }})">
                 <i class="bi bi-pencil"></i>
               </button>
               <form method="POST" action="{{ url_for('materials_delete', material_id=m.id) }}"
@@ -128,8 +130,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="{% if current_user.role == 'ADMIN' %}8{% else %}5{% endif %}"
-                  class="text-center text-muted py-4">此分頁目前無材料</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-4">此分頁目前無材料</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -186,6 +187,78 @@
 </div>
 {% endif %}
 
+<!-- ADMIN: Quarantine section -->
+{% if current_user.role == 'ADMIN' and quarantine_materials %}
+<div class="card mt-4 border-danger" id="quarantineSection">
+  <div class="card-header bg-danger text-white">
+    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+    暫存區 — 待人工審查（{{ quarantine_materials | length }} 筆）
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle" style="font-size:.82rem">
+        <thead class="table-light">
+          <tr>
+            <th style="min-width:85px">材料編號</th>
+            <th style="min-width:120px">材料名稱</th>
+            <th class="text-center" colspan="3">A 系統（本系統）</th>
+            <th class="text-center" colspan="3">B 系統（Excel）</th>
+            <th style="min-width:180px">異常原因</th>
+            <th class="text-center" style="min-width:160px">處理</th>
+          </tr>
+          <tr class="table-secondary" style="font-size:.75rem">
+            <th></th><th></th>
+            <th class="text-center">累計使用量</th>
+            <th class="text-center">實領量</th>
+            <th class="text-center">庫存量</th>
+            <th class="text-center">累計使用量</th>
+            <th class="text-center">實領量</th>
+            <th class="text-center">庫存量</th>
+            <th></th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in quarantine_materials %}
+          {% set note = m.quarantine_note | from_json if m.quarantine_note else {} %}
+          <tr class="table-danger bg-opacity-25">
+            <td style="font-size:.75rem">{{ m.code or '—' }}</td>
+            <td>{{ m.name }}</td>
+            <td class="text-center">{{ note.get('a_cumulative', m.cumulative_usage | mat_qty) }}</td>
+            <td class="text-center">{{ note.get('a_received', m.received_quantity | mat_qty) }}</td>
+            <td class="text-center">{{ note.get('a_remaining', m.remaining_quantity | mat_qty) }}</td>
+            <td class="text-center text-primary fw-semibold">{{ note.get('b_cumulative', '—') }}</td>
+            <td class="text-center text-primary fw-semibold">{{ note.get('b_received', '—') }}</td>
+            <td class="text-center text-primary fw-semibold">{{ note.get('b_remaining', '—') }}</td>
+            <td class="text-danger small">{{ note.get('reason', '—') }}</td>
+            <td class="text-center text-nowrap">
+              <form method="POST" action="{{ url_for('materials_resolve_quarantine', material_id=m.id) }}"
+                    style="display:inline"
+                    onsubmit="return confirm('保留 A 系統數值並結束暫存審查？')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="keep_a">
+                <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-2" title="保留本系統數值">
+                  保留A
+                </button>
+              </form>
+              <form method="POST" action="{{ url_for('materials_resolve_quarantine', material_id=m.id) }}"
+                    style="display:inline ms-1"
+                    onsubmit="return confirm('將以 B 系統（Excel）的數值覆蓋本系統數值？')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="use_b">
+                <button type="submit" class="btn btn-outline-primary btn-sm py-0 px-2 ms-1" title="同步 B 系統數值">
+                  同步B
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- ─── USER: Request Modal ──────────────────────────────── -->
 {% if current_user.role == 'USER' %}
 <div class="modal fade" id="requestModal" tabindex="-1">
@@ -226,6 +299,44 @@
 <!-- ─── ADMIN modals ──────────────────────────────────────── -->
 {% if current_user.role == 'ADMIN' %}
 
+<!-- Import Excel Modal -->
+<div class="modal fade" id="importExcelModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-success bg-opacity-75 text-white">
+        <h5 class="modal-title"><i class="bi bi-file-earmark-arrow-up me-2"></i>匯入 Excel 盤點報告</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('materials_import_excel') }}"
+            enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <div class="alert alert-info py-2 small mb-3">
+            <strong>Excel 格式要求：</strong>第一列為標題，必須包含
+            <code>材料編號</code>、<code>實領量</code>，建議同時含
+            <code>累計使用量</code>、<code>庫存量</code>。
+            比對依據為材料編號，以實領量為主要對照欄位。
+          </div>
+          <div class="mb-3">
+            <label class="form-label">選擇 Excel 檔案</label>
+            <input type="file" name="excel_file" class="form-control"
+                   accept=".xlsx,.xls" required>
+          </div>
+          <p class="text-muted small mb-0">
+            <i class="bi bi-info-circle me-1"></i>
+            比對邏輯：B 系統實領量 ≥ A 系統實領量 且 A 系統內部一致（累計使用量 + 庫存量 = 實領量）視為正確，
+            否則移至暫存區等待人工審查。
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+          <button type="submit" class="btn btn-success btn-sm">開始比對</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- Add Material Modal -->
 <div class="modal fade" id="addMaterialModal" tabindex="-1">
   <div class="modal-dialog">
@@ -263,16 +374,13 @@
                 {% endif %}{% endfor %}
               </select>
             </div>
-            <div class="col-md-4">
-              <label class="form-label small">累積使用量</label>
+            <div class="col-12"><hr class="my-1"><small class="text-muted">系統自動計算：實領量 = 累計使用量 + 庫存量</small></div>
+            <div class="col-md-6">
+              <label class="form-label small">累計使用量</label>
               <input type="number" name="cumulative_usage" class="form-control form-control-sm" value="0" min="0" step="0.001">
             </div>
-            <div class="col-md-4">
-              <label class="form-label small">實領量</label>
-              <input type="number" name="received_quantity" class="form-control form-control-sm" value="0" min="0" step="0.001">
-            </div>
-            <div class="col-md-4">
-              <label class="form-label small">庫存量</label>
+            <div class="col-md-6">
+              <label class="form-label small fw-bold">庫存量</label>
               <input type="number" name="remaining_quantity" class="form-control form-control-sm" value="0" min="0" step="0.001">
             </div>
           </div>
@@ -301,31 +409,30 @@
             <div class="col-12">
               <p class="mb-1 text-muted small">編號：<span id="updCode" class="fw-semibold"></span></p>
             </div>
-            <div class="col-md-7">
+            <div class="col-md-8">
               <label class="form-label small">材料名稱</label>
               <input type="text" name="name" class="form-control form-control-sm" id="updName" maxlength="100">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-4">
               <label class="form-label small">單位</label>
               <input type="text" name="unit" class="form-control form-control-sm" id="updUnit" maxlength="20">
             </div>
-            <div class="col-md-2"></div>
             <div class="col-12">
               <label class="form-label small">規格</label>
               <input type="text" name="spec" class="form-control form-control-sm" id="updSpec" maxlength="200">
             </div>
-            <div class="col-12"><hr class="my-1"></div>
-            <div class="col-md-4">
-              <label class="form-label small">累積使用量</label>
+            <div class="col-12"><hr class="my-1"><small class="text-muted">實領量由系統自動計算（累計使用量 + 庫存量），不可手動輸入</small></div>
+            <div class="col-md-6">
+              <label class="form-label small">累計使用量</label>
               <input type="number" name="cumulative_usage" class="form-control form-control-sm" id="updCu" min="0" step="0.001">
             </div>
-            <div class="col-md-4">
-              <label class="form-label small">實領量</label>
-              <input type="number" name="received_quantity" class="form-control form-control-sm" id="updRq" min="0" step="0.001">
-            </div>
-            <div class="col-md-4">
+            <div class="col-md-6">
               <label class="form-label small fw-bold">庫存量</label>
               <input type="number" name="remaining_quantity" class="form-control form-control-sm" id="updStock" min="0" step="0.001">
+            </div>
+            <div class="col-12">
+              <label class="form-label small text-muted">實領量（自動）</label>
+              <input type="text" class="form-control form-control-sm bg-light text-muted" id="updReceivedDisplay" readonly>
             </div>
           </div>
         </div>
@@ -380,28 +487,35 @@ function openRequest(id, name, spec, unit, stock) {
   document.getElementById('reqUnit').textContent = unit;
   document.getElementById('reqStock').textContent = stock;
   const specRow = document.getElementById('reqSpecRow');
-  if (spec) {
-    specRow.textContent = '規格：' + spec;
-    specRow.style.display = '';
-  } else {
-    specRow.style.display = 'none';
-  }
-  const maxQty = Math.min(99, Math.floor(stock));
-  document.getElementById('reqQty').max = maxQty;
+  if (spec) { specRow.textContent = '規格：' + spec; specRow.style.display = ''; }
+  else { specRow.style.display = 'none'; }
+  document.getElementById('reqQty').max = Math.min(99, Math.floor(stock));
   new bootstrap.Modal(document.getElementById('requestModal')).show();
 }
 {% else %}
-function openUpdate(id, code, name, spec, unit, cu, rq, stock) {
+function openUpdate(id, code, name, spec, unit, cu, stock) {
   document.getElementById('updateForm').action = `/materials/${id}/update`;
   document.getElementById('updCode').textContent = code || '—';
   document.getElementById('updName').value = name;
   document.getElementById('updSpec').value = spec;
   document.getElementById('updUnit').value = unit;
   document.getElementById('updCu').value = cu;
-  document.getElementById('updRq').value = rq;
   document.getElementById('updStock').value = stock;
+  document.getElementById('updReceivedDisplay').value = (parseFloat(cu) + parseFloat(stock)).toFixed(3).replace(/\.?0+$/, '');
   new bootstrap.Modal(document.getElementById('updateModal')).show();
 }
+// Live update received display
+document.addEventListener('DOMContentLoaded', function() {
+  ['updCu', 'updStock'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', function() {
+      const cu = parseFloat(document.getElementById('updCu').value || 0);
+      const st = parseFloat(document.getElementById('updStock').value || 0);
+      document.getElementById('updReceivedDisplay').value =
+        (cu + st).toFixed(3).replace(/\.?0+$/, '');
+    });
+  });
+});
 {% endif %}
 </script>
 {% endblock %}
