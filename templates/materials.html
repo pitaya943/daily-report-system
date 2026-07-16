@@ -229,15 +229,15 @@
             <td style="font-size:.75rem">{{ m.code or '—' }}</td>
             <td>{{ m.name }}</td>
             <td class="text-center fw-semibold text-success">{{ note.get('x', '—') }}</td>
-            {{/* A 原始值 */}}
+            {# A 原始值 #}
             <td class="text-center text-muted" style="border-left:2px solid #adb5bd">{{ note.get('a_cumulative', '—') }}</td>
             <td class="text-center text-muted">{{ note.get('a_received', '—') }}</td>
             <td class="text-center text-muted">{{ note.get('a_remaining', '—') }}</td>
-            {{/* A 更新後 */}}
+            {# A 更新後 #}
             <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}" style="border-left:2px solid #6ea8fe">{{ note.get('a_cumulative', '—') }}</td>
             <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}">{{ note.get('a_received_new', '—') }}</td>
             <td class="text-center {% if wrong == 'A' %}text-danger fw-bold{% else %}text-dark{% endif %}">{{ note.get('a_remaining_new', '—') }}</td>
-            {{/* B 值 */}}
+            {# B 值 #}
             <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}" style="border-left:2px solid #fd7e14">{{ note.get('b_cumulative', '—') }}</td>
             <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}">{{ note.get('b_received', '—') }}</td>
             <td class="text-center {% if wrong == 'B' %}text-danger fw-bold{% else %}text-primary{% endif %}">{{ note.get('b_remaining', '—') }}</td>
