@@ -2518,11 +2518,11 @@ def materials_import_excel():
         return redirect(url_for('materials'))
 
     try:
-        import openpyxl
-        wb = openpyxl.load_workbook(f, data_only=True)
+        import io, openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(f.read()), data_only=True)
         ws = wb.active
-    except Exception:
-        flash('無法讀取 Excel 檔案，請確認格式正確', 'danger')
+    except Exception as _e:
+        flash(f'無法讀取 Excel 檔案：{_e}', 'danger')
         return redirect(url_for('materials'))
 
     # Auto-detect column indices from header row
