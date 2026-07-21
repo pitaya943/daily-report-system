@@ -44,15 +44,32 @@
 
 <!-- Report confirmation -->
 <div class="card mb-4">
-  <div class="card-header bg-warning bg-opacity-25 border-warning">
-    <i class="bi bi-clipboard-check me-1"></i>
-    待確認回報
-    <span class="badge bg-warning text-dark ms-1">{{ pending_pagination.total }}</span>
+  <div class="card-header bg-warning bg-opacity-25 border-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span>
+      <i class="bi bi-clipboard-check me-1"></i>
+      待確認回報
+      <span class="badge bg-warning text-dark ms-1">{{ pending_pagination.total }}</span>
+    </span>
+    {% if pending_pagination.total > 0 %}
+    <div class="d-flex gap-2 align-items-center">
+      <div class="form-check mb-0">
+        <input type="checkbox" class="form-check-input" id="reportCheckAll"
+               onchange="toggleAllChecks('report-check', this.checked)">
+        <label class="form-check-label small" for="reportCheckAll">全選</label>
+      </div>
+      <button type="button" class="btn btn-success btn-sm py-0"
+              onclick="submitBatch('batchReportForm', 'confirm', '確認')">
+        <i class="bi bi-check-all me-1"></i>批次確認
+      </button>
+      <button type="button" class="btn btn-danger btn-sm py-0"
+              onclick="submitBatch('batchReportForm', 'reject', '駁回')">
+        <i class="bi bi-x-circle me-1"></i>批次駁回
+      </button>
+    </div>
+    {% endif %}
   </div>
   <div class="card-body p-0">
     {% if pending_pagination.total > 0 %}
-
-    {{ paginate(pending_pagination, 'confirmation', url_args) }}
 
     {# ── Macro: render one zone's report table ── #}
     {% macro report_table(zone_reports, zone_fields, zone_label, zone_badge_class) %}
@@ -64,19 +81,26 @@
       <table class="table table-sm table-hover mb-0 align-middle" style="font-size:.8rem">
         <thead class="table-light">
           <tr class="align-bottom">
+            <th style="width:32px" class="text-center">
+              <input type="checkbox" onchange="toggleZone(this, '{{ zone_badge_class }}')">
+            </th>
             <th style="min-width:28px">#</th>
             <th style="min-width:90px">帳戶</th>
             <th style="min-width:80px">日期</th>
             {% for key, label in zone_fields %}
             <th class="text-center" style="min-width:28px; max-width:34px; font-size:.6rem; word-break:break-all; line-height:1.1; padding:3px 1px; vertical-align:bottom;" title="{{ label }}">{{ label }}</th>
             {% endfor %}
-            <th class="text-center" style="min-width:130px">操作</th>
+            <th class="text-center" style="min-width:90px">操作</th>
           </tr>
         </thead>
         <tbody>
           {% for r in zone_reports %}
           {% set _cu = users_dict.get(r.user_id) %}
           <tr>
+            <td class="text-center">
+              <input type="checkbox" name="ids" value="{{ r.id }}"
+                     class="report-check zone-{{ zone_badge_class | replace(' ', '-') }}">
+            </td>
             <td class="text-muted">{{ r.id }}</td>
             <td>
               <span class="fw-semibold">{{ _cu.display_name if _cu else '?' }}</span>
@@ -100,34 +124,6 @@
                       title="自訂工項">
                 {% if r.custom_item_name %}<i class="bi bi-plus-square-fill text-warning"></i>{% else %}<i class="bi bi-plus-square"></i>{% endif %}
               </button>
-              <form method="POST"
-                    action="{{ url_for('confirm_report', report_id=r.id) }}"
-                    style="display:inline"
-                    onsubmit="return confirm('確定確認 {{ r.report_date }} 的回報 #{{ r.id }}？此操作無法撤銷。')">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="start_date" value="{{ filter_start }}">
-                <input type="hidden" name="end_date"   value="{{ filter_end }}">
-                <input type="hidden" name="zone"       value="{{ selected_zone }}">
-                <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
-                <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
-                <button type="submit" class="btn btn-success btn-sm py-0 px-2 ms-1">
-                  <i class="bi bi-check-lg me-1"></i>確認
-                </button>
-              </form>
-              <form method="POST"
-                    action="{{ url_for('reject_report', report_id=r.id) }}"
-                    style="display:inline"
-                    onsubmit="return confirm('確定駁回 {{ r.report_date }} 的回報 #{{ r.id }}？')">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="start_date" value="{{ filter_start }}">
-                <input type="hidden" name="end_date"   value="{{ filter_end }}">
-                <input type="hidden" name="zone"       value="{{ selected_zone }}">
-                <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
-                <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
-                <button type="submit" class="btn btn-danger btn-sm py-0 px-2 ms-1">
-                  <i class="bi bi-x-lg me-1"></i>駁回
-                </button>
-              </form>
             </td>
           </tr>
           {% endfor %}
@@ -137,10 +133,19 @@
     {% endif %}
     {% endmacro %}
 
-    {{ report_table(west_reports,  west_fields,  '西區回報', 'bg-info text-dark') }}
-    {{ report_table(south_reports, south_fields, '南區回報', 'bg-warning text-dark') }}
-
-    {{ paginate(pending_pagination, 'confirmation', url_args) }}
+    <form id="batchReportForm" method="POST" action="{{ url_for('batch_confirm_reports') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="batch_action" value="">
+      <input type="hidden" name="start_date" value="{{ filter_start }}">
+      <input type="hidden" name="end_date"   value="{{ filter_end }}">
+      <input type="hidden" name="zone"       value="{{ selected_zone }}">
+      <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
+      <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
+      {{ paginate(pending_pagination, 'confirmation', url_args) }}
+      {{ report_table(west_reports,  west_fields,  '西區回報', 'bg-info text-dark') }}
+      {{ report_table(south_reports, south_fields, '南區回報', 'bg-warning text-dark') }}
+      {{ paginate(pending_pagination, 'confirmation', url_args) }}
+    </form>
 
     {% else %}
     <p class="text-center text-muted py-3 mb-0">
@@ -152,66 +157,71 @@
 
 <!-- Material request review -->
 <div class="card">
-  <div class="card-header bg-info bg-opacity-25 border-info">
-    <i class="bi bi-cart me-1"></i>
-    待審核材料申請
-    <span class="badge bg-info text-dark ms-1">{{ mat_pagination.total }}</span>
+  <div class="card-header bg-info bg-opacity-25 border-info d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span>
+      <i class="bi bi-cart me-1"></i>
+      待審核材料申請
+      <span class="badge bg-info text-dark ms-1">{{ mat_pagination.total }}</span>
+    </span>
+    {% if pending_materials %}
+    <div class="d-flex gap-2 align-items-center">
+      <div class="form-check mb-0">
+        <input type="checkbox" class="form-check-input" id="matCheckAll"
+               onchange="toggleAllChecks('mat-check', this.checked)">
+        <label class="form-check-label small" for="matCheckAll">全選</label>
+      </div>
+      <button type="button" class="btn btn-success btn-sm py-0"
+              onclick="submitBatch('batchMatForm', 'approve', '核准')">
+        <i class="bi bi-check-all me-1"></i>批次核准
+      </button>
+      <button type="button" class="btn btn-danger btn-sm py-0"
+              onclick="submitBatch('batchMatForm', 'reject', '駁回')">
+        <i class="bi bi-x-circle me-1"></i>批次駁回
+      </button>
+    </div>
+    {% endif %}
   </div>
   <div class="card-body p-0">
     {% if pending_materials %}
-    {{ paginate(mat_pagination, 'confirmation', url_args, 'mat_page') }}
-    <table class="table table-sm table-hover mb-0">
-      <thead>
-        <tr><th>#</th><th>申請者</th><th>材料</th><th class="text-center">申請數量</th><th>備註</th><th>申請時間</th><th class="text-center">操作</th></tr>
-      </thead>
-      <tbody>
-        {% for req in pending_materials %}
-        {% set m = materials_dict.get(req.material_id) %}
-        {% set u = users_dict.get(req.user_id) %}
-        <tr>
-          <td class="text-muted">{{ req.id }}</td>
-          <td>{{ u.display_name if u else '?' }}</td>
-          <td>{{ m.name if m else '?' }}</td>
-          <td class="text-center fw-semibold">
-            {{ req.requested_quantity }}{{ m.unit if m else '' }}
-          </td>
-          <td style="font-size:.8rem; max-width:120px; word-break:break-all;">{{ req.note or '' }}</td>
-          <td style="font-size:.8rem">{{ req.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td class="text-center">
-            <form method="POST"
-                  action="{{ url_for('approve_material', req_id=req.id) }}"
-                  style="display:inline"
-                  onsubmit="return confirm('確定核准 #{{ req.id }} 申請？庫存將扣除 {{ req.requested_quantity }}{{ m.unit if m else '' }}。')">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="start_date" value="{{ filter_start }}">
-              <input type="hidden" name="end_date"   value="{{ filter_end }}">
-              <input type="hidden" name="zone"       value="{{ selected_zone }}">
-              <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
-              <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
-              <button type="submit" class="btn btn-success btn-sm py-0 px-2">
-                <i class="bi bi-check-lg me-1"></i>核准
-              </button>
-            </form>
-            <form method="POST"
-                  action="{{ url_for('reject_material', req_id=req.id) }}"
-                  style="display:inline"
-                  onsubmit="return confirm('確定駁回 #{{ req.id }} 申請？')">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="start_date" value="{{ filter_start }}">
-              <input type="hidden" name="end_date"   value="{{ filter_end }}">
-              <input type="hidden" name="zone"       value="{{ selected_zone }}">
-              <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
-              <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
-              <button type="submit" class="btn btn-danger btn-sm py-0 px-2 ms-1">
-                <i class="bi bi-x-lg me-1"></i>駁回
-              </button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {{ paginate(mat_pagination, 'confirmation', url_args, 'mat_page') }}
+    <form id="batchMatForm" method="POST" action="{{ url_for('batch_review_materials') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="batch_action" value="">
+      <input type="hidden" name="start_date" value="{{ filter_start }}">
+      <input type="hidden" name="end_date"   value="{{ filter_end }}">
+      <input type="hidden" name="zone"       value="{{ selected_zone }}">
+      <input type="hidden" name="page"       value="{{ pending_pagination.page }}">
+      <input type="hidden" name="mat_page"   value="{{ mat_pagination.page }}">
+      {{ paginate(mat_pagination, 'confirmation', url_args, 'mat_page') }}
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width:32px" class="text-center"></th>
+            <th>#</th><th>申請者</th><th>材料</th>
+            <th class="text-center">申請數量</th><th>備註</th><th>申請時間</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for req in pending_materials %}
+          {% set m = materials_dict.get(req.material_id) %}
+          {% set u = users_dict.get(req.user_id) %}
+          <tr>
+            <td class="text-center">
+              <input type="checkbox" name="ids" value="{{ req.id }}" class="mat-check">
+            </td>
+            <td class="text-muted">{{ req.id }}</td>
+            <td>{{ u.display_name if u else '?' }}</td>
+            <td>{{ m.name if m else '?' }}</td>
+            <td class="text-center fw-semibold">
+              {{ req.requested_quantity }}{{ m.unit if m else '' }}
+            </td>
+            <td style="font-size:.8rem; max-width:120px; word-break:break-all;">{{ req.note or '' }}</td>
+            <td style="font-size:.8rem">{{ req.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {{ paginate(mat_pagination, 'confirmation', url_args, 'mat_page') }}
+    </form>
     {% else %}
     <p class="text-center text-muted py-3 mb-0">
       <i class="bi bi-inbox me-1"></i>無待審核的材料申請
@@ -301,6 +311,24 @@ const CONFIRM_USERS = {
   {% for uid, u in users_dict.items() %}{{ uid }}: "{{ u.display_name | e }}"{% if not loop.last %}, {% endif %}{% endfor %}
 };
 
+function toggleAllChecks(cls, checked) {
+  document.querySelectorAll('.' + cls).forEach(cb => cb.checked = checked);
+}
+
+function toggleZone(masterCb, zoneClass) {
+  const cls = 'zone-' + zoneClass.replace(/ /g, '-');
+  document.querySelectorAll('.' + cls).forEach(cb => cb.checked = masterCb.checked);
+}
+
+function submitBatch(formId, action, verb) {
+  const form = document.getElementById(formId);
+  const checked = form.querySelectorAll('input[name="ids"]:checked');
+  if (checked.length === 0) { alert('請先勾選項目'); return; }
+  if (!confirm('確定' + verb + '已勾選的 ' + checked.length + ' 筆？此操作無法撤銷。')) return;
+  form.querySelector('[name="batch_action"]').value = action;
+  form.submit();
+}
+
 function openReportDetail(btn) {
   const data     = JSON.parse(btn.dataset.report);
   const username = btn.dataset.username;
@@ -310,7 +338,6 @@ function openReportDetail(btn) {
   document.getElementById('detailModalTitle').innerHTML =
     '<i class="bi bi-file-text me-2"></i>' + username + '　' + data.report_date + '　#' + data.id;
 
-  // Collab info
   const collabIds = JSON.parse(data.collab_json || '[]');
   const collabDiv = document.getElementById('detailCollabInfo');
   if (collabIds.length > 0) {

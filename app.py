@@ -3414,6 +3414,93 @@ def reject_material(req_id):
     return redirect(url_for('confirmation', **_flt))
 
 
+@app.route('/confirmation/reports/batch', methods=['POST'])
+@admin_required
+def batch_confirm_reports():
+    action = request.form.get('batch_action')
+    ids = request.form.getlist('ids')
+    if not ids or action not in ('confirm', 'reject'):
+        flash('請先勾選項目', 'warning')
+        _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page') if request.form.get(k)}
+        return redirect(url_for('confirmation', **_flt))
+    processed = 0
+    for rid_str in ids:
+        try:
+            rid = int(rid_str)
+        except ValueError:
+            continue
+        r = db.session.get(Report, rid)
+        if not r or r.is_confirmed or r.is_rejected:
+            continue
+        submitter = db.session.get(User, r.user_id)
+        uname = submitter.display_name if submitter else '(已刪除)'
+        if action == 'confirm':
+            r.is_confirmed = True
+            r.confirmed_by = current_user.id
+            r.confirmed_at = tw_now()
+            r.updated_at = tw_now()
+            add_audit(current_user.id, 'REPORT_CONFIRM',
+                      f'批次確認：{uname} 的回報 #{r.id}（{r.report_date}）')
+        else:
+            r.is_rejected = True
+            r.updated_at = tw_now()
+            add_audit(current_user.id, 'REPORT_REJECT',
+                      f'批次駁回：{uname} 的回報 #{r.id}（{r.report_date}）')
+        processed += 1
+    db.session.commit()
+    verb = '確認' if action == 'confirm' else '駁回'
+    flash(f'已批次{verb} {processed} 筆回報', 'success' if action == 'confirm' else 'warning')
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page') if request.form.get(k)}
+    return redirect(url_for('confirmation', **_flt))
+
+
+@app.route('/confirmation/materials/batch', methods=['POST'])
+@admin_required
+def batch_review_materials():
+    from decimal import Decimal
+    action = request.form.get('batch_action')
+    ids = request.form.getlist('ids')
+    if not ids or action not in ('approve', 'reject'):
+        flash('請先勾選項目', 'warning')
+        _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page') if request.form.get(k)}
+        return redirect(url_for('confirmation', **_flt))
+    processed = 0
+    for req_id_str in ids:
+        try:
+            req_id = int(req_id_str)
+        except ValueError:
+            continue
+        req = db.session.get(MaterialRequest, req_id)
+        if not req or req.status != 'PENDING':
+            continue
+        m = db.session.get(Material, req.material_id)
+        requester = db.session.get(User, req.user_id)
+        uname = requester.display_name if requester else '(已刪除)'
+        mname = m.name if m else '?'
+        munit = m.unit if m else ''
+        req.reviewed_by = current_user.id
+        req.reviewed_at = tw_now()
+        if action == 'approve':
+            req.status = 'APPROVED'
+            if m:
+                issued = Decimal(str(req.requested_quantity))
+                m.remaining_quantity = max(Decimal('0'), (m.remaining_quantity or Decimal('0')) - issued)
+                m.cumulative_usage = (m.cumulative_usage or Decimal('0')) + issued
+                m.updated_at = tw_now()
+            add_audit(current_user.id, 'MATERIAL_APPROVE',
+                      f'批次核准：{uname} 申請的「{mname}」{req.requested_quantity}{munit}')
+        else:
+            req.status = 'REJECTED'
+            add_audit(current_user.id, 'MATERIAL_REJECT',
+                      f'批次駁回：{uname} 申請的「{mname}」{req.requested_quantity}{munit}')
+        processed += 1
+    db.session.commit()
+    verb = '核准' if action == 'approve' else '駁回'
+    flash(f'已批次{verb} {processed} 筆材料申請', 'success' if action == 'approve' else 'warning')
+    _flt = {k: request.form.get(k) for k in ('start_date', 'end_date', 'zone', 'page', 'mat_page') if request.form.get(k)}
+    return redirect(url_for('confirmation', **_flt))
+
+
 # ---------------------------------------------------------------------------
 # Page 7: Audit Log
 # ---------------------------------------------------------------------------
