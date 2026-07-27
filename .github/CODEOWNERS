@@ -1,0 +1,10 @@
+# 所有變更的預設 Reviewer
+# 加入新成員時在此新增，格式：路徑 @github-username
+* @pitaya943
+
+# 核心業務邏輯：薪資、保留金、庫存 — 必須由系統負責人 Review
+app.py @pitaya943
+models.py @pitaya943
+
+# CI/CD 設定變更需額外注意
+.github/ @pitaya943

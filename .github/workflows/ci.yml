@@ -1,38 +1,48 @@
 name: CI/CD Pipeline
 
+# ── 觸發條件 ──────────────────────────────────────────────────────────────
+# feature/* / hotfix/* push → lint + unit（快速回饋）
+# PR → develop / release / main  → 完整 CI
+# push develop → staging deploy
+# push main → prod deploy（需 manual approval）
 on:
   push:
-    branches: ["**"]
+    branches:
+      - 'feature/**'
+      - 'hotfix/**'
+      - develop
+      - main
+      - 'release/**'
   pull_request:
-    branches: [main]
+    branches:
+      - develop
+      - main
+      - 'release/**'
 
 env:
   PYTHON_VERSION: "3.11"
 
+# ── Job 1: Lint ────────────────────────────────────────────────────────────
+# 觸發：所有分支 push + 所有 PR
 jobs:
-  # ── Job 1: Lint ────────────────────────────────────────────────────────────
   lint:
-    name: Lint & Static Analysis
+    name: "Lint & Static Analysis"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install lint tools
-        run: pip install ruff bandit
-
+      - run: pip install ruff bandit
       - name: ruff lint
         run: ruff check app.py models.py --output-format=github
-
       - name: bandit SAST
         run: bandit -r app.py models.py -ll
 
-  # ── Job 2: Unit Tests ─────────────────────────────────────────────────────
+# ── Job 2: Unit Tests ─────────────────────────────────────────────────────
+# 觸發：所有分支 push + 所有 PR（快速，< 60 秒）
   unit-test:
-    name: Unit Tests
+    name: "Unit Tests"
     runs-on: ubuntu-latest
     needs: lint
     env:
@@ -46,31 +56,27 @@ jobs:
       R2_BUCKET_NAME: ""
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-
+      - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short --cov=app --cov-report=xml
-
-      - name: Upload unit coverage
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: unit-coverage
+          name: unit-coverage-${{ github.run_id }}
           path: coverage.xml
 
-  # ── Job 3: Integration Tests ──────────────────────────────────────────────
+# ── Job 3: Integration Tests ──────────────────────────────────────────────
+# 觸發：所有 PR + push to develop / main（不跑在 feature push，省資源）
   integration-test:
-    name: Integration Tests
+    name: "Integration Tests"
     runs-on: ubuntu-latest
     needs: unit-test
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    if: |
+      github.event_name == 'pull_request' ||
+      github.ref == 'refs/heads/develop'  ||
+      github.ref == 'refs/heads/main'
     env:
       DATABASE_URL: sqlite:///test_daily_report.db
       SECRET_KEY: ci-test-secret-key
@@ -82,90 +88,122 @@ jobs:
       R2_BUCKET_NAME: ""
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-
+      - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Run integration tests
         run: pytest tests/integration/ -v --tb=short --cov=app --cov-report=xml --cov-fail-under=40
-
-      - name: Upload integration coverage
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: integ-coverage
+          name: integ-coverage-${{ github.run_id }}
           path: coverage.xml
 
-  # ── Job 4: Security Scan ──────────────────────────────────────────────────
+# ── Job 4: Security Scan ──────────────────────────────────────────────────
+# 觸發：PR → main + push to main（上 production 前必須過）
   security-scan:
-    name: Security Scan
+    name: "Security Scan"
     runs-on: ubuntu-latest
     needs: integration-test
-    if: github.ref == 'refs/heads/main'
+    if: |
+      (github.event_name == 'pull_request' && github.base_ref == 'main') ||
+      github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install security tools
-        run: pip install bandit safety
-
-      - name: bandit full report
+      - run: pip install bandit safety -r requirements.txt
+      - name: bandit full scan
         run: bandit -r app.py models.py -ll -f json -o bandit-report.json
         continue-on-error: true
-
       - name: safety CVE check
-        run: |
-          pip install -r requirements.txt
-          safety check --continue-on-error
-
-      - name: Upload security reports
-        uses: actions/upload-artifact@v4
+        run: safety check --continue-on-error
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: security-reports
+          name: security-reports-${{ github.run_id }}
           path: "*.json"
 
-  # ── Job 5: Deploy to Production ──────────────────────────────────────────
-  # Requires manual approval via GitHub Environment Protection Rule on 'production'
-  prod-deploy:
-    name: Deploy to Production
+# ── Job 5: Staging Deploy ─────────────────────────────────────────────────
+# 觸發：push to develop（PR 已通過 integration tests 才能 merge 進 develop）
+  staging-deploy:
+    name: "Deploy to Staging"
     runs-on: ubuntu-latest
-    needs: security-scan
-    if: github.ref == 'refs/heads/main'
-    environment: production
+    needs: integration-test
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment: staging
     steps:
       - uses: actions/checkout@v4
-
-      - name: Trigger Railway production deploy
+      - name: Trigger Railway staging deploy
         run: |
-          echo "Deploy triggered for commit ${{ github.sha }}"
-          # Uncomment and configure when Railway secrets are set:
-          # curl -s "https://backboard.railway.app/graphql/v2" \
+          echo "Staging deploy triggered: ${{ github.sha }}"
+          # Uncomment when Railway staging env is configured:
+          # curl -X POST "https://backboard.railway.app/graphql/v2" \
           #   -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
           #   -H "Content-Type: application/json" \
-          #   -d '{"query":"mutation { deploymentTrigger(input:{environmentId:\"${{ secrets.RAILWAY_PROD_ENV_ID }}\"}){id}}"}'
+          #   -d '{"query":"mutation{deploymentCreate(input:{environmentId:\"${{ secrets.RAILWAY_STAGING_ENV_ID }}\"}){id}}"}'
 
-  # ── Job 6: Smoke Test ─────────────────────────────────────────────────────
-  smoke-test:
-    name: Production Smoke Test
+# ── Job 6: Production Deploy ──────────────────────────────────────────────
+# 觸發：push to main（需 security-scan 通過 + 手動 Approve）
+# "environment: production" 對應 GitHub Environment Protection Rule
+  prod-deploy:
+    name: "Deploy to Production"
+    runs-on: ubuntu-latest
+    needs: security-scan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production        # ← GitHub 設 Require approval 在這裡攔
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trigger Railway production deploy
+        run: |
+          echo "Production deploy triggered: ${{ github.sha }}"
+          # Uncomment when Railway prod env is configured:
+          # curl -X POST "https://backboard.railway.app/graphql/v2" \
+          #   -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
+          #   -H "Content-Type: application/json" \
+          #   -d '{"query":"mutation{deploymentCreate(input:{environmentId:\"${{ secrets.RAILWAY_PROD_ENV_ID }}\"}){id}}"}'
+
+# ── Job 7: Auto Tag Release ───────────────────────────────────────────────
+# 觸發：push to main（deploy 成功後打版本標籤，格式 v2026.07.27-abc1234）
+  tag-release:
+    name: "Tag Release"
     runs-on: ubuntu-latest
     needs: prod-deploy
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create version tag
+        run: |
+          VERSION="v$(date +'%Y.%m.%d')-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "Tagging as $VERSION"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# ── Job 8: Smoke Test ─────────────────────────────────────────────────────
+# 觸發：prod-deploy 完成後，curl 確認 /login 回 HTTP 200
+  smoke-test:
+    name: "Production Smoke Test"
+    runs-on: ubuntu-latest
+    needs: prod-deploy
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - name: Health check
         run: |
           if [ -z "${{ secrets.PROD_URL }}" ]; then
-            echo "PROD_URL not set — skipping smoke test"
+            echo "PROD_URL not configured — skipping smoke test"
             exit 0
           fi
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.PROD_URL }}/login")
-          echo "Production /login returned HTTP $HTTP_CODE"
-          [ "$HTTP_CODE" = "200" ] || exit 1
+          for i in 1 2 3; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.PROD_URL }}/login")
+            echo "Attempt $i: HTTP $HTTP_CODE"
+            [ "$HTTP_CODE" = "200" ] && exit 0
+            sleep 10
+          done
+          exit 1
