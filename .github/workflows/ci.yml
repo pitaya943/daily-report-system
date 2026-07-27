@@ -115,12 +115,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install bandit safety -r requirements.txt
-      - name: bandit full scan
+      - run: pip install bandit pip-audit -r requirements.txt
+      - name: bandit SAST
         run: bandit -r app.py models.py -ll -f json -o bandit-report.json
         continue-on-error: true
-      - name: safety CVE check
-        run: safety scan --continue-on-error
+      - name: pip-audit CVE check
+        run: pip-audit --local
+        continue-on-error: true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
