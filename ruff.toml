@@ -1,0 +1,5 @@
+[lint]
+# Only check Pyflakes (F) rules — catches real bugs (unused imports, undefined names)
+# Style rules (I, E, W, LOG, BLE, DTZ, etc.) are excluded to avoid blocking CI
+# on pre-existing legacy code style issues.
+select = ["F"]

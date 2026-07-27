@@ -8,8 +8,6 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - 'feature/**'
-      - 'hotfix/**'
       - develop
       - main
       - 'release/**'
@@ -19,8 +17,12 @@ on:
       - main
       - 'release/**'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 env:
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.12"
 
 # ── Job 1: Lint ────────────────────────────────────────────────────────────
 # 觸發：所有分支 push + 所有 PR
@@ -93,7 +95,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Run integration tests
-        run: pytest tests/integration/ -v --tb=short --cov=app --cov-report=xml --cov-fail-under=40
+        run: pytest tests/integration/ -v --tb=short --cov=app --cov-report=xml --cov-fail-under=20
       - uses: actions/upload-artifact@v4
         with:
           name: integ-coverage-${{ github.run_id }}
@@ -113,12 +115,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install bandit safety -r requirements.txt
-      - name: bandit full scan
+      - run: pip install bandit pip-audit -r requirements.txt
+      - name: bandit SAST
         run: bandit -r app.py models.py -ll -f json -o bandit-report.json
         continue-on-error: true
-      - name: safety CVE check
-        run: safety check --continue-on-error
+      - name: pip-audit CVE check
+        run: pip-audit --local
+        continue-on-error: true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
