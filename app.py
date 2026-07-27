@@ -4228,8 +4228,6 @@ def _export_salary_excel(results):
     ws['A1'].alignment = Alignment(horizontal='center')
 
     blue  = PatternFill('solid', fgColor='4472C4')
-    green = PatternFill('solid', fgColor='70AD47')
-    amber = PatternFill('solid', fgColor='FFC000')
     lgreen = PatternFill('solid', fgColor='E2EFDA')
     lamber = PatternFill('solid', fgColor='FFF2CC')
 
@@ -4583,7 +4581,6 @@ def _export_salary_pdf(results):
                 sdata.append([f'  {denom} 元 × {cnt} {unit}', f'{denom*cnt:,}'])
 
     st = Table(sdata, colWidths=[250, 150])
-    n_s = len(sdata)
     st.setStyle(TableStyle([
         ('FONTNAME',   (0, 0), (-1, -1), font_name),
         ('FONTSIZE',   (0, 0), (-1, -1), 9),
@@ -5738,7 +5735,7 @@ def _report_pdf(report_type, label, start_date, end_date,
     """生成多頁 PDF，回傳 BytesIO。"""
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors as rl_colors
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, PageBreak
     from reportlab.lib.styles import ParagraphStyle
 
     fn = _report_get_font()
@@ -5752,8 +5749,6 @@ def _report_pdf(report_type, label, start_date, end_date,
     C_HDR  = rl_colors.HexColor('#4472C4')
     C_ALT  = rl_colors.HexColor('#EBF3FB')
     C_GRN  = rl_colors.HexColor('#E2EFDA')
-    C_RED  = rl_colors.HexColor('#C00000')
-    C_DGRN = rl_colors.HexColor('#375623')
     WHITE  = rl_colors.white
 
     def mk_table(data, col_widths=None):
