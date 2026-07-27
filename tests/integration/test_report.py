@@ -17,14 +17,16 @@ class TestReportPage:
         login(client, south_user.id)
         resp = client.get('/report')
         assert resp.status_code == 200
-        # South-specific field
-        assert b's_orig_13' in resp.data or 'south_user01'.encode() in resp.data
+        body = resp.data.decode('utf-8', errors='replace')
+        # South-specific field name appears in the form HTML
+        assert 's_orig_13' in body
 
     def test_bm_user_gets_bm_fields(self, client, bm_user):
         login(client, bm_user.id)
         resp = client.get('/report')
         assert resp.status_code == 200
-        assert b'bm_50_down' in resp.data or b'50mm' in resp.data
+        body = resp.data.decode('utf-8', errors='replace')
+        assert 'bm_50_down' in body
 
 
 class TestReportSubmission:

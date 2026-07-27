@@ -20,7 +20,7 @@ on:
       - 'release/**'
 
 env:
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.14"
 
 # ── Job 1: Lint ────────────────────────────────────────────────────────────
 # 觸發：所有分支 push + 所有 PR

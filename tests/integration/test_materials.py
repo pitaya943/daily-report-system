@@ -64,7 +64,7 @@ class TestMaterialRequest:
         login(client, west_user.id)
         resp = client.post('/materials/request', data={
             'material_id': str(mat_id),
-            'requested_quantity': '1',
+            'quantity': '1',
             'note': 'test request',
         }, follow_redirects=True)
         assert resp.status_code == 200
@@ -83,7 +83,7 @@ class TestMaterialRequest:
         login(client, west_user.id)
         resp = client.post('/materials/request', data={
             'material_id': str(mat.id),
-            'requested_quantity': '0',
+            'quantity': '0',
         }, follow_redirects=True)
         assert resp.status_code == 200
         with app.app_context():
@@ -100,7 +100,7 @@ class TestMaterialRequest:
         login(client, west_user.id)
         resp = client.post('/materials/request', data={
             'material_id': str(mat.id),
-            'requested_quantity': '100',
+            'quantity': '100',
         }, follow_redirects=True)
         assert resp.status_code == 200
         with app.app_context():
@@ -117,7 +117,7 @@ class TestMaterialRequest:
             pytest.skip('no available materials')
         resp = client.post('/materials/request', data={
             'material_id': str(mat.id),
-            'requested_quantity': '1',
+            'quantity': '1',
         }, follow_redirects=False)
         assert resp.status_code in (302, 401)
         if resp.status_code == 302:

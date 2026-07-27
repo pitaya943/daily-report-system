@@ -10,7 +10,7 @@ class TestLogin:
         resp = login(client, admin_user.id)
         assert resp.status_code == 200
         # ADMIN is redirected to /confirmation
-        assert b'確認' in resp.data or b'confirmation' in resp.request.path.encode()
+        assert '確認'.encode() in resp.data or b'confirmation' in resp.request.path.encode()
 
     def test_west_user_login_success(self, client, west_user):
         resp = login(client, west_user.id)

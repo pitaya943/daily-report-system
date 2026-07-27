@@ -1,14 +1,18 @@
 """
 Integration tests: confirmation flow (確認頁面).
 """
+from datetime import date
+
 import pytest
 from tests.conftest import login
 
 
-def make_report(app, user_id, date='2026-07-20'):
+def make_report(app, user_id, report_date=None):
+    if report_date is None:
+        report_date = date(2026, 7, 20)
     with app.app_context():
         from models import db, Report
-        r = Report(user_id=user_id, report_date=date, direct_13=2.0,
+        r = Report(user_id=user_id, report_date=report_date, direct_13=2.0,
                    is_confirmed=False, is_rejected=False)
         db.session.add(r)
         db.session.commit()
@@ -44,8 +48,8 @@ class TestBatchConfirmReports:
             assert log is not None
 
     def test_batch_confirm_multiple(self, client, admin_user, west_user, app):
-        rid1 = make_report(app, west_user.id, '2026-07-20')
-        rid2 = make_report(app, west_user.id, '2026-07-21')
+        rid1 = make_report(app, west_user.id, date(2026, 7, 20))
+        rid2 = make_report(app, west_user.id, date(2026, 7, 21))
         login(client, admin_user.id)
         client.post('/confirmation/reports/batch', data={
             'ids': [str(rid1), str(rid2)],
@@ -77,7 +81,6 @@ class TestBatchConfirmReports:
         assert '勾選'.encode() in resp.data
 
     def test_already_confirmed_skipped(self, client, admin_user, west_user, app):
-        """A report that is already confirmed must not be double-processed."""
         rid = make_report(app, west_user.id)
         with app.app_context():
             from models import db, Report
@@ -87,17 +90,34 @@ class TestBatchConfirmReports:
         login(client, admin_user.id)
         client.post('/confirmation/reports/batch', data={
             'ids': [str(rid)],
-            'batch_action': 'reject',  # try to reject already-confirmed
+            'batch_action': 'reject',
         }, follow_redirects=True)
         with app.app_context():
             from models import Report
             r = Report.query.get(rid)
-            # should remain confirmed, not rejected
             assert r.is_confirmed is True
             assert r.is_rejected is False
 
 
 class TestBatchReviewMaterials:
+    def _get_or_create_material(self, app):
+        """Get a material with stock, creating one if needed."""
+        with app.app_context():
+            from models import db, Material
+            from decimal import Decimal
+            mat = Material.query.filter(Material.remaining_quantity > 5).first()
+            if mat is None:
+                mat = Material(
+                    name='Test Material', unit='pcs',
+                    received_quantity=Decimal('100'),
+                    remaining_quantity=Decimal('100'),
+                    cumulative_usage=Decimal('0'),
+                    sort_order=9999,
+                )
+                db.session.add(mat)
+                db.session.commit()
+            return mat.id, float(mat.remaining_quantity), float(mat.cumulative_usage)
+
     def _make_material_request(self, app, user_id, mat_id, qty=2):
         with app.app_context():
             from models import db, MaterialRequest
@@ -110,17 +130,9 @@ class TestBatchReviewMaterials:
             return req.id
 
     def test_approve_material_request_updates_inventory(self, client, admin_user, west_user, app):
-        from decimal import Decimal
-        with app.app_context():
-            from models import Material
-            mat = Material.query.filter(Material.remaining_quantity > 5).first()
-            if mat is None:
-                pytest.skip('no material with remaining>5 in seed data')
-            mat_id = mat.id
-            before_remaining = float(mat.remaining_quantity)
-            before_cumulative = float(mat.cumulative_usage)
-
+        mat_id, before_remaining, before_cumulative = self._get_or_create_material(app)
         req_id = self._make_material_request(app, west_user.id, mat_id, qty=2)
+
         login(client, admin_user.id)
         client.post('/confirmation/materials/batch', data={
             'ids': [str(req_id)],
@@ -134,21 +146,14 @@ class TestBatchReviewMaterials:
             mat = Material.query.get(mat_id)
             assert float(mat.remaining_quantity) == pytest.approx(before_remaining - 2)
             assert float(mat.cumulative_usage) == pytest.approx(before_cumulative + 2)
-            # Invariant check
             assert float(mat.received_quantity) == pytest.approx(
                 float(mat.cumulative_usage) + float(mat.remaining_quantity)
             )
 
     def test_reject_material_request_no_inventory_change(self, client, admin_user, west_user, app):
-        with app.app_context():
-            from models import Material
-            mat = Material.query.first()
-            if mat is None:
-                pytest.skip('no materials in DB')
-            mat_id = mat.id
-            before_remaining = float(mat.remaining_quantity)
-
+        mat_id, before_remaining, _ = self._get_or_create_material(app)
         req_id = self._make_material_request(app, west_user.id, mat_id, qty=1)
+
         login(client, admin_user.id)
         client.post('/confirmation/materials/batch', data={
             'ids': [str(req_id)],
