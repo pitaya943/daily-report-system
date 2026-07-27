@@ -275,15 +275,63 @@ system_config (key-value store)
 
 ### 4.7 user_retention_rates 表
 
-同 v1.0.5，用於個別帳戶客製保留金費率。大表用戶與 ADMIN 不使用此表。
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| id | INTEGER PK | |
+| user_id | INTEGER FK→users.id | |
+| field | VARCHAR(50) | 工項欄位名稱（如 `direct_13`）|
+| rate | INTEGER | 保留金費率（NTD/只）|
+
+用於個別帳戶客製保留金費率，覆蓋 SystemConfig 全域費率。欄位缺席 = 使用該區域全域費率。大表用戶（`is_big_meter=True`）與 ADMIN 不使用此表（回傳空 dict）。
 
 ### 4.8 audit_logs 表
 
-同 v1.0.5。Action types 詳見第 17 節。
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| id | INTEGER PK | |
+| user_id | INTEGER FK→users.id NULLABLE | NULL = 系統自動生成 |
+| action_type | VARCHAR(50) | 操作類型，詳見第 17 節 |
+| description | TEXT | 操作說明文字 |
+| created_at | DATETIME | UTC+8 時間 |
 
-### 4.9 ledger_entries / report_archives 表
+索引：`(created_at)`、`(user_id, created_at)`、`(action_type)`
 
-同 v1.0.3，無變動。
+### 4.9 ledger_entries 表
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| id | INTEGER PK | |
+| entry_date | DATE | 記帳日期 |
+| description | VARCHAR(200) | 摘要 |
+| amount | INTEGER | NTD；正=收入，負=支出 |
+| entry_type | VARCHAR(10) | `INCOME` / `EXPENSE` |
+| category | VARCHAR(50) NULLABLE | 分類（材料費/人工費/雜支/設備費/運費/其他）|
+| note | TEXT NULLABLE | 備註 |
+| receipt_key | VARCHAR(300) NULLABLE | R2 object key |
+| receipt_name | VARCHAR(200) NULLABLE | 原始檔名 |
+| created_by | INTEGER FK→users.id | |
+| payer_id | INTEGER FK→users.id NULLABLE | 支出者（NULL = 公司）|
+| created_at | DATETIME | |
+| updated_at | DATETIME | |
+
+索引：`(entry_date)`、`(entry_type)`
+
+### 4.10 report_archives 表
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| id | INTEGER PK | |
+| report_type | VARCHAR(10) | `DAILY` / `MONTHLY` |
+| report_date | DATE | 報表對應日期 |
+| period_start | DATE | 期間起始 |
+| period_end | DATE | 期間結束 |
+| r2_key_excel | VARCHAR(300) NULLABLE | R2 Excel 物件 key |
+| r2_key_pdf | VARCHAR(300) NULLABLE | R2 PDF 物件 key |
+| source | VARCHAR(10) | `auto`（排程）/ `manual`（手動）|
+| generated_by | INTEGER FK→users.id NULLABLE | NULL = 自動排程 |
+| generated_at | DATETIME | |
+
+索引：`(report_date)`、`(report_type)`
 
 ---
 
@@ -364,39 +412,304 @@ ADMIN 存取 `/report` 或 `/personal_stats` 時自動 redirect 至 `/summary`�
 
 不含大表用戶的待確認回報，分西區/南區兩組顯示。改為 checkbox 批次操作，移除逐筆按鈕。
 
-### 6.3 其他路由
+### 6.3 其他主要路由
 
-與 v1.0.5 相同（`/report`、`/bm_confirmation`、`/salary`、`/history`、`/summary`、`/settings`、`/ledger`、`/report_archives`、`/personal_stats`）。
+| 路由 | 說明 |
+|------|------|
+| `GET/POST /report` | USER 填寫當日施工工項（依 `zone` + `is_big_meter` 選擇欄位組）；ADMIN → redirect `/summary` |
+| `GET /api/collab-users` | 回傳與 current_user 同區、同類型（大表/一般）的啟用 USER 清單，供共同作業下拉使用 |
+| `GET /history` | 歷史回報列表（可篩選日期/帳戶/區域/是否含自訂工項）；ADMIN 可見所有人 |
+| `GET /personal_stats` | USER 個人統計（本月/本年各工項合計、YTD 保留金）；ADMIN → redirect |
+| `GET /summary` | ADMIN 統計總表（所有 USER 各工項彙總，含西區/南區/大表分組）|
+| `GET/POST /salary` | ADMIN 薪資計算頁（輸入起訖日期 + 是否為 10 日發薪日）|
+| `GET /bm/confirmation` | 大表回報確認頁（獨立於一般 confirmation）|
+| `GET /settings` | 設定頁（帳戶管理、單價設定、保留金費率、分頁名稱等）|
+| `GET /ledger` | 公司流水帳（收支明細、R2 憑證）|
+| `GET /reports/archives` | 日月報檔案庫（下載 Excel/PDF）|
+| `GET /audit` | 稽核日誌（可依帳戶/類型/日期篩選）|
 
 ---
 
 ## 7. 南/西區分區系統
 
-同 v1.0.5，詳見 v1.0.5 規格書第 7 節。
+### 7.1 區域常數
+
+```python
+ZONE_WEST  = '西區'
+ZONE_SOUTH = '南區'
+```
+
+`User.zone` 欄位儲存 `'西區'` 或 `'南區'`，預設 `'西區'`。
+
+### 7.2 工項欄位定義
+
+**WEST_REPORT_FIELDS（32 欄）**
+
+| field | 顯示名稱 |
+|-------|----------|
+| direct_13 | 直總-13 |
+| direct_20 | 直總-20 |
+| direct_25 | 直總-25 |
+| direct_40 | 直總-40 |
+| indirect_13 | 間接-13 |
+| indirect_20 | 間接-20 |
+| indirect_25 | 間接-25 |
+| indirect_40 | 間接-40 |
+| original_change | 原改 |
+| dsv_13 | 直總-換由令(含表)-13 |
+| dsv_20 | 直總-換由令(含表)-20 |
+| dsv_25 | 直總-換由令(含表)-25 |
+| isv_13 | 間接-換由令(含表)-13 |
+| isv_20 | 間接-換由令(含表)-20 |
+| isv_25 | 間接-換由令(含表)-25 |
+| sw_13 | 13換開關(含表) |
+| sw_20 | 20換開關(含表) |
+| sw_25 | 25換開關(含表) |
+| switch_valve_40 | 40換開關(含表) |
+| dfix_13 | 直總-13固拆(含表) |
+| dfix_20 | 直總-20固拆(含表) |
+| dfix_25 | 直總-25固拆(含表) |
+| direct_fixed_40 | 直總-40固拆(含表) |
+| ifix_13 | 間接-13固拆(含表) |
+| ifix_20 | 間接-20固拆(含表) |
+| ifix_25 | 間接-25固拆(含表) |
+| indirect_fixed_40 | 間接-40固拆(含表) |
+| pipe_repair | 管修(提高) |
+| mobilization | 動員 |
+| recheck | 複查案/9年表 |
+| soil_clearing | 清積土 |
+| app_item | APP |
+
+**SOUTH_REPORT_FIELDS（37 欄）**
+
+共用欄位（同西區）：`direct_13/20/25/40`、`indirect_13/20/25/40`、`switch_valve_40`、`direct_fixed_40`、`indirect_fixed_40`、`pipe_repair`、`mobilization`、`recheck`、`soil_clearing`、`app_item`
+
+南區專屬（取代西區 `original_change`/`dsv_*`/`isv_*`/`sw_*`/`dfix_*`/`ifix_*`）：
+
+| field | 顯示名稱 |
+|-------|----------|
+| s_orig_13/20/25/40 | 原改-13/20/25/40 |
+| s_dsv_13/20/25/40 | 直總-換由令(含表)-13/20/25/40 |
+| s_isv_13/20/25/40 | 間接-換由令(含表)-13/20/25/40 |
+| s_sw_13/20/25 | 13/20/25換開關(含表) |
+| s_dfix_13/20/25 | 直總-13/20/25固拆(含表) |
+| s_ifix_13/20/25 | 間接-13/20/25固拆(含表) |
+
+### 7.3 保留金欄位
+
+**WEST_RETENTION_FIELDS（8 欄）**：`direct_13/20/25/40`、`indirect_13/20/25/40`（換由令/換開關/固拆不扣）
+
+**SOUTH_RETENTION_FIELDS（28 欄）**：上述 8 欄 + 南區換由令/換開關/固拆 20 欄（`s_dsv_*`、`s_isv_*`、`s_sw_*`、`switch_valve_40`、`s_dfix_*`、`direct_fixed_40`、`s_ifix_*`、`indirect_fixed_40`）
+
+### 7.4 工具函數
+
+```python
+def get_zone_fields(zone: str) -> list:
+    return SOUTH_REPORT_FIELDS if zone == ZONE_SOUTH else WEST_REPORT_FIELDS
+
+def get_zone_retention_fields(zone: str) -> list:
+    return SOUTH_RETENTION_FIELDS if zone == ZONE_SOUTH else WEST_RETENTION_FIELDS
+
+def get_user_report_fields(user) -> list:
+    """大表用戶用 BIG_METER_FIELDS，其餘依 zone。"""
+    if getattr(user, 'is_big_meter', False):
+        return BIG_METER_FIELDS
+    return get_zone_fields(user.zone)
+```
+
+### 7.5 計價設定
+
+西區：`price_{field}`（SystemConfig key），預設值見 `DEFAULT_PRICES_WEST`。
+南區：`price_south_{field}`，預設值見 `DEFAULT_PRICES_SOUTH`。
+SystemConfig 初始化時兩區單價均 seed。`_invalidate_price_cache()` 同時清除西區/南區/大表三份快取。
 
 ---
 
 ## 8. 大表（BM）用戶系統
 
-同 v1.0.5，詳見 v1.0.5 規格書第 8 節。
+### 8.1 識別
+
+`User.is_big_meter = True`。大表用戶使用獨立的 25 個工項欄位與計價，與南/西區一般用戶完全分開管理。
+
+### 8.2 BIG_METER_FIELDS（25 欄）
+
+| field | 顯示名稱 |
+|-------|----------|
+| bm_50_down | 50mm下 |
+| bm_75_down | 75mm下 |
+| bm_100_down | 100mm下 |
+| bm_150_down | 150mm下 |
+| bm_200_down | 200mm下 |
+| bm_250_down | 250mm下 |
+| bm_300_down | 300mm下 |
+| bm_50_up | 50mm上 |
+| bm_75_up | 75mm上 |
+| bm_100_up | 100mm上 |
+| bm_150_up | 150mm上 |
+| bm_200_up | 200mm上 |
+| bm_250_up | 250mm上 |
+| bm_rm_screw50 | 拆表/復水-螺紋50mm |
+| bm_rm_noscrew50 | 拆表/復水-非螺紋50mm |
+| bm_rm_75 | 拆表/復水-75mm |
+| bm_rm_100 | 拆表/復水-100mm |
+| bm_rm_150 | 拆表/復水-150mm |
+| bm_rm_200 | 拆表/復水-200mm |
+| bm_hole | 孔片 |
+| bm_clean_big | 清箱大 |
+| bm_truck | 小貨車 |
+| bm_mobilization | 動員 |
+| bm_recheck | 復查 |
+| bm_app | APP |
+
+### 8.3 計價
+
+SystemConfig key：`price_bm_{field}`，預設值見 `DEFAULT_PRICES_BM`。快取函數：`get_item_prices_bm()`。
+
+### 8.4 獨立確認頁
+
+大表用戶的回報由 `/bm/confirmation` 頁面管理（獨立於 `/confirmation`）。薪資計算在同一個 `/salary` 頁面但以大表計價計算，且不計保留金（`period_retention = ytd_retention = 0`）。
+
+### 8.5 共同作業
+
+大表用戶的共同作業須為同區且同 `is_big_meter=True` 的 USER，後端驗證：`User.is_big_meter == is_bm`。
 
 ---
 
 ## 9. 共同作業系統
 
-同 v1.0.4，詳見 v1.0.5 規格書第 9 節。
+### 9.1 資料模型
+
+Report 新增兩欄：
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| collab_count | INTEGER DEFAULT 1 | 含提交者的總人數；1 = 無共同作業 |
+| collab_json | TEXT NULLABLE | JSON list of additional collab user_ids（不含提交者）如 `[5, 12]` |
+
+### 9.2 限制條件
+
+- 共同作業者須為同區（`zone`）、同類型（`is_big_meter`）、啟用（`is_active`）的 USER
+- 最多選 6 名（含提交者共 7 人上限）
+- 後端驗證：
+
+```python
+valid_ids = {u.id for u in User.query.filter(
+    User.id.in_(collab_ids),
+    User.role == 'USER',
+    User.is_active == True,
+    User.zone == zone,
+    User.is_big_meter == is_bm
+).all() if u.id != current_user.id}
+collab_ids = [i for i in collab_ids if i in valid_ids][:6]
+```
+
+### 9.3 只數分配（ceil/floor 演算法）
+
+每回報以 `collab_count`（N）平分只數：
+
+```
+每人份額 = field_qty / N   (float 除法)
+```
+
+薪資計算時，提交者與各協作者均取 `getattr(r, k, 0) / N` 累加，不四捨五入到整數，精確到 `Numeric(8,1)` 精度。
+
+### 9.4 協作者查詢 API
+
+```
+GET /api/collab-users
+Response: [{"id": 5, "name": "USER03"}, ...]
+```
+
+回傳與 `current_user` 同 `zone` 且同 `is_big_meter` 的所有啟用 USER（不含自己），依 `display_name` 排序。
+
+### 9.5 稽核日誌
+
+回報時 `collab_ids` 非空則在 description 中記錄 `（共N人作業）`。
 
 ---
 
 ## 10. 薪資計算邏輯（核心業務）
 
-同 v1.0.5，詳見 v1.0.5 規格書第 10 節。
+### 10.1 輸入
+
+- 起訖日期（`start_date` / `end_date`）
+- 是否為 10 日發薪日（`is_10th_payday`，影響固定薪資與勞健保扣除）
+- 範圍內所有 `is_confirmed=True` 的 Report
+
+### 10.2 計算流程
+
+```
+1. 查詢範圍內已確認回報
+2. 按 user_id 初始化 user_data（含協作者）
+3. 每筆回報：只數 / collab_count → 分配給提交者 + 各協作者
+4. 自訂工項金額（qty × price / N）亦分配給提交者 + 各協作者
+5. 乘以各帳戶對應區域的單價 → gross_salary
+6. 計算 period_retention（本期保留金，不超過 RETENTION_CAP - ytd_before）
+7. net_salary = gross_salary - period_retention
+8. 加固定薪資（is_10th_payday 或 every_period 時）
+9. 扣勞健保（is_10th_payday 且已加保）
+10. 扣稅（未加保且非免稅 → gross_salary × tax_rate）
+11. final_salary = net_salary + fixed - insurance - tax
+```
+
+### 10.3 使用者類型矩陣
+
+| 類型 | 計價表 | 保留金 | 稅務 |
+|------|--------|--------|------|
+| 西區 USER | WEST 單價 | 8 欄 × 費率 | 西區稅率 |
+| 南區 USER | SOUTH 單價 | 28 欄 × 費率 | 南區稅率 |
+| 大表 USER | BM 單價 | 無 | 大表稅率（同西區） |
+| ADMIN | 西區/南區（依 zone）| 無 | 有 |
+
+### 10.4 保留金計算細節
+
+- `period_retention = max(0, min(period_ret_raw, RETENTION_CAP - ytd_before))`
+- `ytd_before`：計算期間開始前，本年度已累積的保留金（含 `retention_offset`）
+- `ytd_retention`：本年度至今全部累積保留金（`min(RETENTION_CAP, ytd_calc + offset)`）
+- `RETENTION_CAP = 60000` NTD
+
+### 10.5 過濾條件
+
+最終結果過濾 `gross_salary == 0 AND final_salary == 0` 的帳戶（不顯示在薪資結果中，但有固定薪資的帳戶仍納入）。
 
 ---
 
 ## 11. 保留金系統
 
-同 v1.0.5，詳見 v1.0.5 規格書第 11 節。
+### 11.1 適用範圍
+
+- 西區 USER：8 個直總/間接欄位（`WEST_RETENTION_FIELDS`）
+- 南區 USER：28 個欄位（`SOUTH_RETENTION_FIELDS`）
+- 大表 USER：不扣保留金（回傳空 dict）
+- ADMIN：不扣保留金
+
+### 11.2 費率優先順序
+
+1. `UserRetentionRate` 表中該用戶該欄位的個人費率（最高優先）
+2. SystemConfig `retention_rate`（西區全域）或 `retention_rate_south`（南區全域，預設各 20 NTD/只）
+
+### 11.3 年度上限
+
+`RETENTION_CAP = 60000` NTD。`ytd_retention` 不超過此值；`period_retention` 不超過 `RETENTION_CAP - ytd_before`（避免全年累積超限）。
+
+### 11.4 ADMIN 調整
+
+`User.retention_offset`（INT，正負皆可）：ADMIN 可設定固定偏移量，加入 `ytd_retention` 計算中。`/settings/users/<id>/set-retention` 路由透過反推計算：`offset = target - calculated_raw`。
+
+### 11.5 核心函數
+
+```python
+def get_ytd_retention(user_id: int) -> float:
+    # 查詢本年度已確認回報（含 collab 分配）
+    # totals = {field: sum(qty/N for r in reports)}
+    # user_rates = get_user_all_retention_rates(user_id)
+    # calculated = sum(totals[f] * user_rates[f] for f in ret_fields)
+    return min(RETENTION_CAP, max(0.0, calculated + offset))
+
+def get_users_all_retention_rates(user_ids, users_dict) -> dict:
+    # 批次載入，回傳 {uid: {field: rate}}
+    # 大表用戶 → {}
+```
 
 ---
 
@@ -404,11 +717,21 @@ ADMIN 存取 `/report` 或 `/personal_stats` 時自動 redirect 至 `/summary`�
 
 ### 12.1 薪資 Excel / PDF / Word
 
-同 v1.0.5。
+路由：`GET /salary`（含 `?export=excel` / `?export=pdf` / `?export=word`）
+
+- **Excel**：每位 USER 一個 sheet，含工項明細、單價、小計、固定薪資、保留金、勞健保、稅務、實發金額。`openpyxl`，樣式：標題粗體、金額欄右對齊、負數紅色。
+- **PDF**：`reportlab`，A4 橫式，同 Excel 內容排版。
+- **Word（薪轉單）**：`python-docx`，僅含：姓名、銀行帳號、實發金額，供財務直接使用。
+- 三種格式均以 `Content-Disposition: attachment` 回應，不觸發 loading overlay（連結加 `data-no-loading`）。
 
 ### 12.2 日月報 Excel
 
-同 v1.0.5。
+由 `_run_auto_report(report_type, target_date, source)` 生成。
+
+- **日報（DAILY）**：對應 `target_date` 這一天所有已確認回報，三個 sheet（西區/南區/大表），各 sheet 含帳戶名稱、各工項只數、小計金額。
+- **月報（MONTHLY）**：對應 `target_date` 所在月份全月，三個 sheet，格式同日報。
+- 生成後上傳至 Cloudflare R2（`r2_key_excel`），並在 `report_archives` 插入記錄。
+- 若 R2 未設定，仍生成 `ReportArchive` 記錄但 `r2_key_excel=None`（下載時顯示警告）。
 
 ### 12.3 歷史紀錄匯出 Excel（v1.0.6 新增）
 
@@ -556,19 +879,86 @@ for req_id in request.form.getlist('ids'):
 
 ## 14. 流水帳（LedgerEntry）
 
-同 v1.0.3，詳見 v1.0.3/v1.0.5 規格書第 14 節。
+### 14.1 子路由
+
+| 路由 | 說明 |
+|------|------|
+| `GET /ledger` | 列表（可篩選日期/類型/分類），顯示收入/支出總計，頁數 20 筆/頁 |
+| `POST /ledger/add` | 新增記錄（必填：日期/摘要/金額/類型；選填：分類/備註/R2憑證/支出者）|
+| `POST /ledger/<id>/edit` | 修改記錄 |
+| `POST /ledger/<id>/delete` | 刪除記錄（同時刪除 R2 憑證）|
+| `POST /ledger/<id>/settle` | 標記墊付已沖銷（設定 `settled_at`）|
+| `GET /ledger/<id>/receipt` | 從 R2 下載憑證（預簽名 URL，3600s 效期）|
+| `GET /ledger/export` | 匯出篩選後記錄為 Excel |
+
+### 14.2 分類
+
+`LEDGER_CATEGORIES = ['材料費', '人工費', '雜支', '設備費', '運費', '其他']`
+
+### 14.3 R2 憑證上傳
+
+支援 PDF / JPEG / PNG / WebP，最大 10 MB。Object key 格式：`receipts/{entry_id}/{uuid}.{ext}`。`_r2_client` 未初始化時跳過上傳，記錄仍儲存。
 
 ---
 
 ## 15. 日月報檔案庫（ReportArchive）
 
-同 v1.0.3，詳見 v1.0.5 規格書第 15 節。
+### 15.1 自動排程
+
+使用 APScheduler（`BackgroundScheduler`，timezone `Asia/Taipei`）：
+
+| 排程 | 觸發時間 | 說明 |
+|------|----------|------|
+| `_daily_job` | 每天 23:59:00 | 生成當天日報 |
+| `_monthly_job` | 每月末 23:59:30 | 生成當月月報 |
+
+### 15.2 手動生成
+
+`POST /reports/archives/generate`（ADMIN only），可指定日期與 `report_type`。
+
+### 15.3 R2 路徑格式
+
+```
+reports/DAILY/{YYYY}/{MM}/{YYYY-MM-DD}.xlsx
+reports/MONTHLY/{YYYY}/{MM}/{YYYY-MM}.xlsx
+```
+
+PDF 路徑同上，副檔名改為 `.pdf`。
+
+### 15.4 下載
+
+`GET /reports/archives/<id>/<fmt>`（fmt: `excel` / `pdf`）：從 R2 取得 presigned URL（3600s），redirect 至該 URL；R2 未設定時 flash 警告。
 
 ---
 
 ## 16. Cloudflare R2 儲存
 
-同 v1.0.5，詳見 v1.0.5 規格書第 16 節。
+### 16.1 環境變數
+
+| 環境變數 | 說明 |
+|----------|------|
+| `R2_ACCOUNT_ID` | Cloudflare Account ID |
+| `R2_ACCESS_KEY_ID` | R2 存取金鑰 ID |
+| `R2_SECRET_ACCESS_KEY` | R2 存取金鑰密文 |
+| `R2_BUCKET_NAME` | Bucket 名稱 |
+
+四個環境變數均設定時才啟用 R2 client（`boto3` S3 相容 API，endpoint `https://{account_id}.r2.cloudflarestorage.com`）。任一缺失則 `_r2_client = None`，所有 R2 操作靜默跳過。
+
+### 16.2 用途
+
+| 功能 | Object key 前綴 |
+|------|----------------|
+| 日月報 Excel | `reports/DAILY/` / `reports/MONTHLY/` |
+| 日月報 PDF | 同上，副檔名 `.pdf` |
+| 流水帳憑證 | `receipts/{entry_id}/` |
+
+### 16.3 Helper 函數
+
+```python
+def _r2_upload(file_obj, object_key, content_type) -> bool
+def _r2_delete(object_key) -> bool
+def _r2_presign(object_key, expires_in=3600) -> str | None
+```
 
 ---
 
@@ -616,7 +1006,45 @@ for req_id in request.form.getlist('ids'):
 
 1. `db.create_all()`
 2. Column migrations（各自 try/except，冪等）：
-   - v1.0.3–v1.0.5 欄位：略（詳見 v1.0.5 規格書）
+   - **v1.0.3–v1.0.5 欄位（累積遷移，各自 try/except）**：
+     ```sql
+     -- users 表
+     ALTER TABLE users ADD COLUMN insurance_deduction INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE users ADD COLUMN retention_offset INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE users ADD COLUMN tax_exempt BOOLEAN NOT NULL DEFAULT FALSE;
+     ALTER TABLE users ADD COLUMN bank_account VARCHAR(14);
+     ALTER TABLE users ALTER COLUMN bank_account TYPE VARCHAR(200);
+     ALTER TABLE users ADD COLUMN fixed_salary INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE users ADD COLUMN zone VARCHAR(10) NOT NULL DEFAULT '西區';
+     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_big_meter BOOLEAN NOT NULL DEFAULT FALSE;
+     ALTER TABLE users ADD COLUMN IF NOT EXISTS fixed_salary_every_period BOOLEAN NOT NULL DEFAULT FALSE;
+     -- materials 表
+     ALTER TABLE materials ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+     -- reports 表（INTEGER→NUMERIC 升級）
+     ALTER TABLE reports ALTER COLUMN direct_13 TYPE NUMERIC(8,1) ...;  -- 及其他 15 個共用工項欄
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS is_rejected BOOLEAN NOT NULL DEFAULT FALSE;
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS collab_count INTEGER NOT NULL DEFAULT 1;
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS collab_json TEXT;
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS app_item NUMERIC(8,1) NOT NULL DEFAULT 0;
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_item_name VARCHAR(100);
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_item_qty NUMERIC(8,1) DEFAULT 0;
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS custom_item_price INTEGER DEFAULT 0;
+     -- 西區拆分欄（15 欄：dsv_*/isv_*/sw_*/dfix_*/ifix_*）
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS dsv_13 NUMERIC(8,1) NOT NULL DEFAULT 0; -- 等
+     -- 南區欄（21 欄：s_orig_*/s_dsv_*/s_isv_*/s_sw_*/s_dfix_*/s_ifix_*）
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS s_orig_13 NUMERIC(8,1) NOT NULL DEFAULT 0; -- 等
+     -- 大表欄（27 欄：bm_50_down ... bm_40_fen）
+     ALTER TABLE reports ADD COLUMN IF NOT EXISTS bm_50_down NUMERIC(8,1) NOT NULL DEFAULT 0; -- 等
+     -- audit_logs
+     ALTER TABLE audit_logs ALTER COLUMN user_id DROP NOT NULL;
+     -- report_archives
+     ALTER TABLE report_archives ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'auto';
+     ALTER TABLE report_archives ADD COLUMN generated_by INTEGER REFERENCES users(id);
+     -- ledger_entries
+     ALTER TABLE ledger_entries ADD COLUMN payer_id INTEGER REFERENCES users(id);
+     -- material_requests
+     ALTER TABLE material_requests ADD COLUMN IF NOT EXISTS note VARCHAR(200);
+     ```
    - **v1.0.6 新增**：
      ```sql
      ALTER TABLE materials ADD COLUMN IF NOT EXISTS code VARCHAR(50);
@@ -646,7 +1074,13 @@ for req_id in request.form.getlist('ids'):
 
 ### 19.1 base.html
 
-同 v1.0.5。側欄收合狀態存於 `localStorage.ycSidebarCollapsed`。
+提供全站共用結構：
+
+- **側欄（Sidebar）**：可收合，狀態存於 `localStorage.ycSidebarCollapsed`。依 `current_user.role` 控制顯示項目（ADMIN 看不到「回報頁面」和「個人統計」）；依 `current_user.is_big_meter` 顯示大表確認頁連結。
+- **Loading overlay**：所有表單送出或連結點擊時顯示全頁遮罩；含 `data-no-loading` attribute 的元素不觸發。
+- **Flash messages**：Bootstrap alert，自動 5 秒後淡出。
+- **CSP header**（`after_request` hook）：`default-src 'self'`；允許 `cdn.jsdelivr.net`（Bootstrap/Icons CDN）；`script-src` 含 `'unsafe-inline'`（Jinja2 inline script 需要）。
+- **Session 過期**：`PERMANENT_SESSION_LIFETIME = 10 分鐘`；session cookie `HttpOnly + SameSite=Lax + Secure`（生產環境）。
 
 ### 19.2 materials.html AJAX 模式（v1.0.6 新增）
 
