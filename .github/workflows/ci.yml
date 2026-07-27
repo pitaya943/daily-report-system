@@ -19,10 +19,10 @@ on:
       - main
       - 'release/**'
 
-# Prevent duplicate runs: when a PR is open for a feature branch,
-# cancel the redundant push-triggered run and keep only the PR run.
+# Prevent duplicate runs: normalise to branch name so push + PR on the
+# same branch land in the same concurrency group and cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
