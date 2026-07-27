@@ -137,14 +137,24 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
-      - name: Trigger Railway staging deploy
+      - name: Wait for Railway staging deploy
         run: |
-          echo "Staging deploy triggered: ${{ github.sha }}"
-          # Uncomment when Railway staging env is configured:
-          # curl -X POST "https://backboard.railway.app/graphql/v2" \
-          #   -H "Authorization: Bearer ${{ secrets.RAILWAY_TOKEN }}" \
-          #   -H "Content-Type: application/json" \
-          #   -d '{"query":"mutation{deploymentCreate(input:{environmentId:\"${{ secrets.RAILWAY_STAGING_ENV_ID }}\"}){id}}"}'
+          echo "Commit ${{ github.sha }} pushed to develop."
+          echo "Railway staging auto-deploys from develop branch via GitHub App."
+          if [ -z "${{ secrets.STAGING_URL }}" ]; then
+            echo "STAGING_URL not configured — skipping health check"
+            exit 0
+          fi
+          echo "Waiting 60s for Railway to pick up the deploy..."
+          sleep 60
+          for i in 1 2 3; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.STAGING_URL }}/login")
+            echo "Attempt $i: HTTP $HTTP_CODE"
+            [ "$HTTP_CODE" = "200" ] && exit 0
+            sleep 20
+          done
+          echo "Staging health check failed — Railway may still be deploying"
+          exit 1
 
 # ── Job 6: Production Deploy ──────────────────────────────────────────────
 # 觸發：push to main（需 security-scan 通過 + 手動 Approve）
