@@ -5975,6 +5975,8 @@ def _run_auto_report(report_type: str, target_date, source: str = 'auto',
 
 # ── 排程器（每天 23:59 日報；每月末 23:59 月報）────────────────────────
 try:
+    if os.environ.get('TESTING'):
+        raise RuntimeError('skip APScheduler in test mode')
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
 
