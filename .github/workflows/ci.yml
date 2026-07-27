@@ -19,8 +19,14 @@ on:
       - main
       - 'release/**'
 
+# Prevent duplicate runs: when a PR is open for a feature branch,
+# cancel the redundant push-triggered run and keep only the PR run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
-  PYTHON_VERSION: "3.14"
+  PYTHON_VERSION: "3.12"
 
 # ── Job 1: Lint ────────────────────────────────────────────────────────────
 # 觸發：所有分支 push + 所有 PR
@@ -118,7 +124,7 @@ jobs:
         run: bandit -r app.py models.py -ll -f json -o bandit-report.json
         continue-on-error: true
       - name: safety CVE check
-        run: safety check --continue-on-error
+        run: safety scan --continue-on-error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
