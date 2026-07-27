@@ -627,17 +627,19 @@ def _seed_materials_csv(reset=False):
             m = Material()
             db.session.add(m)
             m.sort_order = (i + 1) * 10
+            m.cumulative_usage   = Decimal('0')
+            m.remaining_quantity = Decimal('0')
+            m.received_quantity  = Decimal('0')
+            m.is_hidden = False
+            m.is_quarantined = False
+            m.quarantine_note = None
+            m.tab_id = 1
+        # Only update display metadata for existing materials — never overwrite
+        # operational quantities, hidden/quarantine state, or tab assignment.
         m.code = code
         m.name = name
         m.spec = spec or None
         m.unit = unit
-        m.cumulative_usage   = Decimal('0')
-        m.remaining_quantity = Decimal('0')
-        m.received_quantity  = Decimal('0')
-        m.is_hidden = False
-        m.is_quarantined = False
-        m.quarantine_note = None
-        m.tab_id = 1
     try:
         db.session.commit()
     except Exception as e:
