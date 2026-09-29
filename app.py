@@ -1,5 +1,6 @@
 import io
 import json
+import math
 import os
 import time
 from datetime import datetime, date, timedelta
@@ -2227,12 +2228,20 @@ def settings_set_retention(user_id):
         target = 0.0
     calculated = _calc_ytd_retention_raw(user_id)
     if action == 'reset':
-        u.retention_offset = -int(calculated)
+        # floor ensures calculated + offset <= 0, which get_ytd_retention clamps to 0
+        u.retention_offset = math.floor(-calculated)
         add_audit(current_user.id, 'RETENTION_RESET',
                   f'重置「{u.display_name}」今年度累積保留金為 0（計算值 {calculated:.0f}，偏移 {u.retention_offset}）')
         flash(f'「{u.display_name}」累積保留金已重置為 0', 'success')
     else:
-        u.retention_offset = int(target - calculated)
+        diff = target - calculated
+        if target >= RETENTION_CAP:
+            # ceil ensures calculated + offset >= cap, which min() clamps to cap exactly
+            u.retention_offset = math.ceil(diff)
+        elif target <= 0:
+            u.retention_offset = math.floor(diff)
+        else:
+            u.retention_offset = round(diff)
         add_audit(current_user.id, 'RETENTION_SET',
                   f'設定「{u.display_name}」今年度累積保留金為 {int(target)}（計算值 {calculated:.0f}，偏移 {u.retention_offset}）')
         flash(f'「{u.display_name}」累積保留金已設定為 {int(target)} NTD', 'success')
