@@ -1168,17 +1168,28 @@ def get_ytd_retention(user_id: int) -> float:
 
 
 def _calc_ytd_retention_raw(user_id: int) -> float:
-    """純計算值（不含偏移），供 set-retention 路由使用"""
+    """純計算值（不含偏移與上限），供 set-retention 路由使用。
+    邏輯與 get_ytd_retention 完全一致，確保 offset 計算正確。"""
+    from sqlalchemy import or_, text as _sa_t_raw
+    u = db.session.get(User, user_id)
+    if u and u.is_big_meter:
+        return 0.0
+    zone = u.zone if u else ZONE_WEST
+    ret_fields = get_zone_retention_fields(zone)
     year_start = date(date.today().year, 1, 1)
+    _uid = int(user_id)
     reports = Report.query.filter(
-        Report.user_id == user_id,
+        or_(Report.user_id == _uid,
+            _sa_t_raw(f"collab_json::jsonb @> '[{_uid}]'")),
         Report.is_confirmed == True,
         Report.report_date >= year_start,
         Report.report_date <= date.today()
     ).all()
-    totals = {f: sum(float(getattr(r, f, 0) or 0) for r in reports) for f in RETENTION_FIELDS}
+    totals = {f: sum(float(getattr(r, f, 0) or 0) / float(r.collab_count or 1)
+                     for r in reports) for f in ret_fields}
     user_rates = get_user_all_retention_rates(user_id)
-    return sum(totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
+    global_rate = get_retention_rate()
+    return sum(totals.get(f, 0) * user_rates.get(f, global_rate) for f in ret_fields)
 
 
 CASH_DENOMINATIONS = [1000, 500, 100, 50, 10, 5, 1]
