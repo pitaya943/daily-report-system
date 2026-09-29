@@ -1,5 +1,6 @@
 import io
 import json
+import math
 import os
 import time
 from datetime import datetime, date, timedelta
@@ -1168,17 +1169,28 @@ def get_ytd_retention(user_id: int) -> float:
 
 
 def _calc_ytd_retention_raw(user_id: int) -> float:
-    """純計算值（不含偏移），供 set-retention 路由使用"""
+    """純計算值（不含偏移與上限），供 set-retention 路由使用。
+    邏輯與 get_ytd_retention 完全一致，確保 offset 計算正確。"""
+    from sqlalchemy import or_, text as _sa_t_raw
+    u = db.session.get(User, user_id)
+    if u and u.is_big_meter:
+        return 0.0
+    zone = u.zone if u else ZONE_WEST
+    ret_fields = get_zone_retention_fields(zone)
     year_start = date(date.today().year, 1, 1)
+    _uid = int(user_id)
     reports = Report.query.filter(
-        Report.user_id == user_id,
+        or_(Report.user_id == _uid,
+            _sa_t_raw(f"collab_json::jsonb @> '[{_uid}]'")),
         Report.is_confirmed == True,
         Report.report_date >= year_start,
         Report.report_date <= date.today()
     ).all()
-    totals = {f: sum(float(getattr(r, f, 0) or 0) for r in reports) for f in RETENTION_FIELDS}
+    totals = {f: sum(float(getattr(r, f, 0) or 0) / float(r.collab_count or 1)
+                     for r in reports) for f in ret_fields}
     user_rates = get_user_all_retention_rates(user_id)
-    return sum(totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
+    global_rate = get_retention_rate()
+    return sum(totals.get(f, 0) * user_rates.get(f, global_rate) for f in ret_fields)
 
 
 CASH_DENOMINATIONS = [1000, 500, 100, 50, 10, 5, 1]
@@ -2216,12 +2228,20 @@ def settings_set_retention(user_id):
         target = 0.0
     calculated = _calc_ytd_retention_raw(user_id)
     if action == 'reset':
-        u.retention_offset = -int(calculated)
+        # floor ensures calculated + offset <= 0, which get_ytd_retention clamps to 0
+        u.retention_offset = math.floor(-calculated)
         add_audit(current_user.id, 'RETENTION_RESET',
                   f'重置「{u.display_name}」今年度累積保留金為 0（計算值 {calculated:.0f}，偏移 {u.retention_offset}）')
         flash(f'「{u.display_name}」累積保留金已重置為 0', 'success')
     else:
-        u.retention_offset = int(target - calculated)
+        diff = target - calculated
+        if target >= RETENTION_CAP:
+            # ceil ensures calculated + offset >= cap, which min() clamps to cap exactly
+            u.retention_offset = math.ceil(diff)
+        elif target <= 0:
+            u.retention_offset = math.floor(diff)
+        else:
+            u.retention_offset = round(diff)
         add_audit(current_user.id, 'RETENTION_SET',
                   f'設定「{u.display_name}」今年度累積保留金為 {int(target)}（計算值 {calculated:.0f}，偏移 {u.retention_offset}）')
         flash(f'「{u.display_name}」累積保留金已設定為 {int(target)} NTD', 'success')
