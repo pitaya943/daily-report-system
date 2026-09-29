@@ -1176,7 +1176,7 @@ def _calc_ytd_retention_raw(user_id: int) -> float:
         Report.report_date >= year_start,
         Report.report_date <= date.today()
     ).all()
-    totals = {f: sum(getattr(r, f, 0) for r in reports) for f in RETENTION_FIELDS}
+    totals = {f: sum(float(getattr(r, f, 0) or 0) for r in reports) for f in RETENTION_FIELDS}
     user_rates = get_user_all_retention_rates(user_id)
     return sum(totals.get(f, 0) * user_rates[f] for f in RETENTION_FIELDS)
 
